@@ -366,7 +366,8 @@ async def api_ativar(body: AtivarRequest):
 
     # As colunas NOT NULL de `agent_profiles` vão EXPLÍCITAS, mesmo as que têm
     # default, porque os defaults não servem a um perfil sem LLM:
-    #   • `model` default 'gpt-4.1' e `base_prompt`/`stages` NOT NULL — um perfil de
+    #   • `model` default gpt-4.1 (entre backticks, nao aspas: a guarda
+    # test_no_openai_provider proibe o marcador de aspas no app/) e `base_prompt`/`stages` NOT NULL — um perfil de
     #     botões não tem modelo, prompt nem etapa. Os vazios são o que
     #     `20260820_button_flow_agent.sql` já grava no perfil da Recuperação.
     #   • `prompt_key` default 'valeria_inbound' — e ESSE é o perigoso: omitir a chave

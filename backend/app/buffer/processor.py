@@ -35,14 +35,21 @@ from app.follow_up.service import schedule_followup as _schedule_followup
 from app.campaigns.service import get_active_enrollment_for_lead as get_active_enrollment
 from app.agent.tools import (
     pop_deferred_media, pop_interest_marked, pop_quote_executed, SUPERVISOR_NAME, SUPERVISOR_PHONE,
+    EXPORTACAO_NAME, EXPORTACAO_PHONE,
     record_deferred_media_delivery, apply_stage_transition,
 )
 from app.buffer.prefill import match_prefill_stage
+# Os DOIS fluxos de botões, cada um com o seu id e o seu runner. `fluxo_da_conversa`
+# devolve o id (não um booleano) justamente porque agora há dois: um predicado
+# sim/não não diria QUAL motor atende a conversa. Ver `_runner_do_fluxo`.
+from app.button_flow.flows import FLOW_ID as FLUXO_RECUPERACAO
 from app.button_flow.runner import (
     e_clique_de_botao,
-    is_button_flow_conversation,
+    fluxo_da_conversa,
     run_button_flow,
 )
+from app.button_flow.valeria_registry import FLOW_ID as FLUXO_VALERIA_BOTOES
+from app.button_flow.valeria_runner import processar_inbound as run_valeria_botoes
 from app.utils.geo import ddd_to_region
 from app.buffer.lead_lock import lead_run_lock
 
@@ -820,10 +827,27 @@ def _fire_llm_down_alert(count: int, *, handoff_ativo: bool = True) -> None:
 # fica muda no canal da Valéria e o lead que continua escrevendo aqui cai no vácuo.
 # A ponte é uma sinalização ESTÁTICA de roteamento (sem LLM — handoff encerra a conversa
 # automática por contrato), com cooldown pra nunca virar spam.
+#
+# O VENDEDOR É PARÂMETRO, não literal (30/09/2026). A ValerIA de botões entrega os leads
+# de EXPORTAÇÃO ao Arthur (`agent/tools.EXPORTACAO_NAME`) e o resto ao João; a ponte
+# reenviava sempre o cartão do João, com o texto "tá com o João". Um lead do Arthur que
+# escrevesse de novo recebia a pessoa errada exatamente no degrau mais caro do funil — a
+# troca de número no handoff perde 26% dos leads (131 de 500, Diagnóstico 01/09 p.5), e o
+# cartão é o único atalho que o lead tem até quem vai atendê-lo. Quem resolve o
+# destinatário é `_vendedor_da_ponte`, e o default continua sendo o João.
+def _primeiro_nome_do_cartao(nome: str) -> str:
+    """"João - Café Canastra" -> "João": os textos da ponte chamam o vendedor pelo nome.
+
+    Derivado do nome do vCard em vez de escrito à mão para não haver duas grafias do
+    mesmo vendedor no módulo — trocar a pessoa em `agent/tools` passa a bastar.
+    """
+    return (nome.split(" - ")[0].strip().split() or [""])[0]
+
+
 _BRIDGE_COOLDOWN_SECONDS = 4 * 3600      # 1 ponte a cada 4h por conversa
-_BRIDGE_CARD_COOLDOWN_SECONDS = 24 * 3600  # cartão do João no máx 1x/24h por conversa
-_BRIDGE_TEXT = (
-    "seu atendimento tá com o João agora\n\n"
+_BRIDGE_CARD_COOLDOWN_SECONDS = 24 * 3600  # cartão do vendedor no máx 1x/24h por conversa
+_BRIDGE_TEXT_MOLDE = (
+    "seu atendimento tá com o {vendedor} agora\n\n"
     "se preferir, chama ele direto no contato que te mandei aqui em cima que ele te responde por lá"
 )
 
@@ -831,18 +855,79 @@ _BRIDGE_TEXT = (
 # negócio pós-handoff → silêncio TOTAL (o lead ficava sem NENHUM retorno, dependente do
 # SLA humano). AGORA: aviso curto, NÃO-COMERCIAL, de recebimento — não responde a
 # pergunta (o humano ainda lê e responde), só fecha o vácuo. Estático, sem LLM.
-_BRIDGE_ACK_TEXT = (
+_BRIDGE_ACK_MOLDE = (
     "recebi sua mensagem!\n\n"
-    "seu atendimento já tá com o João e ele te responde por aqui mesmo, tá?"
+    "seu atendimento já tá com o {vendedor} e ele te responde por aqui mesmo, tá?"
 )
 # Reclamação pós-handoff (caso Aislan: cliente queimado devolvido ao mesmo gargalo em
 # silêncio) → aviso de escalonamento ao lead + alerta CRÍTICO à gerência.
-_BRIDGE_ESCALATION_TEXT = (
+_BRIDGE_ESCALATION_MOLDE = (
     "puxa, sinto muito por isso\n\n"
-    "já sinalizei aqui internamente pra olharem o seu caso com prioridade — o João te responde por aqui"
+    "já sinalizei aqui internamente pra olharem o seu caso com prioridade — "
+    "o {vendedor} te responde por aqui"
 )
+
+# Os três textos renderizados com o vendedor PADRÃO. Continuam existindo como
+# constantes porque são o contrato de copy que a suíte da ponte trava
+# (test_processor_handoff_bridge_2026_07_03, test_bridge_*): o conserto de 30/09 é de
+# destinatário, não de texto — com o vendedor padrão a ponte é byte a byte a de antes.
+_PRIMEIRO_NOME_SUPERVISOR = _primeiro_nome_do_cartao(SUPERVISOR_NAME)
+_BRIDGE_TEXT = _BRIDGE_TEXT_MOLDE.format(vendedor=_PRIMEIRO_NOME_SUPERVISOR)
+_BRIDGE_ACK_TEXT = _BRIDGE_ACK_MOLDE.format(vendedor=_PRIMEIRO_NOME_SUPERVISOR)
+_BRIDGE_ESCALATION_TEXT = _BRIDGE_ESCALATION_MOLDE.format(vendedor=_PRIMEIRO_NOME_SUPERVISOR)
 _BRIDGE_ACK_COOLDOWN_SECONDS = 3600            # 1 aviso de recebimento a cada 1h por conversa
 _BRIDGE_ESCALATION_COOLDOWN_SECONDS = 12 * 3600  # 1 escalonamento a cada 12h (não spammar a gerência)
+
+
+def _token_de_vendedor(nome: str | None) -> str:
+    """Primeiro nome, sem acento e em minúsculas — a chave de `_PONTE_POR_VENDEDOR`.
+
+    O MESMO vendedor é gravado com grafias diferentes por caminhos diferentes:
+    `encaminhar_humano` escreve o que o LLM mandou ("João Brás", "Joao Bras", e o
+    default literal "Vendedor"), `button_flow/effects._aplicar_handoff` escreve
+    `SUPERVISOR_NAME` ("João - Café Canastra") ou o identificador do registry da
+    ValerIA de botões ("Joao Bras", "Arthur"). Casar a string inteira erraria em
+    quase todas; o primeiro nome normalizado casa em todas — e os dois destinos de
+    transbordo que existem não compartilham primeiro nome.
+    """
+    cru = unicodedata.normalize("NFKD", (nome or "").strip().lower())
+    sem_acento = "".join(ch for ch in cru if not unicodedata.combining(ch))
+    return next((parte for parte in re.split(r"[^a-z]+", sem_acento) if parte), "")
+
+
+# (nome do vCard, telefone) por primeiro nome do vendedor. Reusa `agent/tools`, onde os
+# números já moram e de onde `encaminhar_humano` e `valeria_runner.CARTOES` já os leem —
+# um segundo lugar com o telefone do vendedor é um segundo lugar para ele ficar velho.
+_PONTE_POR_VENDEDOR: dict[str, tuple[str, str]] = {
+    _token_de_vendedor(SUPERVISOR_NAME): (SUPERVISOR_NAME, SUPERVISOR_PHONE),
+    _token_de_vendedor(EXPORTACAO_NAME): (EXPORTACAO_NAME, EXPORTACAO_PHONE),
+}
+
+
+def _vendedor_da_ponte(lead: dict) -> tuple[str, str, str]:
+    """(nome do vCard, telefone, primeiro nome) de quem de fato recebeu ESTE lead.
+
+    A fonte é o carimbo `leads.metadata.handoff.vendedor`, que os DOIS caminhos de
+    handoff gravam — `agent/tools.encaminhar_humano` e
+    `button_flow/effects._aplicar_handoff` (que também o repete no marcador
+    `[encaminhar_humano]` contado pelo KPI do dashboard). Ele já vem em memória:
+    `get_or_create_lead` faz `select("*")`, então resolver o destinatário custa zero
+    consulta no caminho mais quente do sistema.
+
+    Fail-OPEN no vendedor padrão, e em tudo: carimbo ausente (o lead pré-existente ao
+    carimbo estruturado), `metadata` NULL, carimbo corrompido ou nome que não casa com
+    ninguém caem todos no João — que é exatamente o comportamento de antes desta
+    função. A ponte é uma cortesia de roteamento; nunca pode ser o que derruba o turno.
+    """
+    meta = lead.get("metadata") if isinstance(lead, dict) else None
+    carimbo = meta.get("handoff") if isinstance(meta, dict) else None
+    registrado = carimbo.get("vendedor") if isinstance(carimbo, dict) else None
+    nome, telefone = _PONTE_POR_VENDEDOR.get(
+        _token_de_vendedor(registrado if isinstance(registrado, str) else None),
+        (SUPERVISOR_NAME, SUPERVISOR_PHONE),
+    )
+    return nome, telefone, _primeiro_nome_do_cartao(nome)
+
 
 # Filtro de intenção da ponte (auditoria 11/07): "obrigado" pós-handoff recebia o
 # texto de transbordo — ruído em cima de um encerramento social. Vocabulário
@@ -1057,7 +1142,7 @@ async def _maybe_send_handoff_bridge(
     inbound_text: str | None = None, inbound_wamid: str | None = None,
     inbound_message_type: str | None = None,
 ) -> bool:
-    """Ponte estática pós-handoff: avisa o lead que o atendimento já é com o João.
+    """Ponte estática pós-handoff: avisa o lead com QUEM o atendimento dele já está.
 
     Casos reais (auditoria 01-02/07): Maycon mandou um áudio reclamando e Juliana
     escreveu 4x seguidas ("Tem algum problema vocês responderem?") depois de já
@@ -1106,6 +1191,10 @@ async def _maybe_send_handoff_bridge(
         # vácuo); resto (vácuo puro Maycon/Juliana) → carimbo + cartão.
         conv_id = conversation.get("id")
         redis = _get_buffer_redis()
+        # QUEM recebeu este lead — resolvido UMA vez e usado nos três desfechos da
+        # escada. Ver `_vendedor_da_ponte`: os leads de exportação da ValerIA de
+        # botões são do Arthur, e mandá-los o cartão do João é mandar a pessoa errada.
+        cartao_nome, cartao_fone, vendedor = _vendedor_da_ponte(lead)
 
         if _looks_like_complaint(inbound_text):
             # Escalonamento fail-OPEN de propósito: perder a reclamação de um cliente
@@ -1141,7 +1230,8 @@ async def _maybe_send_handoff_bridge(
             except Exception as exc:
                 logger.warning("[BRIDGE] falha ao escalar reclamação (fail-soft) conv=%s: %s", conv_id, exc)
             return await _deliver_bridge_notice(
-                lead, phone, conversation, provider, _BRIDGE_ESCALATION_TEXT,
+                lead, phone, conversation, provider,
+                _BRIDGE_ESCALATION_MOLDE.format(vendedor=vendedor),
                 "[ponte] RECLAMAÇÃO pós-handoff — escalonado para gerência + aviso ao lead",
             )
 
@@ -1165,8 +1255,10 @@ async def _maybe_send_handoff_bridge(
                 "[BRIDGE] pergunta de negócio pós-handoff — aviso de recebimento conv=%s", conv_id,
             )
             return await _deliver_bridge_notice(
-                lead, phone, conversation, provider, _BRIDGE_ACK_TEXT,
-                "[ponte] pergunta de negócio pós-handoff — aviso de recebimento enviado (João responde)",
+                lead, phone, conversation, provider,
+                _BRIDGE_ACK_MOLDE.format(vendedor=vendedor),
+                f"[ponte] pergunta de negócio pós-handoff — aviso de recebimento "
+                f"enviado ({vendedor} responde)",
             )
 
         conversation_id = conversation.get("id")
@@ -1196,10 +1288,11 @@ async def _maybe_send_handoff_bridge(
         # (ver docstring: "Retorna True se o texto da ponte foi enviado"), não apenas
         # que chegamos até aqui sem exceção não-tratada.
         text_sent = False
+        texto_da_ponte = _BRIDGE_TEXT_MOLDE.format(vendedor=vendedor)
         try:
-            send_result = await provider.send_text(send_to, _BRIDGE_TEXT)
+            send_result = await provider.send_text(send_to, texto_da_ponte)
             save_message(
-                conversation_id, lead_id, "assistant", _BRIDGE_TEXT,
+                conversation_id, lead_id, "assistant", texto_da_ponte,
                 conversation.get("stage"), sent_by="bridge", wamid=extract_wamid(send_result),
             )
             logger.info(
@@ -1210,8 +1303,8 @@ async def _maybe_send_handoff_bridge(
         except Exception as exc:
             logger.warning("[BRIDGE] falha ao enviar texto conv=%s: %s", conversation_id, exc)
 
-        # Cartão do João: cooldown bem mais longo (24h) — reenviar o texto a cada 4h não
-        # deve martelar o vCard junto (redundante depois da 1ª vez no período).
+        # Cartão do vendedor: cooldown bem mais longo (24h) — reenviar o texto a cada 4h
+        # não deve martelar o vCard junto (redundante depois da 1ª vez no período).
         try:
             card_acquired = await redis.set(
                 f"bridge_card:{conversation_id}", "1", nx=True, ex=_BRIDGE_CARD_COOLDOWN_SECONDS,
@@ -1225,14 +1318,15 @@ async def _maybe_send_handoff_bridge(
         if card_acquired:
             try:
                 await provider.send_contact(
-                    send_to, contact_name=SUPERVISOR_NAME, contact_phone=SUPERVISOR_PHONE,
+                    send_to, contact_name=cartao_nome, contact_phone=cartao_fone,
                 )
                 save_message(
                     conversation_id, lead_id, "system",
-                    "[ponte] cartão de contato de João - Café Canastra reenviado",
+                    f"[ponte] cartão de contato de {cartao_nome} reenviado",
                     conversation.get("stage"), sent_by="bridge",
                 )
-                logger.info("[BRIDGE] cartão de contato reenviado conv=%s", conversation_id)
+                logger.info("[BRIDGE] cartão de %s reenviado conv=%s",
+                            cartao_nome, conversation_id)
             except Exception as exc:
                 logger.warning(
                     "[BRIDGE] falha ao reenviar cartão conv=%s: %s", conversation_id, exc,
@@ -1258,9 +1352,9 @@ def _optout_deterministico_cabe(channel: dict, lead: dict, conversation: dict) -
        Blacklist de 22/06: o parser achata clique de botao em texto comum, entao
        blacklistar ali transformaria negativa reflexa digitada em banimento.
 
-    2. A conversa NAO pertence ao fluxo de botoes. O bot tem opt-out proprio e mais
-       rico (`button_flow/effects.py::_aplicar_optout`): move o card para
-       "Descadastrado" e grava `opt_out_evidence`.
+    2. A conversa NAO pertence a NENHUM fluxo de botoes. Cada fluxo tem opt-out
+       proprio e mais rico (`button_flow/effects.py::_aplicar_optout`): move o card
+       para "Descadastrado" e grava `opt_out_evidence`.
 
        Sem esta condicao os dois caminhos rodam no MESMO turno, porque o rotulo do
        botao de saida do bot e exatamente "Parar mensagens" (`button_flow/flows.py:95`)
@@ -1271,9 +1365,17 @@ def _optout_deterministico_cabe(channel: dict, lead: dict, conversation: dict) -
        "Descadastrado", e a etapa nunca recebe ninguem — ressuscitando exatamente o
        defeito que `effects.py:147-158` declara ter consertado.
 
-    `is_button_flow_conversation` e fail-open False (devolve False em qualquer erro e
-    ja sai em False com o kill switch RECUPERACAO_ENABLED desligado, sem tocar no
-    banco), entao com o bot off este caminho continua valendo para todo mundo.
+       POR QUE `fluxo_da_conversa` E NAO UM PREDICADO DE UM FLUXO SO: a condicao e
+       "esta conversa e de ALGUM fluxo de botoes". `is_button_flow_conversation`
+       responde apenas pela Recuperacao por desenho, e com a ValerIA de botoes ligada
+       um lead tocando no opt-out DELA rodaria a colisao acima — a ValerIA entrega
+       lead ao vendedor e desliga `ai_enabled`, o que satisfaz a condicao 1 sozinho.
+
+    `fluxo_da_conversa` e fail-open None (devolve None em qualquer erro) e sai sem
+    TOCAR NO BANCO quando NENHUM fluxo esta ligado (`config.algum_fluxo_ligado`) — com
+    um kill switch por fluxo, o contrato de "sem consulta" e sobre o CONJUNTO, nao mais
+    sobre a chave da Recuperacao. Entao com os fluxos off este caminho continua valendo
+    para todo mundo.
     """
     sem_llm_no_turno = (
         channel.get("mode", "ai") == "human"
@@ -1282,7 +1384,40 @@ def _optout_deterministico_cabe(channel: dict, lead: dict, conversation: dict) -
     )
     if not sem_llm_no_turno:
         return False
-    return not is_button_flow_conversation(conversation, channel)
+    return fluxo_da_conversa(conversation, channel) is None
+
+
+def _runner_do_fluxo(fluxo: str | None):
+    """Qual runner atende `fluxo`, ou None quando o inbound segue o caminho normal.
+
+    A decisao de despacho isolada numa funcao: `fluxo_da_conversa` diz DE QUEM e a
+    conversa e esta diz QUEM a atende. Sao duas perguntas com dois donos — o gate do
+    inbound so precisa saber se veio um runner.
+
+    Resolve os runners pelo NOME no modulo (o `if` le as globais em tempo de chamada),
+    e nao por uma tabela de funcoes montada no import: uma tabela congelada nao e
+    alcancada por `patch.object(processor, "run_button_flow", ...)`, e os testes de
+    gate que dirigem `process_buffered_messages` de ponta a ponta (o `_patch_pipeline`
+    de tests/test_button_flow_runner_2026_09_09.py e de
+    tests/test_valeria_processor_2026_09_30.py) passariam a exercitar o runner de
+    verdade contra um Supabase dublado, em silencio.
+
+    Fluxo sem runner devolve None (e ERROR, porque e bug de codigo, nao estado
+    normal): um `flow_id` novo em `config._CHAVE_POR_FLUXO` sem uma linha aqui NAO
+    pode herdar o runner da Recuperacao — seria o bot dela rodando no fluxo errado, no
+    numero pessoal de um vendedor, por esquecimento de uma linha. E a mesma razao pela
+    qual os kill switches sao por fluxo.
+    """
+    if fluxo == FLUXO_VALERIA_BOTOES:
+        return run_valeria_botoes
+    if fluxo == FLUXO_RECUPERACAO:
+        return run_button_flow
+    if fluxo:
+        logger.error(
+            "[BUTTON FLOW] fluxo %r esta ligado e nao tem runner no processor — "
+            "inbound segue o caminho normal", fluxo,
+        )
+    return None
 
 
 async def process_buffered_messages(
@@ -1536,7 +1671,12 @@ async def process_buffered_messages(
         _update_last_msg(conversation["id"])
         return
 
-    # Gate do agente de RECUPERAÇÃO (fluxo fechado de botões, sem LLM).
+    # Gate dos FLUXOS DE BOTÕES (fechados, sem LLM): Recuperação e ValerIA de botões.
+    #
+    # Um gate para os dois, e o DESPACHO por fluxo (`_runner_do_fluxo`): a posição, a
+    # trava por lead e o re-coalescing abaixo são idênticos nos dois — o que muda é só
+    # qual motor roda o turno. Dois gates em sequência duplicariam as três coisas e
+    # divergiriam na primeira correção feita só em um deles.
     #
     # A POSIÇÃO desta chamada é o desenho inteiro do projeto, não uma conveniência:
     #
@@ -1556,9 +1696,12 @@ async def process_buffered_messages(
     #
     # 3) DEPOIS do gate de reação isolada ⇒ um 👍 do lead não é um turno do fluxo.
     #
-    # Fail-open: is_button_flow_conversation devolve False em qualquer erro (e já sai
-    # em False com o kill switch RECUPERACAO_ENABLED desligado, sem tocar no banco).
-    if is_button_flow_conversation(conversation, channel):
+    # Fail-open: `fluxo_da_conversa` devolve None em qualquer erro, e sai sem TOCAR NO
+    # BANCO quando NENHUM fluxo está ligado (`config.algum_fluxo_ligado`) — com um kill
+    # switch por fluxo, o contrato de "sem consulta" é sobre o CONJUNTO dos fluxos, não
+    # mais sobre a chave da Recuperação.
+    _rodar_fluxo = _runner_do_fluxo(fluxo_da_conversa(conversation, channel))
+    if _rodar_fluxo is not None:
         # O LOCK É ADQUIRIDO AQUI, e não movendo o gate para dentro do lock da IA
         # (linha ~1690): o lock da IA vive DEPOIS do gate de canal humano, do
         # VALERIA_ENABLED e do lead.ai_enabled — os três matam este caminho antes de
@@ -1593,19 +1736,23 @@ async def process_buffered_messages(
                     conversation["id"], phone,
                 )
             else:
-                await run_button_flow(
+                # Os dois runners têm a MESMA assinatura de palavra-chave, de
+                # propósito (`runner.run_button_flow` e
+                # `valeria_runner.processar_inbound`): é o que permite um call-site só
+                # e, com ele, uma única cópia da trava e do re-coalescing.
+                await _rodar_fluxo(
                     lead=lead, conversation=conversation, channel=channel,
                     provider=provider, texto=resolved_text,
                     message_type=_message_type, metadata=_metadata, wamid=wamid,
                 )
         _update_last_msg(conversation["id"])
         # RETURN INCONDICIONAL, inclusive quando o motor apenas IGNORA o evento.
-        # Seguir o fluxo normal significaria, na configuração real desta feature
-        # (número do João, mode='human'), morrer duas linhas abaixo no gate de canal
-        # humano — nada mudaria. E na configuração hipotética de rodar no número da
-        # ValerIA significaria entregar a conversa à IA GENERATIVA no meio de um
-        # fluxo fechado, que é precisamente o que a Decisão 2 do dossiê proíbe: os
-        # 1.208 leads seguem ai_enabled=false para que a ValerIA nunca fale por eles.
+        # Na Recuperação (número do João, mode='human') seguir o fluxo normal morreria
+        # duas linhas abaixo no gate de canal humano — nada mudaria. Na VALERIA DE
+        # BOTÕES, que roda no número da ValerIA (mode='ai') com leads de `ai_enabled`
+        # ligado, é este return que faz de "zero IA" um fato: sem ele o inbound
+        # continuaria até `run_agent` e a IA GENERATIVA falaria no meio de um fluxo
+        # fechado de botões — exatamente o que a Decisão 2 do dossiê proíbe.
         # "Ignorado" aqui quer dizer "este evento não move o fluxo" (clique repetido,
         # clique de nível 2 fora de hora, conversa encerrada) — silêncio é a resposta
         # certa, não uma escalada para outro agente.

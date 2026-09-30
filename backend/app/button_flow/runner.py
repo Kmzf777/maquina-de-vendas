@@ -122,7 +122,8 @@ def fluxo_da_conversa(conversation: dict, channel: dict) -> str | None:
     `get_or_create_conversation(..., agent_profile_id=...)`.
 
     Com TODOS os fluxos desligados sai sem tocar no banco (`algum_fluxo_ligado`),
-    que é o contrato que `buffer/processor.py:1275` e `:1560` documentam.
+    que é o contrato que `buffer/processor.py` documenta nos dois chamadores
+    (`_optout_deterministico_cabe` e o gate dos fluxos de botões).
 
     Fail-OPEN em qualquer erro (perfil ausente, coluna `kind`/`flow_id` ainda não
     migrada, banco fora): devolve None e o inbound segue o fluxo normal do
@@ -156,11 +157,13 @@ def fluxo_da_conversa(conversation: dict, channel: dict) -> str | None:
 def is_button_flow_conversation(conversation: dict, channel: dict) -> bool:
     """True quando esta conversa é atendida pelo fluxo de RECUPERAÇÃO.
 
-    Responde SÓ pela recuperação de propósito: os dois chamadores em
-    `buffer/processor.py` (o gate do bot e o `_optout_deterministico_cabe`) tratam
-    do fluxo da recuperação, e a ValerIA de botões tem runner e gate próprios. Toda
-    a decisão — precedência da conversa, default de `flow_id` NULL, kill switch por
-    fluxo, fail-open — vive em `fluxo_da_conversa`.
+    Responde SÓ pela recuperação, e é isso que a tirou do caminho do inbound: o
+    despacho de `buffer/processor.py` e o `_optout_deterministico_cabe` precisam da
+    pergunta "de QUAL fluxo é esta conversa" (e "de algum?"), então os dois chamam
+    `fluxo_da_conversa` direto desde 30/09/2026. Segue pública como o predicado de um
+    fluxo só, para quem precisar afirmar exatamente isso — toda a decisão
+    (precedência da conversa, default de `flow_id` NULL, kill switch por fluxo,
+    fail-open) continua vivendo em `fluxo_da_conversa`.
     """
     return fluxo_da_conversa(conversation, channel) == flows.FLOW_ID
 

@@ -68,8 +68,9 @@ def algum_fluxo_ligado() -> bool:
     Existe para o gate do inbound (`runner.fluxo_da_conversa`) poder sair sem
     TOCAR NO BANCO quando nenhum fluxo está ligado: resolver de qual fluxo é a
     conversa custa uma consulta a `agent_profiles`, e com tudo desligado a
-    resposta já é "nenhum". É o contrato que `buffer/processor.py:1275` e
-    `:1560` documentam ("sem tocar no banco").
+    resposta já é "nenhum". É o contrato que `buffer/processor.py` documenta nos
+    dois chamadores — `_optout_deterministico_cabe` e o gate dos fluxos de botões —
+    como "sem tocar no banco".
     """
     return any(enabled(fluxo) for fluxo in _CHAVE_POR_FLUXO)
 
