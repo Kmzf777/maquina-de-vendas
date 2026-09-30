@@ -13,6 +13,7 @@ import { QuickSendModal } from "@/components/campaigns/quick-send-modal";
 import { TemplatesTab } from "@/components/campaigns/templates-tab";
 import { FollowupBoard } from "@/components/campaigns/followup-board";
 import { ValeriaScoreModal } from "@/components/campaigns/valeria-score-modal";
+import { ValeriaFlowModal } from "@/components/campaigns/valeria-flow-modal";
 import { campaignNodeCount } from "@/lib/campaign-node-count";
 import { isSystemCampaign } from "@/lib/system-campaign";
 
@@ -57,6 +58,7 @@ function CampanhasPageInner() {
   const [showCadenceModal, setShowCadenceModal] = useState(false);
   const [showQuickSendModal, setShowQuickSendModal] = useState(false);
   const [showValeriaScoreModal, setShowValeriaScoreModal] = useState(false);
+  const [showValeriaFlowModal, setShowValeriaFlowModal] = useState(false);
   const [quickSendToast, setQuickSendToast] = useState<string | null>(null);
   const [cadenceName, setCadenceName] = useState("");
   const [channelId, setChannelId] = useState("");
@@ -197,6 +199,17 @@ function CampanhasPageInner() {
             className="bg-transparent text-[#111111] border border-[#111111] px-[14px] py-2 rounded-[4px] text-[13px] md:text-[14px] transition-transform hover:scale-110 active:scale-[0.85]"
           >
             Valeria Score
+          </button>
+          {/* A irmã acima é sobre o SCORE do lead; esta edita o texto das telas e os
+              rótulos dos botões do roteiro. O `title` carrega a diferença, como as
+              abas do próprio modal fazem — o rótulo é o nome da feature, que é o mesmo
+              que aparece no cabeçalho do modal. */}
+          <button
+            onClick={() => setShowValeriaFlowModal(true)}
+            title="O texto que o lead lê em cada tela e o rótulo de cada botão do roteiro da ValerIA"
+            className="bg-transparent text-[#111111] border border-[#111111] px-[14px] py-2 rounded-[4px] text-[13px] md:text-[14px] transition-transform hover:scale-110 active:scale-[0.85]"
+          >
+            ValerIA de Botões
           </button>
           <button
             onClick={() => setShowQuickSendModal(true)}
@@ -348,6 +361,11 @@ function CampanhasPageInner() {
       <ValeriaScoreModal
         open={showValeriaScoreModal}
         onClose={() => setShowValeriaScoreModal(false)}
+      />
+
+      <ValeriaFlowModal
+        open={showValeriaFlowModal}
+        onClose={() => setShowValeriaFlowModal(false)}
       />
 
       {quickSendToast && (

@@ -26,13 +26,18 @@
  * repassados sem tradução"), então o que chega à tela é o `{"detail": "..."}` do
  * FastAPI, não `{"error": "..."}`. É o bug que `cadence-card.test.tsx` documenta ter
  * fechado: ler só `data.error` fazia o operador ver "Bad Request" em vez do motivo.
- * `mensagemDeErro` cobre as duas chaves para não depender dessa escolha do proxy.
+ * `mensagemDeErro` cobre as duas chaves para não depender dessa escolha do proxy. Ela
+ * mora em `valeria-flow-shared.ts`, e não aqui, porque `valeria-flow-channels.tsx`
+ * também a lê e esta casca importa aquele painel: o cabeçalho do módulo compartilhado
+ * conta o ciclo de módulos que a mudança desfez.
  *
- * ── Por que os painéis são props, e não filhos ──────────────────────────────────
- * `valeria-flow-editor.tsx` e `valeria-flow-channels.tsx` são de outras tarefas. O
- * contrato delas está declarado em `valeria-flow-types.ts` (`PainelFluxoProps`,
- * `PainelCanaisProps`) e é montado abaixo; enquanto não existem, cada aba rende um
- * marcador. Trocar o marcador pelo painel é uma linha, sem reformar a casca.
+ * ── Por que os painéis recebem props, e não montam o próprio estado ─────────────
+ * O contrato dos dois está declarado em `valeria-flow-types.ts` (`PainelFluxoProps`,
+ * `PainelCanaisProps`) e é montado abaixo, em `propsFluxo`/`propsCanais`. Os dados, a
+ * gravação e a faixa de erro são desta casca; os painéis escolhem o que editar e
+ * desenham. `ValeriaFlowChannels` é a exceção declarada: os canais não vêm no `GET` do
+ * fluxo, então ele busca os próprios (`GET /api/valeria-flow/channels`) e daqui recebe
+ * só o `flow_id`.
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -43,54 +48,15 @@ import type {
   PainelCanaisProps,
   PainelFluxoProps,
 } from "./valeria-flow-types";
+import { mensagemDeErro } from "./valeria-flow-shared";
+import { ValeriaFlowChannels } from "./valeria-flow-channels";
+import { ValeriaFlowEditor } from "./valeria-flow-editor";
 
 type Aba = "fluxo" | "canais";
 const ABAS: { chave: Aba; rotulo: string; descricao: string }[] = [
   { chave: "fluxo", rotulo: "Fluxo", descricao: "Texto das telas e rótulos dos botões" },
   { chave: "canais", rotulo: "Onde está ativo", descricao: "Qual número atende por este fluxo" },
 ];
-
-/**
- * A mensagem do backend, ou `padrao` se não houver nenhuma.
- *
- * Ordem: `detail` (FastAPI), `error` (o que o proxy devolve quando é ELE que falha —
- * "Backend indisponível"), `message`. Um `detail` de lista é o 422 do Pydantic (cada
- * item com `msg`); um `detail` de objeto é a forma que `campaigns/router.py` usa
- * (`{problemas: [...]}`) e que pode reaparecer aqui.
- */
-export function mensagemDeErro(corpo: unknown, padrao: string): string {
-  const body = (corpo ?? {}) as Record<string, unknown>;
-  for (const bruto of [body.detail, body.error, body.message]) {
-    if (typeof bruto === "string" && bruto.trim()) return bruto.trim();
-    if (Array.isArray(bruto)) {
-      const textos = bruto
-        .map((item) => {
-          if (typeof item === "string") return item;
-          const campo = item as Record<string, unknown> | null;
-          const msg = campo?.mensagem ?? campo?.msg;
-          return typeof msg === "string" ? msg : null;
-        })
-        .filter((texto): texto is string => Boolean(texto && texto.trim()));
-      if (textos.length) return textos.join(" · ");
-    }
-    if (bruto && typeof bruto === "object") {
-      const campo = bruto as Record<string, unknown>;
-      const aninhado = campo.mensagem ?? campo.msg ?? campo.problemas;
-      if (typeof aninhado === "string" && aninhado.trim()) return aninhado.trim();
-      if (Array.isArray(aninhado)) {
-        const textos = aninhado
-          .map((item) => {
-            const campoItem = item as Record<string, unknown> | null;
-            const msg = campoItem?.mensagem ?? campoItem?.msg;
-            return typeof msg === "string" ? msg : null;
-          })
-          .filter((texto): texto is string => Boolean(texto && texto.trim()));
-        if (textos.length) return textos.join(" · ");
-      }
-    }
-  }
-  return padrao;
-}
 
 /**
  * Recoloca no lugar o item que o `PUT`/`DELETE` devolveu.
@@ -300,31 +266,14 @@ export function ValeriaFlowModal({ open, onClose }: { open: boolean; onClose: ()
             // Sem dados e sem carregar: a faixa acima já diz por quê.
             <p className="px-5 py-12 text-center text-[13px] text-[#7b7b78]">Nada a editar por enquanto.</p>
           ) : aba === "fluxo" ? (
-            <PainelPendente
-              nome="valeria-flow-editor.tsx"
-              resumo={`${propsFluxo.dados.nos.length} telas e ${propsFluxo.dados.terminais.length} desfechos, prontos para editar.`}
-            />
+            <ValeriaFlowEditor {...propsFluxo} />
           ) : (
-            <PainelPendente nome="valeria-flow-channels.tsx" resumo={`Fluxo ${propsCanais.flowId}.`} />
+            // Só na aba ativa, de propósito: montar o painel de canais escondido
+            // dispararia o `GET /channels` numa aba que o operador não abriu.
+            <ValeriaFlowChannels {...propsCanais} />
           )}
         </div>
       </section>
-    </div>
-  );
-}
-
-/**
- * O lugar onde o painel da aba monta. Sai quando `valeria-flow-editor.tsx` e
- * `valeria-flow-channels.tsx` existirem — a casca já monta `propsFluxo`/`propsCanais`
- * no formato que elas declaram em `valeria-flow-types.ts`.
- */
-function PainelPendente({ nome, resumo }: { nome: string; resumo: string }) {
-  return (
-    <div className="px-4 py-10 text-center sm:px-5">
-      <p className="text-[13px] text-[#111111]">{resumo}</p>
-      <p className="mt-1 text-[12px] text-[#7b7b78]">
-        Painel <code className="rounded-[4px] bg-[#faf9f6] px-1 py-0.5">{nome}</code> em implementação.
-      </p>
     </div>
   );
 }

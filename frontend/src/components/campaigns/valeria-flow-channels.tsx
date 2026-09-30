@@ -40,21 +40,21 @@
  * sabe o novo `perfil_compartilhado` de cada linha — deduzir localmente apagaria o
  * aviso de um canal que continua em risco, ou o manteria num que já saiu dele.
  *
- * ── Por que `mensagemDeErro` vem da casca ──────────────────────────────────────
+ * ── Por que `mensagemDeErro` é compartilhada ───────────────────────────────────
  * O cabeçalho de `valeria-flow-modal.tsx` diz por quê: "Duas telas com dois `fetch`
  * próprios divergiriam na leitura do erro, e o erro é o único conteúdo acionável que
  * o backend devolve". Os textos que este painel pode receber são escritos para o
  * operador — "canal {id} não encontrado" (404), "informe o canal que vai atender pelo
  * fluxo de botões" (400) e o 503 que nomeia a migration `20260929_valeria_botoes.sql`,
  * que é o estado real do banco hoje. Todos aparecem VERBATIM.
- * A casca ainda não importa este painel, então hoje não há ciclo; quando ela importar,
- * o ciclo é benigno — `mensagemDeErro` é uma `function` declaration (hoisted) e este
- * módulo não a chama em tempo de avaliação, só dentro dos handlers.
+ * Ela vem de `valeria-flow-shared.ts`, e não da casca: a casca importa ESTE painel para
+ * montá-lo na aba, e importá-la de volta fecharia um ciclo de módulos que só se
+ * sustentava pelo hoisting de uma `function` declaration.
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { PainelCanaisProps } from "./valeria-flow-types";
-import { mensagemDeErro } from "./valeria-flow-modal";
+import { mensagemDeErro } from "./valeria-flow-shared";
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // O contrato de GET /api/valeria-flow/channels

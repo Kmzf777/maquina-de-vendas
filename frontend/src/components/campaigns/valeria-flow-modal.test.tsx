@@ -16,21 +16,24 @@
  *     proxy do Next). O 503 da migration pendente é o estado real do banco hoje: se
  *     ele virar "Erro ao carregar", ninguém descobre que falta aplicar o SQL.
  *
+ *   • CADA ABA MONTA O PAINEL DE VERDADE. A casca nasceu com um marcador em cada aba
+ *     (`PainelPendente`) porque os dois painéis eram de outras tarefas; o marcador
+ *     saiu. Um teste que só olhasse abas e `aria-selected` continuaria verde com o
+ *     marcador de volta no lugar do editor.
+ *
  * Nota de cobertura: o salvamento é exercitado em `gravarConteudo`, que É a
- * implementação (o `salvar` da casca são seis linhas de `setState` em volta dela).
- * Enquanto `valeria-flow-editor.tsx` não existe, nenhum controle renderizado chama
- * `salvar` — e pôr um botão só para o teste alcançá-lo deixaria UI morta no produto.
- * Que a mensagem recusada aparece na faixa `role="alert"` está coberto pelo caminho
- * do `GET`, que escreve no MESMO estado `erro`.
+ * implementação (o `salvar` da casca são seis linhas de `setState` em volta dela), e a
+ * ponta do editor que o chama está coberta em `valeria-flow-editor.test.tsx` com um
+ * `salvar` espião. Que a mensagem recusada aparece na faixa `role="alert"` está coberto
+ * pelo caminho do `GET`, que escreve no MESMO estado `erro`.
+ *
+ * `mensagemDeErro` mudou de casa (`valeria-flow-shared.ts`) e os casos dela foram com
+ * ela, para `valeria-flow-shared.test.ts`.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import {
-  ValeriaFlowModal,
-  aplicarItem,
-  gravarConteudo,
-  mensagemDeErro,
-} from "./valeria-flow-modal";
+import { ValeriaFlowModal, aplicarItem, gravarConteudo } from "./valeria-flow-modal";
+import type { CanaisResposta } from "./valeria-flow-channels";
 import type { FluxoResposta, NoFluxo, ReservadoFluxo } from "./valeria-flow-types";
 
 const N0: NoFluxo = {
@@ -110,9 +113,39 @@ const FLUXO: FluxoResposta = {
   prazos: [{ id: "p30", rotulo: "Em 30 dias", destino: "T_ADIADO", dias: 30, editavel: false }],
 };
 
+/**
+ * A resposta de `GET /api/valeria-flow/channels`. O painel "Onde está ativo" busca os
+ * canais POR CONTA PRÓPRIA — eles não vêm no `GET` do fluxo —, então um mock que
+ * devolvesse `FLUXO` para as duas URLs faria aquele painel ler `canais` de um corpo que
+ * não os tem. `ligado: false` é o estado real do ambiente hoje.
+ */
+const CANAIS: CanaisResposta = { flow_id: "valeria_botoes_v1", ligado: false, canais: [] };
+
 type Corpo = Record<string, unknown>;
 const resposta = (corpo: Corpo, status = 200) =>
   ({ ok: status < 400, status, statusText: "Bad Request", json: async () => corpo }) as Response;
+
+/**
+ * O mock roteia por URL. A casca chama `/api/valeria-flow`; o painel de canais chama
+ * `/api/valeria-flow/channels`. É essa separação que deixa "o fluxo não foi buscado de
+ * novo" ser afirmável depois que a aba de canais passou a montar um painel que também
+ * busca.
+ */
+function rotear(fluxo: Corpo = FLUXO as unknown as Corpo, status = 200) {
+  vi.mocked(global.fetch).mockImplementation(async (entrada: RequestInfo | URL) =>
+    String(entrada) === "/api/valeria-flow/channels"
+      ? resposta(CANAIS as unknown as Corpo)
+      : resposta(fluxo, status),
+  );
+}
+
+/** Quantas vezes o FLUXO foi buscado — ignorando o `GET` dos canais. */
+function buscasDoFluxo(): number {
+  return vi.mocked(global.fetch).mock.calls.filter(([url]) => String(url) === "/api/valeria-flow").length;
+}
+
+/** O editor de verdade: a coluna de ramos só existe em `valeria-flow-editor.tsx`. */
+const colunaDeRamos = () => screen.getByRole("navigation", { name: "Ramos do fluxo" });
 
 beforeEach(() => {
   global.fetch = vi.fn();
@@ -130,24 +163,60 @@ describe("ValeriaFlowModal — carregamento", () => {
     expect(global.fetch).not.toHaveBeenCalled();
   });
 
-  it("mostra o estado de carregamento antes da resposta e o troca pelo conteúdo", async () => {
-    vi.mocked(global.fetch).mockResolvedValue(resposta(FLUXO as unknown as Corpo));
+  it("mostra o estado de carregamento antes da resposta e o troca pelo editor", async () => {
+    rotear();
     render(<ValeriaFlowModal open onClose={() => {}} />);
 
-    // Antes da resposta: o aviso de carregamento, e nenhuma contagem de telas.
+    // Antes da resposta: o aviso de carregamento, e nenhum editor.
     expect(screen.getByText("Carregando o fluxo…")).toBeTruthy();
+    expect(screen.queryByRole("navigation", { name: "Ramos do fluxo" })).toBeNull();
 
     await waitFor(() => expect(screen.queryByText("Carregando o fluxo…")).toBeNull());
-    expect(screen.getByText(/1 telas e 1 desfechos/)).toBeTruthy();
+    expect(colunaDeRamos()).toBeTruthy();
     expect(global.fetch).toHaveBeenCalledWith("/api/valeria-flow", expect.objectContaining({ cache: "no-store" }));
   });
 });
 
-describe("ValeriaFlowModal — abas", () => {
-  it("troca para 'Onde está ativo' sem refazer o GET", async () => {
-    vi.mocked(global.fetch).mockResolvedValue(resposta(FLUXO as unknown as Corpo));
+describe("ValeriaFlowModal — cada aba monta o painel de verdade", () => {
+  it("a aba 'Fluxo' monta o editor com os dados do servidor, não um marcador", async () => {
+    rotear();
     render(<ValeriaFlowModal open onClose={() => {}} />);
-    await waitFor(() => expect(screen.getByText(/1 telas e 1 desfechos/)).toBeTruthy());
+
+    // O editor de verdade: as três colunas e o nó de entrada já aberto.
+    await waitFor(() => expect(colunaDeRamos()).toBeTruthy());
+    expect(screen.getByRole("navigation", { name: "Telas de Entrada" })).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "N0 · Setor" })).toBeTruthy();
+    // E o marcador de "painel em implementação" não existe mais em aba nenhuma.
+    expect(screen.queryByText(/em implementação/)).toBeNull();
+  });
+
+  it("a aba 'Onde está ativo' monta o painel de canais, que busca os próprios canais", async () => {
+    rotear();
+    render(<ValeriaFlowModal open onClose={() => {}} />);
+    await waitFor(() => expect(colunaDeRamos()).toBeTruthy());
+
+    // O painel de canais não está montado enquanto a aba está fechada — montá-lo
+    // escondido dispararia o `GET /channels` numa aba que ninguém abriu.
+    expect(global.fetch).not.toHaveBeenCalledWith("/api/valeria-flow/channels", expect.anything());
+
+    fireEvent.click(screen.getByRole("tab", { name: "Onde está ativo" }));
+
+    await waitFor(() => expect(screen.getByRole("heading", { name: "Canais de WhatsApp" })).toBeTruthy());
+    expect(global.fetch).toHaveBeenCalledWith(
+      "/api/valeria-flow/channels",
+      expect.objectContaining({ cache: "no-store" }),
+    );
+    // O kill switch desligado é o estado do ambiente hoje, e o painel o anuncia.
+    expect(screen.getByText("O fluxo de botões está DESLIGADO")).toBeTruthy();
+    expect(screen.queryByText(/em implementação/)).toBeNull();
+  });
+});
+
+describe("ValeriaFlowModal — abas", () => {
+  it("troca para 'Onde está ativo' sem refazer o GET do fluxo", async () => {
+    rotear();
+    render(<ValeriaFlowModal open onClose={() => {}} />);
+    await waitFor(() => expect(colunaDeRamos()).toBeTruthy());
 
     const fluxo = screen.getByRole("tab", { name: "Fluxo" });
     const canais = screen.getByRole("tab", { name: "Onde está ativo" });
@@ -159,24 +228,28 @@ describe("ValeriaFlowModal — abas", () => {
     expect(canais.getAttribute("aria-selected")).toBe("true");
     expect(fluxo.getAttribute("aria-selected")).toBe("false");
     // O painel de canais recebeu o flow_id que veio do servidor.
-    expect(screen.getByText(/valeria_botoes_v1/)).toBeTruthy();
-    // E o fluxo NÃO foi buscado de novo: o carregamento é por abertura.
-    expect(global.fetch).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(screen.getByText("valeria_botoes_v1")).toBeTruthy());
+    // E o FLUXO não foi buscado de novo: o carregamento é por abertura. (O `GET` dos
+    // canais é do painel, e conta separado.)
+    expect(buscasDoFluxo()).toBe(1);
 
     fireEvent.click(fluxo);
-    expect(screen.getByText(/1 telas e 1 desfechos/)).toBeTruthy();
+    expect(colunaDeRamos()).toBeTruthy();
+    expect(buscasDoFluxo()).toBe(1);
   });
 
   it("anda entre as abas com as setas do teclado", async () => {
-    vi.mocked(global.fetch).mockResolvedValue(resposta(FLUXO as unknown as Corpo));
+    rotear();
     render(<ValeriaFlowModal open onClose={() => {}} />);
-    await waitFor(() => expect(screen.getByText(/1 telas e 1 desfechos/)).toBeTruthy());
+    await waitFor(() => expect(colunaDeRamos()).toBeTruthy());
 
     fireEvent.keyDown(screen.getByRole("tablist"), { key: "ArrowRight" });
     expect(screen.getByRole("tab", { name: "Onde está ativo" }).getAttribute("aria-selected")).toBe("true");
+    await waitFor(() => expect(screen.getByRole("heading", { name: "Canais de WhatsApp" })).toBeTruthy());
 
     fireEvent.keyDown(screen.getByRole("tablist"), { key: "ArrowRight" });
     expect(screen.getByRole("tab", { name: "Fluxo" }).getAttribute("aria-selected")).toBe("true");
+    expect(colunaDeRamos()).toBeTruthy();
   });
 });
 
@@ -254,26 +327,6 @@ describe("gravarConteudo — a recusa do backend é repassada palavra por palavr
     } as unknown as Response);
 
     expect((await gravarConteudo("N0", { corpo: "x" })).erro).toBe("Não foi possível salvar este texto.");
-  });
-});
-
-describe("mensagemDeErro", () => {
-  it("prefere `detail` (FastAPI) e aceita `error` (o proxy do Next)", () => {
-    expect(mensagemDeErro({ detail: "do backend" }, "padrão")).toBe("do backend");
-    expect(mensagemDeErro({ error: "Backend indisponível" }, "padrão")).toBe("Backend indisponível");
-  });
-
-  it("junta as mensagens de um `detail` em lista (422 do Pydantic, problemas[])", () => {
-    expect(mensagemDeErro({ detail: [{ msg: "campo obrigatório" }, { msg: "tipo inválido" }] }, "padrão"))
-      .toBe("campo obrigatório · tipo inválido");
-    expect(mensagemDeErro({ detail: { problemas: [{ mensagem: "nó N3 sem template" }] } }, "padrão"))
-      .toBe("nó N3 sem template");
-  });
-
-  it("usa o padrão só quando não há mensagem nenhuma", () => {
-    expect(mensagemDeErro({}, "padrão")).toBe("padrão");
-    expect(mensagemDeErro(null, "padrão")).toBe("padrão");
-    expect(mensagemDeErro({ detail: "   " }, "padrão")).toBe("padrão");
   });
 });
 
