@@ -344,7 +344,10 @@ def test_parametros_da_rpc_saem_da_cadencia_resolvida():
     assert args["p_stage_days"] == 2          # gatilho da ata (01:07:10)
     assert args["p_silence_days"] == 2        # o SEGUNDO relógio (spec 2026-09-23 §5)
     assert args["p_last_speaker"] == "qualquer"
-    assert args["p_limit"] == 7               # o teto vai JUNTO para o banco
+    # NAO o teto (`teto=7`): o teto corta em Python, depois da RPC. Mandar o teto
+    # aqui era a avaria de 29/09 — a RPC ordena por silencio mais antigo e devolvia
+    # sempre os mesmos 7 ja matriculados. Ver `JOAO_JANELA_CANDIDATOS`.
+    assert args["p_limit"] == S.JOAO_JANELA_CANDIDATOS
     assert args["p_channel_id"] == JOAO_CHANNEL["id"]
     assert args["p_audience"] == S.JOAO_CADENCIA_AUDIENCIA
 
@@ -2332,3 +2335,58 @@ def test_o_agendador_decide_pelo_que_esta_NA_FILA_e_nao_pelo_que_ja_saiu():
     )
     assert fake.rpcs == [], "nem deveria perguntar quem é elegível"
     assert fake.inserts == []
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# A JANELA DE CANDIDATOS NÃO É O TETO DE MATRÍCULA
+# ═══════════════════════════════════════════════════════════════════════════════
+# Avaria medida em produção em 30/09/2026, com as esteiras já ligadas: o código
+# mandava `p_limit=teto`. A RPC ordena por silêncio mais antigo, então devolvia
+# sempre os MESMOS 20 — e assim que eles eram matriculados, `motivo_para_pular_joao`
+# passava a pular todos (`cadencia_em_andamento`). Como a matrícula não move o card
+# nem muda o `last_message_at`, eles seguiam sendo os 20 mais antigos. A varredura
+# devolvia 20, pulava 20 e matriculava ZERO, para sempre, sem erro e sem alerta.
+#
+# 88 cards entraram no primeiro tick e a varredura não avançou mais nenhum.
+def test_a_janela_da_rpc_e_muito_maior_que_o_teto_por_passagem():
+    """Se as duas voltarem a ser o mesmo número, a fome volta.
+
+    Quem limita VOLUME é o corte em Python (teto por passagem + orçamento do dia). A
+    janela só precisa ser larga o bastante para que os pulos permanentes não escondam
+    quem ainda não entrou.
+    """
+    assert S.JOAO_JANELA_CANDIDATOS >= 50 * S.JOAO_TETO_PADRAO, (
+        f"janela {S.JOAO_JANELA_CANDIDATOS} perto demais do teto {S.JOAO_TETO_PADRAO}"
+    )
+
+
+def test_a_varredura_pede_a_JANELA_e_nao_o_teto():
+    """O argumento que vai para o banco é o que estava errado — é ele que o teste prende."""
+    fake = _com_orcamento(teto_diario=150, rpc_rows=[])
+    _rodar(fake, _ligada("novo"))
+
+    assert fake.rpcs, "não chegou a consultar a RPC"
+    _, args = fake.rpcs[0]
+    assert args["p_limit"] == S.JOAO_JANELA_CANDIDATOS, args
+    assert args["p_limit"] != S.JOAO_TETO_PADRAO, (
+        "p_limit voltou a ser o teto — a varredura vai travar nos mesmos cards"
+    )
+
+
+def test_o_teto_por_passagem_continua_cortando_mesmo_com_a_janela_larga():
+    """A janela larga NÃO pode virar avalanche: o corte em Python é quem segura."""
+    fake = _com_orcamento(teto_diario=150,
+                          rpc_rows=[_linha_rpc(n) for n in range(1, 61)])
+    _rodar(fake, _ligada("novo"))
+
+    matriculas = {
+        (linha.get("metadata") or {}).get("matricula_id")
+        for _tabela, linhas in fake.inserts for linha in linhas
+    }
+    # DOIS funis: `_ligada("novo")` liga a cadência em Atacado E Private Label, e o
+    # teto é POR PASSAGEM de cada par (funil, cadência) — não um teto global.
+    esperado = 2 * S.JOAO_TETO_PADRAO
+    assert len(matriculas) == esperado, (
+        f"{len(matriculas)} matrículas com 60 candidatos por funil — o teto por "
+        f"passagem ({S.JOAO_TETO_PADRAO} x 2 funis) deixou de cortar"
+    )

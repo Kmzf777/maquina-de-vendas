@@ -816,6 +816,45 @@ JOAO_CADENCIA_AUDIENCIA = "humano"
 JOAO_TETO_PADRAO = 20
 JOAO_TETO_ENV = "JOAO_CADENCIA_TETO"
 
+# JANELA DE CANDIDATOS — quantos cards a RPC OLHA, e não quantos entram.
+#
+# ── A AVARIA QUE ISTO CORRIGE (medida em 30/09/2026, com as esteiras já ligadas) ──
+# O código mandava `p_limit=teto`, colando as duas ideias: a janela de candidatos ERA
+# o teto de matrícula. E a RPC ordena por silêncio mais antigo, então ela devolve
+# sempre os MESMOS 20 primeiros.
+#
+# Assim que esses 20 são matriculados, `motivo_para_pular_joao` passa a pular todos
+# eles (`cadencia_em_andamento`) — e como a matrícula não move o card nem muda o
+# `last_message_at`, eles continuam sendo os 20 mais antigos na varredura seguinte. A
+# esteira devolve 20, pula 20 e matricula ZERO, para sempre, sem erro e sem alerta.
+#
+# Medido em produção: 88 cards entraram no primeiro tick (20+20+21+20+5+2) e a
+# varredura não avançou mais um único card nos ticks seguintes. Confirmado chamando a
+# RPC à mão: dos 20 devolvidos, 20 já estavam matriculados.
+#
+# É EXATAMENTE o modo de falha que a própria RPC documenta em `20260904`:
+#
+#     "Lead que o Python pula nunca recebe mensagem, entao o `last_message_at` dele
+#      nunca muda e ele fica no TOPO da ordenacao para sempre, ocupando um slot.
+#      Bastam `p_limit` leads assim para a esteira devolver 20 linhas, pular as 20 e
+#      parar de funcionar em silencio — sem erro, sem alerta."
+#
+# ── POR QUE UMA JANELA LARGA RESOLVE ────────────────────────────────────────────
+# Quem limita o VOLUME são o teto por passagem (20) e o orçamento do dia, os dois do
+# lado Python. A janela só precisa ser larga o bastante para que os pulos permanentes
+# não escondam quem ainda não entrou. 2.000 está muito acima de qualquer etapa dos
+# funis do João (a maior, "Em conversa" do Private Label, tem 560 cards), e a consulta
+# é indexada por `entered_stage_at`.
+#
+# ── O LIMITE DESTA CORREÇÃO, DITO EM VOZ ALTA ───────────────────────────────────
+# Se um dia uma etapa acumular MAIS de 2.000 cards permanentemente pulados, a fome
+# volta. O conserto definitivo é mover a condição "já tem job aberto" para o WHERE da
+# RPC, junto das outras paradas permanentes (blacklist, número errado, conversa
+# finalizada) — que é o que a própria RPC diz que deve ser feito. Isso é migration com
+# DROP+CREATE de função compartilhada com as campanhas, e foi deixado para uma entrega
+# própria em vez de ser enfiado no meio de uma correção urgente.
+JOAO_JANELA_CANDIDATOS = 2000
+
 # COOLDOWN de reentrada, em dias. O defeito que a RPC documenta em 20260904: quando a
 # cadência acaba o card NÃO sai da etapa, então na varredura seguinte ele é elegível de
 # novo — um template a cada poucos dias, para sempre. Exclusão TEMPORÁRIA e não
@@ -1612,7 +1651,10 @@ def _varrer_cadencia_joao(
         # tanto se a última palavra foi dele quanto se foi nossa.
         "p_last_speaker": "qualquer",
         "p_audience": JOAO_CADENCIA_AUDIENCIA,
-        "p_limit": teto,
+        # A JANELA, não o teto — ver `JOAO_JANELA_CANDIDATOS`. Mandar `teto` aqui
+        # fazia a varredura devolver sempre os mesmos 20 já matriculados e parar de
+        # avançar em silêncio. Quem limita o volume é o corte em Python, abaixo.
+        "p_limit": JOAO_JANELA_CANDIDATOS,
     }
     try:
         linhas = sb.rpc("get_deals_stage_stagnant", args).execute().data or []
