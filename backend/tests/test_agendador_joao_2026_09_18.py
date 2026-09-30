@@ -2154,6 +2154,23 @@ def _com_orcamento(teto_diario=None, disparados=0, rpc_rows=None):
     return _FakeSupabase(rows=linhas, rpc_rows=rpc_rows or [])
 
 
+def _rpc_por_cadencia(quantos=990):
+    """Candidatos DIFERENTES para cada (funil, etapa) que a varredura perguntar.
+
+    O dublê padrão devolve a MESMA lista de leads para todas as esteiras. Com isso,
+    qualquer asserção que conte `{lead_id}` num set fica cega para o gasto DUPLICADO
+    do orçamento entre cadências: a segunda esteira rematricula os mesmos leads da
+    primeira e o set não cresce. Medido em 30/09/2026 — apagar `saldo -= matriculados`
+    (a linha que reparte o teto entre as seis esteiras) não quebrava um único dos 1.017
+    testes do motor.
+    """
+    def _linhas(_nome, args):
+        marca = f"{args['p_pipeline_id']}-{args['p_stage_key']}"
+        return [_linha_rpc(n, lead=f"lead-{marca}-{n}", deal=f"deal-{marca}-{n}")
+                for n in range(1, quantos + 1)]
+    return _linhas
+
+
 def test_o_orcamento_esgotado_zera_a_matricula_do_dia():
     """"Para de matricular quando o saldo acabou" (spec §4). O toque 1 sai
     praticamente na hora, então matricular N cards gasta N do orçamento.
@@ -2184,7 +2201,10 @@ def test_o_orcamento_parcial_corta_no_saldo_e_nao_no_teto_por_passagem():
 def test_o_orcamento_e_UM_so_repartido_entre_as_cadencias():
     """O saldo é do MOTOR e não da cadência: o que o funil Atacado gastar falta para o
     Private Label. Somar 5 esteiras × 100 seria 500 templates/dia num teto de 100."""
-    fake = _com_orcamento(teto_diario=2, rpc_rows=[_linha_rpc(n) for n in range(1, 6)])
+    # Candidatos DISTINTOS por funil (ver `_rpc_por_cadencia`): com a lista repetida
+    # do dublê padrão, o Private Label rematricularia os MESMOS leads do Atacado e o
+    # set não cresceria — o teste passaria mesmo sem o motor repartir nada.
+    fake = _com_orcamento(teto_diario=2, rpc_rows=_rpc_por_cadencia(quantos=5))
     _rodar(fake, _ligada("novo"))          # liga nos DOIS funis-irmãos
 
     leads = {j["lead_id"] for j in _jobs_criados(fake)}
@@ -2390,3 +2410,76 @@ def test_o_teto_por_passagem_continua_cortando_mesmo_com_a_janela_larga():
         f"{len(matriculas)} matrículas com 60 candidatos por funil — o teto por "
         f"passagem ({S.JOAO_TETO_PADRAO} x 2 funis) deixou de cortar"
     )
+
+
+# ── O teto da TELA contra a base inteira (verificação de 30/09/2026) ──────────
+# Alargar a janela de candidatos (`JOAO_JANELA_CANDIDATOS`) tirou a fome — e, com ela,
+# tirou o limite ACIDENTAL que a fome impunha. Medido em produção no mesmo dia: 990
+# cards ficam elegíveis no instante em que a janela abre. A partir daqui a ÚNICA coisa
+# entre esses 990 e uma avalanche é o teto diário que o dono digita na tela.
+#
+# Os testes acima provam o teto em pequena escala (saldo 1, 2, 3). Estes dois provam
+# na escala real, que é a pergunta que importa depois da correção da janela.
+
+def _ligadas(*codigos: str) -> dict:
+    """Várias cadências ligadas de uma vez, no formato funil-primeiro.
+
+    `_ligada` devolve `{funil: {codigo: {...}}}` para UM código; juntar três exige
+    mesclar por funil, e não `dict.update` no topo — senão o último código apagaria
+    os anteriores do mesmo funil e o teste rodaria com uma esteira só.
+    """
+    juntos: dict[str, dict] = {}
+    for codigo in codigos:
+        for funil, cadencias in _ligada(codigo).items():
+            juntos.setdefault(funil, {}).update(cadencias)
+    return juntos
+
+
+AS_SEIS_DE_PROSPECCAO = ("novo", "em_conversa", "proposta")
+
+
+def test_o_teto_da_tela_segura_a_base_inteira_numa_passagem():
+    """990 elegíveis, teto da tela em 150: entram 150. Nem 151, nem os 990.
+
+    O teto por passagem é posto em 10.000 de propósito — ele não pode ser quem segura
+    aqui. Quem tem de morder é o número que o dono digitou na tela.
+    """
+    fake = _com_orcamento(teto_diario=150, rpc_rows=_rpc_por_cadencia())
+    _rodar(fake, _ligadas(*AS_SEIS_DE_PROSPECCAO), teto=10_000)
+
+    matriculas = {j["lead_id"] for j in _so_toques(_jobs_criados(fake))}
+    assert len(matriculas) == 150, (
+        f"{len(matriculas)} matrículas com teto de 150 — o teto da tela não segurou a "
+        f"base inteira"
+    )
+
+
+def test_o_teto_da_tela_segura_o_DIA_inteiro_e_nao_so_um_tick():
+    """O tick roda a cada 30s. O teto é do DIA, não da passagem.
+
+    Este é o modo de falha que o teto existe para impedir e que o teto por passagem
+    nunca impediu: 20 cards por esteira por tick, a cada 30s, são ~2.400 matrículas por
+    hora por esteira. Somem-se seis esteiras e a base de 990 sai inteira em minutos —
+    o incidente de 16/09/2026 (888 mensagens em 6 minutos) com outro nome.
+
+    Cada volta reconstrói o dublê com o acumulado do dia, que é o que
+    `disparos_comprometidos_hoje` leria do banco no tick seguinte.
+    """
+    acumulado = 0
+    por_tick = []
+    for _ in range(20):
+        fake = _com_orcamento(teto_diario=150, disparados=acumulado,
+                              rpc_rows=_rpc_por_cadencia())
+        _rodar(fake, _ligadas(*AS_SEIS_DE_PROSPECCAO))   # teto por passagem REAL (20)
+        novos = len({j["lead_id"] for j in _so_toques(_jobs_criados(fake))})
+        acumulado += novos
+        por_tick.append(novos)
+        assert acumulado <= 150, (
+            f"o dia estourou o teto: {acumulado} matrículas depois dos ticks {por_tick}"
+        )
+
+    assert acumulado == 150, (
+        f"o dia parou em {acumulado} de 150 (ticks: {por_tick}) — com 990 elegíveis o "
+        f"teto tem de ser consumido por inteiro, senão a esteira anda devagar demais"
+    )
+    assert por_tick[-1] == 0, "depois de estourar o teto, o tick tem de matricular ZERO"
