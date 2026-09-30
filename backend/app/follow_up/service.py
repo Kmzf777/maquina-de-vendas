@@ -816,6 +816,45 @@ JOAO_CADENCIA_AUDIENCIA = "humano"
 JOAO_TETO_PADRAO = 20
 JOAO_TETO_ENV = "JOAO_CADENCIA_TETO"
 
+# JANELA DE CANDIDATOS — quantos cards a RPC OLHA, e não quantos entram.
+#
+# ── A AVARIA QUE ISTO CORRIGE (medida em 30/09/2026, com as esteiras já ligadas) ──
+# O código mandava `p_limit=teto`, colando as duas ideias: a janela de candidatos ERA
+# o teto de matrícula. E a RPC ordena por silêncio mais antigo, então ela devolve
+# sempre os MESMOS 20 primeiros.
+#
+# Assim que esses 20 são matriculados, `motivo_para_pular_joao` passa a pular todos
+# eles (`cadencia_em_andamento`) — e como a matrícula não move o card nem muda o
+# `last_message_at`, eles continuam sendo os 20 mais antigos na varredura seguinte. A
+# esteira devolve 20, pula 20 e matricula ZERO, para sempre, sem erro e sem alerta.
+#
+# Medido em produção: 88 cards entraram no primeiro tick (20+20+21+20+5+2) e a
+# varredura não avançou mais um único card nos ticks seguintes. Confirmado chamando a
+# RPC à mão: dos 20 devolvidos, 20 já estavam matriculados.
+#
+# É EXATAMENTE o modo de falha que a própria RPC documenta em `20260904`:
+#
+#     "Lead que o Python pula nunca recebe mensagem, entao o `last_message_at` dele
+#      nunca muda e ele fica no TOPO da ordenacao para sempre, ocupando um slot.
+#      Bastam `p_limit` leads assim para a esteira devolver 20 linhas, pular as 20 e
+#      parar de funcionar em silencio — sem erro, sem alerta."
+#
+# ── POR QUE UMA JANELA LARGA RESOLVE ────────────────────────────────────────────
+# Quem limita o VOLUME são o teto por passagem (20) e o orçamento do dia, os dois do
+# lado Python. A janela só precisa ser larga o bastante para que os pulos permanentes
+# não escondam quem ainda não entrou. 2.000 está muito acima de qualquer etapa dos
+# funis do João (a maior, "Em conversa" do Private Label, tem 560 cards), e a consulta
+# é indexada por `entered_stage_at`.
+#
+# ── O LIMITE DESTA CORREÇÃO, DITO EM VOZ ALTA ───────────────────────────────────
+# Se um dia uma etapa acumular MAIS de 2.000 cards permanentemente pulados, a fome
+# volta. O conserto definitivo é mover a condição "já tem job aberto" para o WHERE da
+# RPC, junto das outras paradas permanentes (blacklist, número errado, conversa
+# finalizada) — que é o que a própria RPC diz que deve ser feito. Isso é migration com
+# DROP+CREATE de função compartilhada com as campanhas, e foi deixado para uma entrega
+# própria em vez de ser enfiado no meio de uma correção urgente.
+JOAO_JANELA_CANDIDATOS = 2000
+
 # COOLDOWN de reentrada, em dias. O defeito que a RPC documenta em 20260904: quando a
 # cadência acaba o card NÃO sai da etapa, então na varredura seguinte ele é elegível de
 # novo — um template a cada poucos dias, para sempre. Exclusão TEMPORÁRIA e não
@@ -1082,6 +1121,71 @@ def disparos_de_hoje(sb, *, now: datetime | None = None) -> int:
         logger.error(
             "[JOAO_CADENCIA] não consegui contar os disparos de hoje (%s) — "
             "tratando como orçamento ESGOTADO", exc)
+        return DISPAROS_ILEGIVEIS
+    return sum(
+        1 for linha in linhas
+        if _job_metadata(linha).get("acao") != "mover_etapa"
+    )
+
+
+# Status que ainda vão consumir a cota de hoje. `cancelled` e `failed` ficam de fora:
+# aquele job não vai sair, e contá-lo seria cobrar do orçamento uma mensagem que
+# ninguém recebe.
+_STATUS_COMPROMETIDOS = ("pending", "processing", "sent")
+
+
+def disparos_comprometidos_hoje(sb, *, now: datetime | None = None) -> int:
+    """Quantos templates do João já estão COMPROMETIDOS para hoje. UMA consulta.
+
+    ── POR QUE ISTO NÃO É `disparos_de_hoje` ───────────────────────────────────
+    As duas contam coisas diferentes porque os dois tetos perguntam coisas diferentes:
+
+      ENVIO      "quantos já saíram?"       -> `disparos_de_hoje`, por `sent_at`
+      MATRÍCULA  "quantos já estão na fila?" -> esta, por `fire_at`
+
+    Avaria medida em 29/09/2026, simulando ligar as esteiras de prospecção: o
+    agendador usava a contagem de ENVIO para decidir quantos cards matricular. Como a
+    janela comercial é 09h-16h, ligar a esteira às 03h significa que nada foi enviado
+    hoje — então, a cada tick de 30s, o saldo voltava CHEIO e um lote novo era
+    matriculado. Com ~1.100 cards elegíveis, em ~11 minutos todos estariam
+    matriculados com o toque 1 às 09:00, contra um teto declarado de 50/dia.
+
+    O teto de ENVIO seguraria o estrago visível (50 sairiam), mas os outros 1.050
+    ficariam numa fila adiada um dia por vez, com os toques 2 e 3 vencendo enquanto o
+    1 ainda não saiu. É literalmente a "fila que nunca drena" que o comentário de
+    `_varrer_cadencia_joao` diz existir para impedir — a trava estava inerte
+    exatamente na hora em que ela é necessária.
+
+    ── O RECORTE É `fire_at`, E É ELE QUE CONSERTA ─────────────────────────────
+    "Comprometido para hoje" é ter `fire_at` dentro do dia de hoje e ainda não ter
+    sido descartado. Job adiado para amanhã sai da conta sozinho (o `fire_at` dele
+    mudou de dia), que é o comportamento certo: ele passou a ser problema de amanhã.
+
+    LIMITE CONHECIDO: um job que venceu ONTEM e só saiu hoje (worker parado no meio)
+    tem `fire_at` de ontem e não é contado. É subcontagem, e ela afrouxa o teto no
+    dia seguinte a uma parada — raro, pequeno, e o teto de ENVIO continua segurando o
+    volume real. A alternativa (duas consultas, ou um `or` de dois intervalos) custa
+    mais do que o erro que evita.
+
+    O JOB DE MOVER NÃO CONTA, pela mesma razão do outro lado: a unidade declarada do
+    teto é TEMPLATE, e o move escreve em `deals` sem mandar mensagem nenhuma.
+
+    FAIL-CLOSED: erro de leitura devolve `DISPAROS_ILEGIVEIS` ("sem saldo"), igual a
+    `disparos_de_hoje`. Não saber o que já está na fila não é razão para enfileirar
+    mais.
+    """
+    now = now or datetime.now(timezone.utc)
+    inicio, fim = _dia_em_sao_paulo(now)
+    try:
+        linhas = sb.table("follow_up_jobs").select(
+            "id, metadata"
+        ).in_("status", list(_STATUS_COMPROMETIDOS)).in_(
+            "job_type", sorted(JOAO_JOB_TYPES)
+        ).gte("fire_at", inicio).lt("fire_at", fim).execute().data or []
+    except Exception as exc:
+        logger.error(
+            "[JOAO_CADENCIA] não consegui contar o que já está comprometido para hoje "
+            "(%s) — tratando como orçamento ESGOTADO", exc)
         return DISPAROS_ILEGIVEIS
     return sum(
         1 for linha in linhas
@@ -1547,7 +1651,10 @@ def _varrer_cadencia_joao(
         # tanto se a última palavra foi dele quanto se foi nossa.
         "p_last_speaker": "qualquer",
         "p_audience": JOAO_CADENCIA_AUDIENCIA,
-        "p_limit": teto,
+        # A JANELA, não o teto — ver `JOAO_JANELA_CANDIDATOS`. Mandar `teto` aqui
+        # fazia a varredura devolver sempre os mesmos 20 já matriculados e parar de
+        # avançar em silêncio. Quem limita o volume é o corte em Python, abaixo.
+        "p_limit": JOAO_JANELA_CANDIDATOS,
     }
     try:
         linhas = sb.rpc("get_deals_stage_stagnant", args).execute().data or []
@@ -1695,7 +1802,12 @@ def agendar_cadencias_joao(now: datetime | None = None, teto: int | None = None)
                 sb = get_supabase()
             if saldo is None:
                 teto_diario = carregar_ajustes_joao()["teto_diario_disparos"]
-                saldo = max(0, teto_diario - disparos_de_hoje(sb, now=now))
+                # COMPROMETIDOS, não ENVIADOS — ver a docstring de
+                # `disparos_comprometidos_hoje`. A janela é 09h-16h; medir por
+                # `sent_at` faria o saldo voltar cheio a cada tick de 30s enquanto a
+                # janela estivesse fechada, e a base inteira seria matriculada de
+                # madrugada com o toque 1 marcado para as 09h.
+                saldo = max(0, teto_diario - disparos_comprometidos_hoje(sb, now=now))
             if saldo <= 0:
                 # O log sai UMA vez por passagem, e não uma por cadência: o tick roda a
                 # cada 30s e o orçamento fica em zero pelo resto do dia — uma linha por
