@@ -38,8 +38,28 @@ function naTela(): string {
 
 // ── Fixtures ───────────────────────────────────────────────────────────────────
 const TEMPLATES = [
-  { id: "1", name: "joao_reposicao_atacado_t1", status: "approved", language: "pt_BR" },
-  { id: "2", name: "joao_reposicao_atacado_t2", status: "approved", language: "pt_BR" },
+  // Com CORPO e BOTOES: `/api/templates` ja devolve os dois (ela parseia `components`
+  // antes de responder), e e isso que a previa do "..." mostra. Sem eles aqui, o teste
+  // da previa passaria contra um painel vazio.
+  {
+    id: "1",
+    name: "joao_reposicao_atacado_t1",
+    status: "approved",
+    language: "pt_BR",
+    body: "Ola {{1}}, faz tempo que nao conversamos sobre o cafe.",
+    footer: "Cafe Canastra",
+    buttons: [
+      { type: "QUICK_REPLY", text: "Preciso repor" },
+      { type: "QUICK_REPLY", text: "Ainda tenho estoque" },
+    ],
+  },
+  {
+    id: "2",
+    name: "joao_reposicao_atacado_t2",
+    status: "approved",
+    language: "pt_BR",
+    body: "Segundo toque: seu pedido costuma sair a cada 45 dias.",
+  },
   { id: "3", name: "joao_reposicao_privatelabel_t1", status: "APPROVED", language: "pt_BR" },
   // PENDING na Meta: não pode virar opção do <select>. Oferecer um template pendente é
   // oferecer a recusa da ativação como se fosse escolha válida.
@@ -1339,5 +1359,71 @@ describe("FollowupBoard — a definição ainda não chegou", () => {
     await waitFor(() => expect(linhaDe("Ana")).toContain("T3"));
     expect(linhaDe("Ana")).toContain("—");
     expect(naTela()).not.toContain("undefined");
+  });
+});
+
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// A PRÉVIA DA MENSAGEM DO TOQUE — o "…" ao lado do <select>
+//
+// O <select> mostra o NOME do template, que não diz o que o lead vai ler. Quem
+// configura a esteira precisa ver a mensagem e os botões antes de ligar — e o painel
+// que faz isso já existe na aba Templates, então a prévia aqui É aquele painel, não um
+// parecido.
+// ═══════════════════════════════════════════════════════════════════════════════
+describe("DefinitionStrip — a prévia da mensagem do toque", () => {
+  it("o '…' abre a mensagem que vai ser enviada, com o corpo e os botões", async () => {
+    await abrirJoao();
+    await abrirFunil("João - Reposição Atacado");
+    await abrirCadencia("Reposição");
+
+    // Antes do clique, nada da mensagem está na tela — só o nome do template.
+    expect(naTela()).not.toContain("faz tempo que nao conversamos");
+
+    fireEvent.click(screen.getByLabelText(/^Ver a mensagem do toque 1/));
+
+    const tela = naTela();
+    expect(tela).toContain("faz tempo que nao conversamos sobre o cafe.");
+    expect(tela).toContain("Preciso repor");
+    expect(tela).toContain("Ainda tenho estoque");
+    expect(tela).toContain("Cafe Canastra");
+  });
+
+  it("cada toque abre o SEU template, e não o do primeiro", async () => {
+    await abrirJoao();
+    await abrirFunil("João - Reposição Atacado");
+    await abrirCadencia("Reposição");
+
+    // Afirma sobre o CORPO de cada um, e não sobre o nome: o nome do template também
+    // aparece no <option> do <select>, então uma asserção por nome passaria até com o
+    // painel inteiro fora da tela.
+    fireEvent.click(screen.getByLabelText(/^Ver a mensagem do toque 2/));
+    expect(naTela()).toContain("seu pedido costuma sair a cada 45 dias.");
+    expect(naTela()).not.toContain("faz tempo que nao conversamos");
+  });
+
+  it("toque SEM template não ganha '…' — não há mensagem para mostrar", async () => {
+    await abrirJoao();
+    await abrirFunil("João - Reposição Atacado");
+    await abrirCadencia("Em atenção");   // os toques dela nascem sem template
+
+    expect(screen.getByLabelText("Template do toque 1")).toBeTruthy();
+    expect(screen.queryByLabelText(/^Ver a mensagem do toque 1/)).toBeNull();
+  });
+
+  it("template gravado FORA dos aprovados não ganha '…' — o painel abriria vazio", async () => {
+    // `joao_ainda_pendente` está na lista da Meta mas não entre os aprovados; o caso
+    // que interessa é o nome que a lista NÃO trouxe, porque aí não existe corpo nem
+    // botão para exibir e o "…" abriria um painel em branco.
+    const def = definicao();
+    def.joao.funis[2].cadencias[0].toques[0].template_name = "template_que_sumiu_da_meta";
+    await abrirJoao(def);
+    await abrirFunil("João - Reposição Atacado");
+    await abrirCadencia("Reposição");
+
+    expect(naTela()).toContain("fora dos aprovados");
+    expect(screen.queryByLabelText(/^Ver a mensagem do toque 1/)).toBeNull();
+    // e o toque 2, cujo template a lista trouxe, continua com o seu.
+    expect(screen.getByLabelText(/^Ver a mensagem do toque 2/)).toBeTruthy();
   });
 });

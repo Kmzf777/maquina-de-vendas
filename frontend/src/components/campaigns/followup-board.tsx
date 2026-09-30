@@ -14,6 +14,8 @@ import {
   offsetLabel,
   touchTypeLabel,
 } from "@/lib/followup-board";
+import { TemplateDetailSheet } from "@/components/campaigns/template-detail-sheet";
+import type { MessageTemplate } from "@/lib/types";
 
 type DefinitionTouch = {
   sequence: number;
@@ -660,7 +662,15 @@ function JoaoEditor({
     iniciais[0]?.cadencias[0]?.codigo ?? "",
   );
   const [rascunhos, setRascunhos] = useState<Record<string, Rascunho>>({});
-  const [templates, setTemplates] = useState<{ name: string; status: string }[] | null>(null);
+  // O objeto INTEIRO, e não `{name, status}`: `/api/templates` já devolve corpo,
+  // cabeçalho, rodapé e botões (ela parseia `components` antes de responder), e é isso
+  // que a prévia do "…" mostra. Guardar só dois campos obrigaria uma segunda busca
+  // para exibir o que a primeira já tinha trazido.
+  const [templates, setTemplates] = useState<MessageTemplate[] | null>(null);
+  /** O template cuja mensagem está aberta na prévia. Guardado por NOME e não por
+   *  objeto: se a lista for recarregada com a prévia aberta, o nome continua
+   *  resolvendo para a versão nova em vez de congelar a antiga na tela. */
+  const [previaDe, setPreviaDe] = useState<string | null>(null);
   const [problemas, setProblemas] = useState<Problema[] | null>(null);
   const [sucesso, setSucesso] = useState<string | null>(null);
   const [salvando, setSalvando] = useState(false);
@@ -690,6 +700,17 @@ function JoaoEditor({
     for (const t of templates ?? []) if (aprovado(t.status)) nomes.add(t.name);
     return Array.from(nomes).sort();
   }, [templates]);
+
+  // `/api/templates` já colapsa a linha-espelho por canal, mas o mesmo nome ainda pode
+  // vir em mais de um idioma. A primeira ocorrência basta: a conta só tem pt_BR, e a
+  // prévia mostra o idioma que estiver exibindo.
+  const porNome = useMemo(() => {
+    const mapa = new Map<string, MessageTemplate>();
+    for (const t of templates ?? []) if (!mapa.has(t.name)) mapa.set(t.name, t);
+    return mapa;
+  }, [templates]);
+
+  const previa = previaDe ? porNome.get(previaDe) ?? null : null;
 
   const funil = funis.find((f) => f.codigo === funilCodigo) ?? funis[0];
   const cadencia =
@@ -984,6 +1005,26 @@ function JoaoEditor({
                         ))}
                       </select>
                     )}
+                    {/* A PRÉVIA. Só aparece quando o template escolhido está entre os
+                        que a lista trouxe: sem o objeto não há corpo nem botões para
+                        mostrar, e um "…" que abre um painel vazio é pior que "…"
+                        nenhum. É o caso do template gravado "fora dos aprovados" e o
+                        da lista que falhou ao carregar. */}
+                    {template && porNome.has(template) && (
+                      <button
+                        type="button"
+                        onClick={() => setPreviaDe(template)}
+                        title="Ver a mensagem e os botões"
+                        aria-label={`Ver a mensagem do toque ${t.sequence} (${template})`}
+                        className="flex items-center justify-center h-[27px] w-[27px] rounded-[4px] border border-[#dedbd6] bg-white text-[#7b7b78] transition-colors hover:text-[#111111] hover:border-[#b0aca6] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#111111]/20"
+                      >
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                          <circle cx="5" cy="12" r="2" />
+                          <circle cx="12" cy="12" r="2" />
+                          <circle cx="19" cy="12" r="2" />
+                        </svg>
+                      </button>
+                    )}
                     {t.aceita_adiamento && (
                       <span
                         title={fraseDoBotaoEstoque(ajustes)}
@@ -1042,6 +1083,11 @@ function JoaoEditor({
           </div>
         </>
       )}
+      {/* O MESMO painel da aba Templates, não um parecido: a prévia da mensagem já
+          existe, é a que o time reconhece, e mantê-la única significa que melhorar a
+          bolha num lugar melhora nos dois. Fica FORA do `cadencia &&` acima para não
+          desmontar junto ao trocar de cadência com a prévia aberta. */}
+      <TemplateDetailSheet template={previa} onClose={() => setPreviaDe(null)} />
     </>
   );
 }
