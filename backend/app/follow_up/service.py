@@ -731,8 +731,23 @@ def get_due_followups(now: datetime, limit: int = 10) -> list[dict[str, Any]]:
             .select(
                 "*, "
                 "leads!inner(id, phone, name, last_customer_message_at, wa_id), "
-                "channels!inner(id, name, provider, provider_config, mode), "
-                "conversations!inner(id, stage, followup_enabled, last_customer_message_at)"
+                # `agent_profile_id` + o perfil EMBUTIDO (`agent_profiles(kind, flow_id)`)
+                # porque o backstop de parada precisa saber se esta conversa é atendida por
+                # um FLUXO DE BOTÕES — `scheduler._lead_stop_reason` decidia só por
+                # `ai_enabled`/canal humano e não sabia que fluxos de botões existem. Sem
+                # estas colunas o motivo `fluxo_de_botoes` nunca dispara, e o `ai_reengage`
+                # volta a falar por LLM por cima de uma conversa de botões.
+                # O embed segue o molde que já roda em `channels/service.py`
+                # (`*, agent_profiles(*)`); `flow_id` existe desde 20260929 (conferido em
+                # produção 01/10/2026 — a coluna responde 200 no PostgREST).
+                # A conversa tem precedência sobre o canal (ver `runner.fluxo_da_conversa`),
+                # e por isso os DOIS `agent_profile_id` vêm: hoje em produção os jobs do
+                # número da ValerIA têm `conversations.agent_profile_id = NULL` e quem aponta
+                # para o perfil de botões é o CANAL.
+                "channels!inner(id, name, provider, provider_config, mode, "
+                "agent_profile_id, agent_profiles(kind, flow_id)), "
+                "conversations!inner(id, stage, followup_enabled, "
+                "last_customer_message_at, agent_profile_id)"
             )
             .eq("status", "pending")
             .eq("env_tag", _ENV_TAG)

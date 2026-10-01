@@ -38,6 +38,32 @@
  * desenham. `ValeriaFlowChannels` é a exceção declarada: os canais não vêm no `GET` do
  * fluxo, então ele busca os próprios (`GET /api/valeria-flow/channels`) e daqui recebe
  * só o `flow_id`.
+ *
+ * ── Por que o painel de Fluxo fica MONTADO e só escondido ───────────────────────
+ * O que o operador digitou e ainda não gravou mora no estado LOCAL do editor
+ * (`rascunhos`, em `valeria-flow-editor.tsx` — é dele que sai o "· não salvo" na lista
+ * de telas). Enquanto a casca renderizava um painel por vez, trocar de aba desmontava o
+ * editor e apagava esse rascunho EM SILÊNCIO: digitar o corpo de uma tela, ir conferir
+ * em "Onde está ativo" qual número atende, voltar — e o texto não estava mais lá. São 17
+ * telas; o operador tropeça nisso em minutos.
+ *
+ * Então o painel de Fluxo é renderizado SEMPRE e apenas escondido com o atributo
+ * `hidden` (o preflight do Tailwind o resolve com `display:none!important`): o React
+ * preserva o estado de um componente que continua montado, e não há rascunho a perder.
+ * A outra saída possível — avisar antes de sair da aba — custaria um diálogo novo e um
+ * passo a mais numa troca que o operador faz o tempo todo, para proteger um dado que
+ * simplesmente não precisa ser descartado. `window.confirm` não serviria: neste ambiente
+ * ele não faz nada.
+ *
+ * O painel de canais continua montando SÓ com a aba aberta, de propósito: ele busca os
+ * próprios dados no `useEffect` de montagem, e montá-lo escondido dispararia um
+ * `GET /api/valeria-flow/channels` que ninguém pediu. Ele também não tem o que proteger
+ * — ali não se digita rascunho, cada clique grava na hora.
+ *
+ * `hidden` tira o elemento da árvore de acessibilidade, então continua havendo UM
+ * `tabpanel` por vez para o leitor de tela. Duas consequências ficam amarradas abaixo:
+ * `aria-controls` só aponta para painel que está no DOM (`doisPaineis`), e o laço de
+ * foco ignora o que está dentro de `[hidden]`.
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -148,7 +174,14 @@ export function ValeriaFlowModal({ open, onClose }: { open: boolean; onClose: ()
     const aoTeclar = (evento: KeyboardEvent) => {
       if (evento.key === "Escape") { evento.preventDefault(); onClose(); return; }
       if (evento.key !== "Tab" || !dialog.current) return;
-      const focaveis = [...dialog.current.querySelectorAll<HTMLElement>("button:not([disabled]),input:not([disabled]),select:not([disabled]),textarea:not([disabled]),a[href]")];
+      // Fora o que está dentro de `[hidden]`: o painel de Fluxo continua montado com a
+      // outra aba aberta, e o navegador não dá foco a `display:none`. Se um desses
+      // elementos fosse o primeiro ou o último da lista, a volta do laço compararia
+      // `activeElement` com algo que nunca pode estar focado — e o Tab escaparia do
+      // diálogo.
+      const focaveis = [...dialog.current.querySelectorAll<HTMLElement>("button:not([disabled]),input:not([disabled]),select:not([disabled]),textarea:not([disabled]),a[href]")].filter(
+        (alvo) => !alvo.closest("[hidden]"),
+      );
       if (!focaveis.length) return;
       if (evento.shiftKey && document.activeElement === focaveis[0]) { evento.preventDefault(); focaveis.at(-1)?.focus(); }
       else if (!evento.shiftKey && document.activeElement === focaveis.at(-1)) { evento.preventDefault(); focaveis[0].focus(); }
@@ -183,6 +216,12 @@ export function ValeriaFlowModal({ open, onClose }: { open: boolean; onClose: ()
 
   const propsFluxo: PainelFluxoProps | null = dados ? { dados, salvar, restaurar, salvando, erro } : null;
   const propsCanais: PainelCanaisProps | null = dados ? { flowId: dados.flow_id } : null;
+
+  // Com dados na mão existem DOIS `tabpanel` no DOM (o de Fluxo escondido quando a outra
+  // aba está aberta), e aí cada aba pode declarar o `aria-controls` dela. Carregando ou
+  // sem dados existe UM só, o da aba aberta — e apontar `aria-controls` para um id
+  // ausente é referência morta para o leitor de tela (defeito que um review já fechou).
+  const doisPaineis = !carregando && Boolean(propsFluxo && propsCanais);
 
   const trocarAba = (evento: React.KeyboardEvent) => {
     const passo = evento.key === "ArrowRight" ? 1 : evento.key === "ArrowLeft" ? -1 : 0;
@@ -233,10 +272,7 @@ export function ValeriaFlowModal({ open, onClose }: { open: boolean; onClose: ()
               type="button"
               role="tab"
               aria-selected={aba === chave}
-              // Só na aba ATIVA: um painel só é renderizado por vez, e apontar
-              // `aria-controls` para um id que não está no DOM é referência morta
-              // para o leitor de tela.
-              aria-controls={aba === chave ? `painel-${chave}` : undefined}
+              aria-controls={doisPaineis || aba === chave ? `painel-${chave}` : undefined}
               tabIndex={aba === chave ? 0 : -1}
               title={descricao}
               onClick={() => setAba(chave)}
@@ -254,9 +290,10 @@ export function ValeriaFlowModal({ open, onClose }: { open: boolean; onClose: ()
           </p>
         )}
 
-        <div id={`painel-${aba}`} role="tabpanel" aria-labelledby={`aba-${aba}`} className="min-h-0 flex-1 overflow-y-auto">
+        {/* A rolagem é do contêiner; o painel escondido sai do fluxo de layout. */}
+        <div className="min-h-0 flex-1 overflow-y-auto">
           {carregando ? (
-            <div className="space-y-2 px-4 py-4 sm:px-5" aria-busy="true">
+            <div id={`painel-${aba}`} role="tabpanel" aria-labelledby={`aba-${aba}`} className="space-y-2 px-4 py-4 sm:px-5" aria-busy="true">
               <p className="text-[13px] text-[#7b7b78]">Carregando o fluxo…</p>
               {Array.from({ length: 6 }).map((_, i) => (
                 <div key={i} className="h-10 animate-pulse rounded-[6px] bg-[#dedbd6]/30" />
@@ -264,13 +301,24 @@ export function ValeriaFlowModal({ open, onClose }: { open: boolean; onClose: ()
             </div>
           ) : !propsFluxo || !propsCanais ? (
             // Sem dados e sem carregar: a faixa acima já diz por quê.
-            <p className="px-5 py-12 text-center text-[13px] text-[#7b7b78]">Nada a editar por enquanto.</p>
-          ) : aba === "fluxo" ? (
-            <ValeriaFlowEditor {...propsFluxo} />
+            <p id={`painel-${aba}`} role="tabpanel" aria-labelledby={`aba-${aba}`} className="px-5 py-12 text-center text-[13px] text-[#7b7b78]">
+              Nada a editar por enquanto.
+            </p>
           ) : (
-            // Só na aba ativa, de propósito: montar o painel de canais escondido
-            // dispararia o `GET /channels` numa aba que o operador não abriu.
-            <ValeriaFlowChannels {...propsCanais} />
+            <>
+              {/* Montado sempre e só escondido: é aqui que vive o rascunho do operador
+                  (cabeçalho do módulo). Sem classe de `display` para que o
+                  `display:none!important` do `hidden` não dispute com nada. */}
+              <div id="painel-fluxo" role="tabpanel" aria-labelledby="aba-fluxo" hidden={aba !== "fluxo"}>
+                <ValeriaFlowEditor {...propsFluxo} />
+              </div>
+              {/* O contrário: o painel de canais só entra com a aba aberta, porque
+                  montá-lo escondido dispararia o `GET /channels` que ninguém pediu. O
+                  `tabpanel` fica, vazio, para o `aria-controls` da aba ter destino. */}
+              <div id="painel-canais" role="tabpanel" aria-labelledby="aba-canais" hidden={aba !== "canais"}>
+                {aba === "canais" && <ValeriaFlowChannels {...propsCanais} />}
+              </div>
+            </>
           )}
         </div>
       </section>

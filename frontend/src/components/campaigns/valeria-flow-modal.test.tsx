@@ -21,6 +21,14 @@
  *     saiu. Um teste que só olhasse abas e `aria-selected` continuaria verde com o
  *     marcador de volta no lugar do editor.
  *
+ *   • TROCAR DE ABA NÃO APAGA O RASCUNHO. O texto digitado e não gravado mora no estado
+ *     local do editor; enquanto a casca renderizava um painel por vez, ir ver "Onde está
+ *     ativo" e voltar perdia tudo em silêncio. O editor agora fica montado e escondido.
+ *     Os três testes do bloco amarram as três pontas disso de uma vez: o rascunho
+ *     sobrevive, o painel de canais NÃO busca com a aba fechada (era o motivo de só um
+ *     painel existir), e continua havendo um `tabpanel` por vez na árvore de
+ *     acessibilidade, com `aria-controls` apontando para id que está no DOM.
+ *
  * Nota de cobertura: o salvamento é exercitado em `gravarConteudo`, que É a
  * implementação (o `salvar` da casca são seis linhas de `setState` em volta dela), e a
  * ponta do editor que o chama está coberta em `valeria-flow-editor.test.tsx` com um
@@ -144,6 +152,11 @@ function buscasDoFluxo(): number {
   return vi.mocked(global.fetch).mock.calls.filter(([url]) => String(url) === "/api/valeria-flow").length;
 }
 
+/** Quantas vezes os CANAIS foram buscados. Zero é a afirmação com a aba fechada. */
+function buscasDeCanais(): number {
+  return vi.mocked(global.fetch).mock.calls.filter(([url]) => String(url) === "/api/valeria-flow/channels").length;
+}
+
 /** O editor de verdade: a coluna de ramos só existe em `valeria-flow-editor.tsx`. */
 const colunaDeRamos = () => screen.getByRole("navigation", { name: "Ramos do fluxo" });
 
@@ -250,6 +263,111 @@ describe("ValeriaFlowModal — abas", () => {
     fireEvent.keyDown(screen.getByRole("tablist"), { key: "ArrowRight" });
     expect(screen.getByRole("tab", { name: "Fluxo" }).getAttribute("aria-selected")).toBe("true");
     expect(colunaDeRamos()).toBeTruthy();
+  });
+});
+
+describe("ValeriaFlowModal — trocar de aba não apaga o rascunho", () => {
+  const RASCUNHO = "Oi! Me conta: você revende ou toma o café no seu negócio?";
+
+  /**
+   * O campo de corpo do editor. De propósito por `getByLabelText`, que NÃO filtra por
+   * visibilidade: é assim que se afirma que o campo continua no DOM, com o valor dentro,
+   * enquanto a outra aba está aberta. Quem precisa da árvore de acessibilidade usa
+   * `colunaDeRamos()`.
+   */
+  const campoCorpo = () => screen.getByLabelText("Texto da tela") as HTMLTextAreaElement;
+
+  it("volta da aba de canais com o texto digitado ainda no campo", async () => {
+    rotear();
+    render(<ValeriaFlowModal open onClose={() => {}} />);
+    await waitFor(() => expect(colunaDeRamos()).toBeTruthy());
+
+    fireEvent.change(campoCorpo(), { target: { value: RASCUNHO } });
+    expect(campoCorpo().value).toBe(RASCUNHO);
+    // O "· não salvo" da lista de telas é DERIVADO do rascunho: ele é a prova de que
+    // existe rascunho para perder, e o aviso que o operador viu antes de trocar de aba.
+    expect(screen.getByText("· não salvo")).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("tab", { name: "Onde está ativo" }));
+    await waitFor(() => expect(screen.getByRole("heading", { name: "Canais de WhatsApp" })).toBeTruthy());
+
+    // O editor saiu da árvore de acessibilidade (um `tabpanel` por vez), mas NÃO do DOM.
+    expect(screen.queryByRole("navigation", { name: "Ramos do fluxo" })).toBeNull();
+    expect(campoCorpo().value).toBe(RASCUNHO);
+
+    fireEvent.click(screen.getByRole("tab", { name: "Fluxo" }));
+    expect(colunaDeRamos()).toBeTruthy();
+    expect(campoCorpo().value).toBe(RASCUNHO);
+    // E o indicador continua certo: o rascunho atravessou a ida e a volta inteiro.
+    expect(screen.getByText("· não salvo")).toBeTruthy();
+  });
+
+  it("o painel de canais não busca nada enquanto a aba dele está fechada", async () => {
+    rotear();
+    render(<ValeriaFlowModal open onClose={() => {}} />);
+    await waitFor(() => expect(colunaDeRamos()).toBeTruthy());
+
+    // O editor está montado, e nem por isso os canais foram buscados: quem fica montado
+    // escondido é só o painel que não busca nada por conta própria.
+    expect(buscasDeCanais()).toBe(0);
+
+    fireEvent.click(screen.getByRole("tab", { name: "Onde está ativo" }));
+    await waitFor(() => expect(buscasDeCanais()).toBe(1));
+
+    // De volta ao Fluxo o painel de canais sai do DOM e não busca mais; e o editor, que
+    // nunca desmontou, também não refez o `GET` do fluxo.
+    fireEvent.click(screen.getByRole("tab", { name: "Fluxo" }));
+    expect(screen.queryByRole("heading", { name: "Canais de WhatsApp" })).toBeNull();
+    expect(buscasDeCanais()).toBe(1);
+    expect(buscasDoFluxo()).toBe(1);
+  });
+
+  it("mantém UM tabpanel por vez, e o aria-controls de cada aba aponta para o DOM", async () => {
+    rotear();
+    const { container } = render(<ValeriaFlowModal open onClose={() => {}} />);
+
+    // Carregando: existe um painel só (o esqueleto), então só a aba aberta pode declarar
+    // `aria-controls` — apontar para id ausente é referência morta para o leitor de tela.
+    expect(screen.getByRole("tab", { name: "Fluxo" }).getAttribute("aria-controls")).toBe("painel-fluxo");
+    expect(screen.getByRole("tab", { name: "Onde está ativo" }).getAttribute("aria-controls")).toBeNull();
+
+    await waitFor(() => expect(colunaDeRamos()).toBeTruthy());
+
+    // Com os dados na mão as duas abas apontam, e as duas apontam para algo que existe.
+    for (const nome of ["Fluxo", "Onde está ativo"]) {
+      const alvo = screen.getByRole("tab", { name: nome }).getAttribute("aria-controls");
+      expect(alvo).toBeTruthy();
+      expect(container.querySelector(`#${alvo}`)).toBeTruthy();
+    }
+
+    // E o leitor de tela vê um `tabpanel` por vez, o da aba selecionada.
+    expect(screen.getAllByRole("tabpanel")).toHaveLength(1);
+    expect(screen.getByRole("tabpanel").id).toBe("painel-fluxo");
+
+    fireEvent.click(screen.getByRole("tab", { name: "Onde está ativo" }));
+    await waitFor(() => expect(screen.getByRole("heading", { name: "Canais de WhatsApp" })).toBeTruthy());
+    expect(screen.getAllByRole("tabpanel")).toHaveLength(1);
+    expect(screen.getByRole("tabpanel").id).toBe("painel-canais");
+  });
+
+  it("o laço de foco pula os campos do editor escondido", async () => {
+    rotear();
+    render(<ValeriaFlowModal open onClose={() => {}} />);
+    await waitFor(() => expect(colunaDeRamos()).toBeTruthy());
+    fireEvent.click(screen.getByRole("tab", { name: "Onde está ativo" }));
+    await waitFor(() => expect(screen.getByRole("heading", { name: "Canais de WhatsApp" })).toBeTruthy());
+
+    // Shift+Tab no PRIMEIRO focável do diálogo dá a volta e vai para o último. Sem o
+    // filtro de `[hidden]`, o "último" seria um campo do editor escondido — que o
+    // navegador nunca foca — e o Tab escaparia do modal em vez de dar a volta.
+    const fecharBotao = screen.getByRole("button", { name: "Fechar ValerIA de Botões" });
+    fecharBotao.focus();
+    fireEvent.keyDown(fecharBotao, { key: "Tab", shiftKey: true });
+
+    const focado = document.activeElement as HTMLElement;
+    expect(focado).not.toBe(fecharBotao);
+    expect(focado.closest("[hidden]")).toBeNull();
+    expect(focado.closest('[role="dialog"]')).toBeTruthy();
   });
 });
 

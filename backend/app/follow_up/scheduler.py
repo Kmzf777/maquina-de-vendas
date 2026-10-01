@@ -29,6 +29,12 @@ from app.leads.service import (
     resolve_send_target, create_deal, record_dispatch_note,
     strip_greeting_prefix, sanitize_display_name, is_lead_blacklisted,
 )
+# Quem responde "esta conversa é de um fluxo de botões?" — a MESMA função que o gate do
+# inbound usa (`buffer/processor.py`), para o backstop de parada e o roteador do inbound
+# nunca discordarem sobre quem atende o lead. Import de TOPO: `button_flow.runner` puxa
+# `app.agent.tools`, que só importa `follow_up.scheduler` DENTRO de função (tools.py:1810),
+# então não há ciclo — conferido importando os dois módulos nas duas ordens.
+from app.button_flow.runner import fluxo_da_conversa
 from app.whatsapp.registry import get_provider
 from app.db.supabase import get_supabase
 from app.channels.service import get_channel_by_provider_config
@@ -684,7 +690,14 @@ async def process_due_followups(now: datetime | None = None) -> None:
         stop_lead_id = job.get("lead_id")
         if stop_lead_id:
             try:
-                stop_reason = _lead_stop_reason(_fetch_lead_for_backstop(stop_lead_id))
+                # `conversations`/`channels` já vêm no job (join de `get_due_followups`) e
+                # são o que diz se esta conversa é de um FLUXO DE BOTÕES — motor que
+                # responde sozinho e não pode receber mensagem de LLM por cima.
+                stop_reason = _lead_stop_reason(
+                    _fetch_lead_for_backstop(stop_lead_id),
+                    job.get("conversations"),
+                    job.get("channels"),
+                )
             except Exception as exc:
                 logger.error(
                     "[FOLLOWUP] falha no backstop de parada (lead %s) — seguindo para o "
@@ -956,7 +969,8 @@ async def process_due_followups(now: datetime | None = None) -> None:
         logger.info(f"[FOLLOWUP] Enviado seq={sequence} lead={lead['phone']}")
 
 
-def _lead_stop_reason(lead: dict | None) -> str | None:
+def _lead_stop_reason(lead: dict | None, conversation: dict | None = None,
+                      channel: dict | None = None) -> str | None:
     """Motivo de PARADA do lead, ou None se ele deve seguir recebendo follow-up.
 
     Fonte única do backstop de envio de `process_due_followups`. Ordem de prioridade dá
@@ -972,6 +986,10 @@ def _lead_stop_reason(lead: dict | None) -> str | None:
     coluna de evidência não existe) passava reto e seguia recebendo toque. As checagens
     em memória vêm antes de propósito: a consulta só acontece para o lead que, pelo que
     está em mãos, seguiria recebendo.
+
+    `conversation`/`channel` são OPCIONAIS e servem só ao motivo `fluxo_de_botoes` (abaixo).
+    Opcionais porque o backstop também é chamado de pontos que não os têm em mãos — sem
+    eles o motivo não dispara, fail-open como o resto desta função.
     """
     if not isinstance(lead, dict):
         return None
@@ -994,6 +1012,39 @@ def _lead_stop_reason(lead: dict | None) -> str | None:
             lead["id"],
         )
         return "blacklisted"
+    # ESTA CONVERSA É DE OUTRO MOTOR (fluxo de botões). O follow-up decidia por
+    # `ai_enabled` e canal humano e não sabia que fluxos de botões existem: um lead que
+    # para no meio da árvore tem `ai_enabled=True` (nada o silenciou — não houve handoff
+    # e ele não recusou nada), então o `ai_reengage` disparava uma mensagem de LLM por
+    # cima de uma conversa de botões; se o lead respondia, a resposta caía no motor de
+    # botões como TEXTO LIVRE e virava nudge pedindo que ele tocasse um botão que a
+    # conversa já passou. Custa token de LLM + uma mensagem cobrada da Meta, e quebra a
+    # garantia de "zero LLM" do fluxo.
+    #
+    # ANTES de `ai_disabled`, e a ordem é o ponto: um lead em fluxo de botões costuma ter
+    # `ai_enabled=False` junto (o handoff e o T_HUMANO desligam a IA), e gravar
+    # `cancel_reason="ai_disabled"` perderia no analytics a informação que importa — o
+    # lead não parou, ele está sendo atendido por OUTRO motor.
+    #
+    # DEPOIS de `is_lead_blacklisted`, e isso é deliberado (a spec desta task pedia
+    # antes): `fluxo_de_botoes` tem isenção (`handoff_rescue`, `lp_welcome`) e
+    # "blacklisted" não tem nenhuma. Checar o fluxo antes da blacklist reabriria
+    # exatamente o buraco que o comentário acima fechou — um lead na Blacklist cuja
+    # conversa/canal aponta para o fluxo devolveria "fluxo_de_botoes", o `lp_welcome`
+    # isento seria enviado, e a boas-vindas sairia para quem pediu para sair. Não é
+    # hipótese: hoje o canal da ValerIA aponta para um perfil `kind=button_flow` e os
+    # jobs de lá têm `conversations.agent_profile_id = NULL`, então com o kill switch
+    # ligado TODO lead daquele número resolve para o fluxo. O custo da ordem segura é
+    # pagar a consulta da blacklist (que já é paga hoje para todo lead que chega aqui).
+    #
+    # `conversation`/`channel` ausentes (chamador que não os tem) → o motivo não dispara.
+    if conversation is not None or channel is not None:
+        try:
+            if fluxo_da_conversa(conversation or {}, channel or {}):
+                return "fluxo_de_botoes"
+        except Exception as exc:
+            logger.warning(
+                "[FOLLOWUP] falha ao resolver o fluxo da conversa — seguindo: %s", exc)
     if lead.get("ai_enabled") is False:
         return "ai_disabled"
     return None
@@ -1016,8 +1067,17 @@ def _lead_stop_reason(lead: dict | None) -> str | None:
 # errado. O caso que motivou o backstop (5511910402026, 15/07 — cliente pediu ao humano
 # para a IA parar e os toques seguiram) é de cadência ao LEAD e segue integralmente coberto;
 # `handoff_rescue` não é cadência, é uma notificação por template ao VENDEDOR.
+#
+# `fluxo_de_botoes` isenta DOIS tipos, e nenhum deles fala com o lead por LLM:
+# - `handoff_rescue` notifica o VENDEDOR por template (mesmo anteparo do caso Wilson
+#   Demuth acima). Um lead atendido pelo fluxo de botões pode perfeitamente ter sido
+#   transbordado por ele (`T_HUMANO`) — é justamente aí que o resgate tem de existir.
+# - `lp_welcome` chega ANTES de qualquer mensagem do lead: não há estado de fluxo para
+#   atropelar. Bloqueá-lo faria nenhum lead de landing page ser recebido, porque o canal
+#   da ValerIA (por onde a LP entra) é o que aponta para o perfil de botões.
 _STOP_REASON_EXEMPT_JOB_TYPES: dict[str, frozenset[str]] = {
     "ai_disabled": frozenset({"handoff_rescue"}),
+    "fluxo_de_botoes": frozenset({"handoff_rescue", "lp_welcome"}),
 }
 
 
@@ -1040,7 +1100,13 @@ def _stop_reason_applies(reason: str | None, job_type: str | None) -> bool:
     # cancelando o toque do João, que são exatamente as paradas que o spec §9 exige.
     # Fora da tabela `_STOP_REASON_EXEMPT_JOB_TYPES` porque o casamento do João é por
     # PREFIXO (ver _is_joao_job_type), não por lista fechada de tipos.
-    if reason == "ai_disabled" and _is_joao_job_type(job_type):
+    #
+    # `fluxo_de_botoes` entra na MESMA isenção: o toque do João é template aprovado, ZERO
+    # LLM, saindo do número DELE — nada do que o motivo existe para evitar (mensagem de
+    # LLM por cima da árvore de botões, resposta caindo no motor como texto livre) acontece
+    # num toque do vendedor. Sem a isenção, um lead cuja conversa aponte para o perfil de
+    # botões sairia das 5 esteiras do vendedor em silêncio.
+    if reason in ("ai_disabled", "fluxo_de_botoes") and _is_joao_job_type(job_type):
         return False
     return job_type not in _STOP_REASON_EXEMPT_JOB_TYPES.get(reason, frozenset())
 

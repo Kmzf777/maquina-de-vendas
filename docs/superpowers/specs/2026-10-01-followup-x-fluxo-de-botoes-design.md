@@ -116,11 +116,29 @@ Mudança mínima:
   `get_agent_profile` com cache de 300s, então mesmo o caminho que vai ao banco custa ~1
   consulta por perfil a cada 5 minutos. Reusar sem tocar mantém um dono só da regra.
 
-**Ordem dentro de `_lead_stop_reason`:** depois de `opt_out`/`blacklisted`/`wrong_number` e
-**antes** de `ai_disabled`. Motivo: `ai_disabled` é o único motivo com isenção, e um lead em
-fluxo de botões que também tenha `ai_enabled=False` deve registrar
-`cancel_reason="fluxo_de_botoes"` — que é a informação útil no analytics — e não
-`"ai_disabled"`, que é consequência.
+**Ordem dentro de `_lead_stop_reason`:** depois de `opt_out`/`wrong_number`, **depois de
+`is_lead_blacklisted`**, e **antes** de `ai_disabled`.
+
+Contra `ai_disabled`, o motivo é analytics: um lead em fluxo de botões costuma ter
+`ai_enabled=False` junto (handoff e `T_HUMANO` desligam), e gravar `"ai_disabled"` perderia a
+informação que importa — o lead não parou, está sendo atendido por outro motor.
+
+> **Corrigido na execução, 01/10.** Esta seção mandava pôr a checagem **antes** de
+> `is_lead_blacklisted`, para economizar aquela consulta. **Estava errado**, e o próprio
+> comentário do `is_lead_blacklisted` (`scheduler.py:1004-1010`) contém o argumento: a
+> blacklist precede o `ai_disabled` porque `ai_disabled` é o único motivo com isenção, e
+> checá-la depois devolveria `ai_disabled` — fazendo o resgate isento disparar template para
+> quem está na Blacklist.
+>
+> `fluxo_de_botoes` tem **duas** isenções, e a de `lp_welcome` é pior que o bug original: um
+> lead na blacklist que resolvesse para `fluxo_de_botoes` teria o `lp_welcome` isentado e a
+> **mensagem de boas-vindas sairia para quem pediu para sair**. Hoje ela é cancelada como
+> `blacklisted`, que não isenta nada.
+>
+> Custo da ordem correta: a consulta de blacklist continua rodando para lead de fluxo de
+> botões. Não é regressão — ela já roda hoje para todo lead que chega ali; é só uma economia
+> não tomada. Fixado em `test_blacklist_vence_fluxo_de_botoes`, que falha sob a ordem que
+> esta spec pedia originalmente.
 
 ### 3.2 Quem é isento, e por quê
 
