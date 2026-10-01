@@ -45,7 +45,19 @@ export function ChatView({ conversation, tags, aiEnabled, togglingAi, onToggleAi
   const { messages, loading, refetch, hasMore, loadOlder, loadingOlder } = useRealtimeMessages(conversation.id ?? null);
 
   const [optimisticMessages, setOptimisticMessages] = useState<Message[]>([]);
-  const [text, setText] = useState("");
+  // O rascunho carrega a conversa em que foi escrito. Sem esse dono, o texto
+  // atravessava a troca de conversa (esta instância de ChatView é reaproveitada —
+  // page.tsx renderiza sem `key`) e o Enter seguinte entregava a mensagem ao lead
+  // errado: o vendedor colava a tabela para um cliente e ela saía para outro,
+  // porque `handleSend` resolve o destino por `conversation.id` no instante do envio.
+  // Derivar o `text` do dono (em vez de zerar no efeito de troca) também preserva
+  // o rascunho para quem volta à conversa de origem.
+  const [draft, setDraft] = useState<{ convId: string; text: string }>({ convId: conversation.id, text: "" });
+  const draftIsMine = draft.convId === conversation.id;
+  const text = draftIsMine ? draft.text : "";
+  // Estampa sempre a conversa deste render: no retorno de um envio que falhou,
+  // isso devolve o texto à conversa que era o destino, não à que está aberta agora.
+  const setText = (value: string) => setDraft({ convId: conversation.id, text: value });
   const [quickReplies, setQuickReplies] = useState<QuickReply[]>([]);
   const [qrOpen, setQrOpen] = useState(false);
   const [qrModalOpen, setQrModalOpen] = useState(false);
@@ -103,6 +115,9 @@ export function ChatView({ conversation, tags, aiEnabled, togglingAi, onToggleAi
   // substitui o composer já consultam `isInputBlocked`, então somar a condição
   // aqui trava tudo de uma vez — e nada de novo pode escapar depois.
   const isInputBlocked = windowStatus === "closed" || leadBlocked;
+  // Reset do estado local na troca de conversa. O rascunho do composer NÃO entra
+  // nesta lista de propósito: ele se invalida sozinho pelo dono (`draft.convId`),
+  // o que impede o vazamento sem apagar o texto de quem só deu uma saída e voltou.
   useEffect(() => {
     setOptimisticMessages([]);
     setShowTemplateModal(false);
@@ -265,6 +280,11 @@ export function ChatView({ conversation, tags, aiEnabled, togglingAi, onToggleAi
   }
 
   async function handleSend() {
+    // Trava explícita de destino: só envia o rascunho desta conversa. `text` já
+    // nasce vazio quando o dono é outro, mas a condição fica escrita aqui para que
+    // nenhuma mudança futura no composer reabra o caminho da mensagem entregue ao
+    // cliente errado.
+    if (!draftIsMine) return;
     if (!text.trim() || sendingRef.current || isInputBlocked) return;
     sendingRef.current = true;
     const content = text.trim();

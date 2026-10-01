@@ -72,7 +72,11 @@ export function NotificationToast() {
   return (
     <div
       aria-live="polite"
-      className="fixed bottom-5 right-5 z-50 flex flex-col gap-2 pointer-events-none"
+      // No mobile o composer ocupa a base da tela: em `bottom-5` o card cobria o
+      // botão de enviar, e o toque que ia enviar a mensagem abria a conversa do lead
+      // que acabou de escrever — trocando o destino do texto já digitado. Sobe acima
+      // do composer no mobile; no desktop a base da direita é o painel do contato.
+      className="fixed bottom-24 right-5 z-50 flex flex-col gap-2 pointer-events-none md:bottom-5"
     >
       {notifications.map((n) => (
         <ToastItem key={n.id} notification={n} onDismiss={() => dismiss(n.id)} />

@@ -67,6 +67,13 @@ function SlaReminderQueue() {
       <DialogContent
         key={current.conversationId}
         showCloseButton={false}
+        // O popup abre sozinho, a qualquer momento, SOBRE o chat de outro lead. Se
+        // ele puxar o foco para dentro de si, a próxima tecla do vendedor (um Enter
+        // para enviar, um espaço no meio da frase) aciona o botão focado e troca a
+        // conversa por baixo do que ele está escrevendo. Foi assim que uma tabela
+        // colada para um cliente saiu para outro. O foco fica onde está: o popup só
+        // age por clique deliberado.
+        onOpenAutoFocus={(e) => e.preventDefault()}
         className="sm:max-w-[420px] max-w-[calc(100%-2rem)] overflow-hidden p-0 gap-0 rounded-[12px] border-[#dedbd6] bg-[#faf9f6] text-[#111111] shadow-[0_24px_60px_-20px_rgba(17,17,17,0.35)]"
       >
         {/* Faixa de urgência: marca o popup como alerta de SLA, não um modal comum. */}
@@ -140,7 +147,6 @@ function SlaReminderQueue() {
               <button
                 type="button"
                 onClick={() => respond(current)}
-                autoFocus
                 className="inline-flex h-9 items-center gap-1.5 rounded-[8px] bg-[#ff5600] px-4 text-[13px] font-medium text-white transition-colors hover:bg-[#e64d00] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ff5600]/40 focus-visible:ring-offset-2 focus-visible:ring-offset-[#faf9f6]"
               >
                 <MessageCircleReply aria-hidden className="size-4" strokeWidth={1.75} />
