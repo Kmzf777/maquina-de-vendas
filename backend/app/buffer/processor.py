@@ -44,6 +44,7 @@ from app.buffer.prefill import match_prefill_stage
 # sim/não não diria QUAL motor atende a conversa. Ver `_runner_do_fluxo`.
 from app.button_flow.flows import FLOW_ID as FLUXO_RECUPERACAO
 from app.button_flow.runner import (
+    MOTIVO_HANDOFF_FORMAL,
     e_clique_de_botao,
     fluxo_da_conversa,
     run_button_flow,
@@ -1723,6 +1724,13 @@ async def process_buffered_messages(
         # identidade do botão (o payload) morre com o turno abortado. O clique é o
         # sinal que o projeto inteiro existe para capturar (35,7% dos cliques
         # positivos viraram venda), e ele é serializado pelo lock de qualquer forma.
+        #
+        # POR QUE UMA VARIÁVEL FORA DO LOCK: o motivo de o fluxo NÃO ter rodado é
+        # lido depois dele (a ponte faz rede e Redis, e segurar a trava do lead
+        # durante isso só serializaria inbounds por nada). None cobre os dois
+        # caminhos que não chamam runner nenhum — turno stale abortado e runner que
+        # atendeu — e é o valor que não aciona a ponte.
+        _motivo_do_fluxo: str | None = None
         async with lead_run_lock(lead["id"]):
             _e_clique = e_clique_de_botao(_message_type, _metadata)
             if not _e_clique and (
@@ -1740,11 +1748,47 @@ async def process_buffered_messages(
                 # propósito (`runner.run_button_flow` e
                 # `valeria_runner.processar_inbound`): é o que permite um call-site só
                 # e, com ele, uma única cópia da trava e do re-coalescing.
-                await _rodar_fluxo(
+                #
+                # E agora a mesma forma de RETORNO: o motivo de o fluxo não ter
+                # rodado, ou None quando ele atendeu o turno. `run_button_flow`
+                # devolve None sempre, então a Recuperação é byte-idêntica.
+                _motivo_do_fluxo = await _rodar_fluxo(
                     lead=lead, conversation=conversation, channel=channel,
                     provider=provider, texto=resolved_text,
                     message_type=_message_type, metadata=_metadata, wamid=wamid,
                 )
+
+        # PONTE PÓS-HANDOFF QUANDO O FLUXO DECLINA O TURNO (regressão lida em
+        # produção em 01/10): o lead 5511950821962, transbordado ao João em 31/07,
+        # escreveu "O kilo sai 25 reais" às 12:47 e recebeu SILÊNCIO. Antes da
+        # ativação o gate não reivindicava a conversa, o inbound caía no ramo de
+        # `ai_enabled` lá embaixo e a ponte respondia ("recebi sua mensagem! seu
+        # atendimento já tá com o João…") — está no histórico dele. Depois da
+        # ativação o fluxo reivindica, o runner sai de cena e o `return` abaixo
+        # fechava o caminho antes da ponte.
+        #
+        # Isto NÃO é um fall-through — o inbound não continua. O `return` incondicional
+        # segue intacto (é ele que faz de "zero IA" um fato) e nenhum caminho novo
+        # alcança `run_agent`. O gate só fala com o lead e retorna.
+        #
+        # UM motivo, e só ele: `MOTIVO_HANDOFF_FORMAL` é o único em que há pessoa
+        # esperando do outro lado. Blacklist pediu para sair — mandar qualquer coisa é
+        # o oposto do pedido; etapa de deal incompatível não tem promessa pendente ao
+        # lead. A comparação é contra a constante do módulo DONO da frase
+        # (`button_flow/runner`), nunca contra uma segunda cópia do texto.
+        #
+        # SÓ EM CANAL DE IA, que é a outra metade da decisão que
+        # `TestOQueOCarimboAindaNaoAlcanca` deixou escrita: no número do próprio
+        # vendedor (mode='human') a ponte é absurda — "chama ele direto no contato
+        # que te mandei" na thread dele. Este gate roda ANTES do gate de canal humano
+        # de propósito, então aqui a checagem tem de ser explícita.
+        if (_motivo_do_fluxo == MOTIVO_HANDOFF_FORMAL
+                and channel.get("mode", "ai") != "human"):
+            await _maybe_send_handoff_bridge(
+                lead, phone, conversation, channel, provider,
+                inbound_text=resolved_text, inbound_wamid=wamid,
+                inbound_message_type=_message_type,
+            )
         _update_last_msg(conversation["id"])
         # RETURN INCONDICIONAL, inclusive quando o motor apenas IGNORA o evento.
         # Na Recuperação (número do João, mode='human') seguir o fluxo normal morreria

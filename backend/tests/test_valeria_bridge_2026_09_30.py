@@ -35,11 +35,15 @@ o zera quando `ai_enabled` vai para True, e `_broadcast_ai_enabled` força False
 canal humano) — o carimbo tiraria o bot de cena PARA SEMPRE para aquele lead, em todas
 as ondas seguintes, sem nenhum ganho em troca.
 
-LACUNA QUE CONTINUA ABERTA, pinada em `TestOQueOCarimboAindaNaoAlcanca`: com o fluxo
-ATIVO a ponte não é sequer CHAMADA para a conversa que produziu o handoff, porque o
-gate dos fluxos de botões do processor retorna incondicionalmente (e isso é
-deliberado — é o que faz de "zero IA" um fato). O carimbo satisfaz o PORTÃO da ponte;
-alcançar o CALL SITE depende de uma decisão de despacho que este arquivo não toma.
+A LACUNA QUE ERA ABERTA FOI FECHADA EM 01/10/2026 — ver `TestOQueOCarimboAindaNaoAlcanca`
+no fim do arquivo, que passou a pinar o estado novo. Era esta: com o fluxo ATIVO a ponte
+não era sequer CHAMADA para a conversa que produziu o handoff, porque o gate dos fluxos
+de botões do processor retorna incondicionalmente (e isso continua deliberado — é o que
+faz de "zero IA" um fato). O carimbo satisfazia o PORTÃO da ponte e faltava o CALL SITE.
+No primeiro dia do fluxo em produção dois leads transbordados voltaram a escrever e
+receberam silêncio; agora `valeria_runner.processar_inbound` devolve o MOTIVO de não ter
+rodado e o gate chama a ponte quando ele é `runner.MOTIVO_HANDOFF_FORMAL` — e só nele, e
+só em canal de IA — ANTES do mesmo `return`, que segue intacto.
 """
 from contextlib import ExitStack
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -347,20 +351,32 @@ class TestOTurnoSeguinteAoHandoff:
         assert motivo is None
 
 
-# ── 5. O que o carimbo ainda NÃO alcança ────────────────────────────────────
+# ── 5. O que o carimbo alcança agora (a lacuna, fechada em 01/10) ───────────
 class TestOQueOCarimboAindaNaoAlcanca:
-    """A metade da lacuna que este conserto NÃO fecha, pinada para não ser esquecida.
+    """A metade que faltava — FECHADA em 01/10/2026, e esta classe passa a pinar isso.
 
-    O portão da ponte passou a ser satisfeito, mas o CALL SITE dela fica DEPOIS do
-    gate dos fluxos de botões do processor, e esse gate retorna incondicionalmente —
-    deliberadamente, porque é ele que faz de "zero IA" um fato na ValerIA de botões.
-    Enquanto o fluxo está ATIVO, a conversa que produziu o handoff volta sempre para o
-    runner, que agora sai de cena em silêncio; a ponte não é chamada.
+    O que esta classe pinava antes: o portão da ponte passou a ser satisfeito em 30/09
+    (o carimbo de `human_control`), mas o CALL SITE dela ficava DEPOIS do gate dos
+    fluxos de botões, e esse gate retorna incondicionalmente. Com o fluxo ATIVO a
+    conversa que produziu o handoff voltava sempre para o runner, que saía de cena em
+    silêncio, e a ponte NÃO era chamada. A docstring dizia: "fechar a outra metade é
+    uma decisão de DESPACHO (o gate cair para a ponte quando o fluxo declina o turno, e
+    só em canal de IA — em canal humano a ponte seria absurda) […] Se alguém a tomar,
+    ESTE teste falha e é aqui que a decisão fica escrita".
 
-    Fechar a outra metade é uma decisão de DESPACHO (o gate cair para a ponte quando o
-    fluxo declina o turno, e só em canal de IA — em canal humano a ponte seria
-    absurda), não de efeitos de CRM. Se alguém a tomar, ESTE teste falha e é aqui que
-    a decisão fica escrita.
+    A decisão foi tomada, e não por preferência: no primeiro dia do fluxo em produção
+    (01/10) DOIS dos 10 leads reais eram transbordos antigos (31/07 e 28/08) que
+    voltaram a escrever e receberam silêncio — o `5511950821962` escreveu "O kilo sai
+    25 reais" às 12:47. O conserto é o descrito acima, exatamente: `processar_inbound`
+    devolve o MOTIVO de não ter rodado, o gate chama a ponte quando o motivo é
+    `runner.MOTIVO_HANDOFF_FORMAL` (e só nele, e só em canal de IA) e CONTINUA
+    retornando — o `return` incondicional segue intacto, nenhum caminho novo alcança
+    `run_agent`. Ver tests/test_botoes_pos_producao_2026_10_01.py.
+
+    As asserções abaixo invertem: o que era `ponte.assert_not_awaited()` com o fluxo
+    ativo agora é `assert_awaited_once()`. O teste do fluxo DESLIGADO não muda uma
+    linha — ele sempre descreveu o caminho normal, que continua idêntico. E o nome da
+    classe fica: ela continua sendo o lugar onde esta decisão está escrita.
     """
 
     TEXTO = "e aí, tem novidade do meu pedido?"
@@ -371,7 +387,11 @@ class TestOQueOCarimboAindaNaoAlcanca:
         return lead
 
     @pytest.mark.asyncio
-    async def test_com_o_fluxo_ATIVO_a_ponte_nao_e_alcancada(self, monkeypatch):
+    async def test_com_o_fluxo_ATIVO_a_ponte_AGORA_e_alcancada(self, monkeypatch):
+        """O dublê do runner devolve o MOTIVO porque é o que o runner de verdade
+        devolve quando `_motivo_para_nao_rodar` recusa por handoff formal — é a forma
+        do contrato novo entre os dois, e `TestOTurnoSeguinteAoHandoff` acima prova que
+        esse é o motivo que este lead produz."""
         monkeypatch.setenv("VALERIA_BOTOES_ENABLED", "on")
         monkeypatch.delenv("RECUPERACAO_ENABLED", raising=False)
 
@@ -380,6 +400,42 @@ class TestOQueOCarimboAindaNaoAlcanca:
                 stack, channel=CANAL_VALERIA, conversation=_conversa(),
                 lead=self._lead_transbordado(), texto=self.TEXTO,
             )
+            destinos["valeria"].return_value = runner.MOTIVO_HANDOFF_FORMAL
+            stack.enter_context(patch.object(
+                runner, "get_agent_profile",
+                MagicMock(return_value=_perfil(FLUXO_VALERIA)),
+            ))
+            ponte = stack.enter_context(patch.object(
+                P, "_maybe_send_handoff_bridge", new=AsyncMock(return_value=True),
+            ))
+            await P.process_buffered_messages(
+                "5534988861441", self.TEXTO, "674beb13", wamid="wamid.in",
+            )
+
+        destinos["valeria"].assert_awaited_once()
+        ponte.assert_awaited_once()
+        # O lead que chega à ponte é o mesmo que o handoff deixou: é o carimbo de
+        # 30/09 que o portão dela exige, e sem ele este call site novo seria mudo.
+        recebido = ponte.await_args.args[0]
+        assert recebido["human_control"] is True
+        assert recebido["metadata"]["handoff"]["vendedor"] == reg.VENDEDOR_ATACADO
+        # E o `return` incondicional segue intacto: a IA generativa não é alcançada.
+        destinos["llm"].assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_com_o_fluxo_ATIVO_e_turno_atendido_a_ponte_nao_roda(self, monkeypatch):
+        """A contra-prova do novo ramo: quando o runner ATENDE o turno (devolve None),
+        nada mudou — a ponte em cima de uma tela do fluxo seria uma segunda mensagem
+        faturada contradizendo a primeira."""
+        monkeypatch.setenv("VALERIA_BOTOES_ENABLED", "on")
+        monkeypatch.delenv("RECUPERACAO_ENABLED", raising=False)
+
+        with ExitStack() as stack:
+            destinos = _patch_pipeline(
+                stack, channel=CANAL_VALERIA, conversation=_conversa(),
+                lead=self._lead_transbordado(), texto=self.TEXTO,
+            )
+            destinos["valeria"].return_value = None
             stack.enter_context(patch.object(
                 runner, "get_agent_profile",
                 MagicMock(return_value=_perfil(FLUXO_VALERIA)),

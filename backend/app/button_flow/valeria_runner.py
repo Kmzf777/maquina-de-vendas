@@ -271,7 +271,8 @@ def _pares(botoes) -> list[tuple[str, str]]:
 
 async def enviar_no(provider, telefone: str, no: reg.No, contexto: dict | None,
                     *, corpo: str | None = None,
-                    rotulo_lista: str | None = None) -> dict | None:
+                    rotulo_lista: str | None = None,
+                    sem_foto: bool = False) -> dict | None:
     """Envia a tela de um nó. UMA mensagem, sempre.
 
     `corpo` sobrescreve `no.corpo` e é por onde o reoferecimento passa: o motor
@@ -281,6 +282,20 @@ async def enviar_no(provider, telefone: str, no: reg.No, contexto: dict | None,
 
     `rotulo_lista` é o override da chave reservada `reg.CHAVE_ROTULO_LISTA` — o
     texto do botão que abre a folha de opções. Ausente = o default do registry.
+
+    `sem_foto` SUPRIME o header de imagem de um nó `foto_botoes`, e é o conserto do
+    defeito lido na conversa `3c236b3c` de 01/10: o lead recebeu a tela de
+    fechamento (foto + preço + botões), escreveu "Valores" e a resposta foi A FOTO
+    DE NOVO, com o texto do nudge na legenda. O nudge reenvia o MESMO nó
+    (`proximo_no = no_atual`) e a estrutura do envio vem de `no.tela`, então
+    `N5`/`N5b`/`P4`/`P4b` republicavam a foto e gastavam uma mensagem de IMAGEM
+    faturada (a Meta cobra por mensagem enviada desde 01/10/2026) para reoferecer
+    botões que o lead já tinha na tela. QUEM decide é `_enviar`, que conhece
+    `decisao.marcar_nudge`; aqui o parâmetro é só mecânica de envio — e por isso o
+    default é False: o nó não muda, muda a forma de REENVIAR.
+
+    Suprimir a foto também evita o `to_thread` da publicação no bucket: num nudge
+    não há I/O de imagem nenhum.
     """
     texto = _resolver(corpo if corpo is not None else no.corpo, contexto)
     if no.tela == "lista":
@@ -293,7 +308,7 @@ async def enviar_no(provider, telefone: str, no: reg.No, contexto: dict | None,
         # garante), mas um override de tela não pode virar exceção no inbound.
         return await provider.send_text(telefone, texto)
     imagem = None
-    if no.tela == "foto_botoes":
+    if no.tela == "foto_botoes" and not sem_foto:
         # `to_thread`: publicar a foto é I/O bloqueante. Sem URL a tela sai sem
         # header — o corpo já descreve o produto, e mensagem nenhuma seria pior.
         imagem = await asyncio.to_thread(url_publica_da_foto, no.foto)
@@ -436,13 +451,28 @@ async def processar_inbound(
     *, lead: dict, conversation: dict, channel: dict, provider,
     texto: str, message_type: str | None = None, metadata: dict | None = None,
     wamid: str | None = None,
-) -> None:
+) -> str | None:
     """Roda um turno da ValerIA de botões. Nunca levanta.
 
     Chamado pelo despacho de `buffer/processor.py`, que já persistiu o inbound.
+
+    DEVOLVE O MOTIVO DE NÃO TER RODADO, ou None quando ATENDEU o turno — e isso é
+    o conserto do silêncio lido em produção em 01/10 (lead 5511950821962, "O kilo
+    sai 25 reais" às 12:47). O gate do processor dá `return` INCONDICIONAL depois
+    deste runner — é ele que faz de "zero IA" um fato —, então a ponte pós-handoff,
+    que mora mais abaixo (no ramo de `ai_enabled`), ficou inalcançável no instante
+    em que o fluxo passou a reivindicar a conversa. O gate não pode seguir o
+    inbound (reabriria o caminho até `run_agent`), mas PODE chamar a ponte antes de
+    retornar — e para escolher o ramo certo ele precisa saber POR QUE o turno não
+    rodou: só `runner.MOTIVO_HANDOFF_FORMAL` significa "o lead está esperando uma
+    pessoa". Blacklist e etapa incompatível continuam em silêncio, de propósito.
+    None não quer dizer "deu certo": quer dizer "nada mais a fazer com este
+    inbound" — vale igual para o turno aplicado, para o evento ignorado, para o
+    robô do lead e para a exceção abaixo, nos quais a ponte seria ruído ou, no
+    caso do erro, uma resposta sobre um estado que não se conhece.
     """
     try:
-        await _executar_turno(
+        return await _executar_turno(
             lead=lead, conversation=conversation, channel=channel,
             provider=provider, texto=texto, message_type=message_type,
             metadata=metadata, wamid=wamid,
@@ -453,6 +483,7 @@ async def processar_inbound(
         logger.error("%s turno falhou conv=%s lead=%s wamid=%s: %s", _LOG,
                      conversation.get("id"), lead.get("id"), wamid, exc,
                      exc_info=True)
+        return None
 
 
 def _carregar_conteudo() -> tuple[dict, dict, str | None, str | None, dict]:
@@ -648,7 +679,11 @@ async def _enviar(decisao: motor.Decisao, *, lead: dict, conversation: dict,
 
     O corpo vem SEMPRE de `decisao.mensagem`, e não do registry: é o motor que
     sabe se este turno é a tela do nó ou o reoferecimento dele. A ESTRUTURA
-    (lista/botões/foto) vem do nó, porque `Mensagem` não a carrega.
+    (lista/botões/foto) vem do nó, porque `Mensagem` não a carrega — com UMA
+    exceção, e ela é o conserto de 01/10: a FOTO não sai no nudge. O motor já diz
+    que este turno é reoferta (`decisao.marcar_nudge`, campo que existe desde o
+    começo e que o runner só usava para contar o orçamento), e é aqui — onde se
+    sabe o que o turno É — que essa informação vira forma de envio. Ver `enviar_no`.
     """
     mensagem = decisao.mensagem
     if mensagem is None:
@@ -662,7 +697,8 @@ async def _enviar(decisao: motor.Decisao, *, lead: dict, conversation: dict,
         if no is not None:
             resultado = await enviar_no(provider, destino, no, contexto,
                                         corpo=mensagem.corpo,
-                                        rotulo_lista=rotulo_lista)
+                                        rotulo_lista=rotulo_lista,
+                                        sem_foto=decisao.marcar_nudge)
         elif terminal is not None:
             resultado = await enviar_terminal(provider, destino, terminal,
                                               contexto, corpo=mensagem.corpo)
@@ -677,7 +713,8 @@ async def _enviar(decisao: motor.Decisao, *, lead: dict, conversation: dict,
         return
     if resultado is None:
         return
-    await _persistir_mensagem(conversation, lead, mensagem, contexto, no, resultado)
+    await _persistir_mensagem(conversation, lead, mensagem, contexto, no, resultado,
+                              sem_foto=decisao.marcar_nudge)
     await _enviar_cartao(provider, destino, terminal, channel,
                          conversation=conversation, lead=lead)
 
@@ -768,14 +805,22 @@ async def _enviar_cartao(provider, destino: str, terminal: reg.Terminal | None,
 
 
 async def _persistir_mensagem(conversation: dict, lead: dict, mensagem, contexto,
-                              no, resultado) -> None:
+                              no, resultado, *, sem_foto: bool = False) -> None:
     """Grava a saída em `messages`. Fail-soft: a mídia JÁ foi entregue.
 
     `media_url` só sai do CACHE (`_urls_de_foto`), nunca de uma publicação nova:
     a foto acabou de ser publicada por `enviar_no`, e um segundo `_publicar_foto`
     aqui faria I/O de novo dentro do loop para um campo cosmético do CRM.
+
+    `sem_foto` acompanha o do envio, e não é detalhe: o cache sobrevive ao turno, então
+    num nudge de nó `foto_botoes` cujo header JÁ saiu uma vez a URL ainda está
+    cacheada — gravá-la aqui faria a bolha do CRM mostrar ao vendedor uma imagem que o
+    lead não recebeu neste turno, com `message_type="image"`. O registro tem de
+    descrever a mensagem que saiu.
     """
-    media = _urls_de_foto.get(no.foto) if (no is not None and no.foto) else None
+    media = None
+    if not sem_foto and no is not None and no.foto:
+        media = _urls_de_foto.get(no.foto)
     try:
         await asyncio.to_thread(
             save_message, conversation.get("id"), lead.get("id"), "assistant",
@@ -793,7 +838,12 @@ async def _executar_turno(
     *, lead: dict, conversation: dict, channel: dict, provider,
     texto: str, message_type: str | None, metadata: dict | None,
     wamid: str | None,
-) -> None:
+) -> str | None:
+    """O motivo de não ter rodado, ou None quando o turno foi atendido.
+
+    Ver `processar_inbound`: quem lê este motivo é o gate do processor, para decidir
+    se a ponte pós-handoff fala com o lead antes do `return` incondicional.
+    """
     conversation_id = conversation.get("id")
     lead_id = lead.get("id")
 
@@ -814,8 +864,13 @@ async def _executar_turno(
 
     motivo = _motivo_para_nao_rodar(lead, estado, deal)
     if motivo:
+        # A nota CONTINUA sendo gravada, e o motivo SOBE junto: são dois públicos.
+        # A nota diz ao operador que o bot saiu de cena; o motivo é o que permite ao
+        # gate dizer AO LEAD que alguém o atenderá (ver `processar_inbound`). Sem
+        # devolvê-lo, o turno terminava aqui e o lead transbordado que escrevia de
+        # novo recebia silêncio — regressão da ativação de 01/10.
         await _notificar_sem_rodar(lead, conversation, estado, motivo)
-        return
+        return motivo
 
     evento = _montar_evento(texto, message_type, metadata)
 

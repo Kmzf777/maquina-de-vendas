@@ -240,6 +240,18 @@ def _evidencia_do_turno(
 
 
 # ── Guardas de não-rodar ────────────────────────────────────────────────────
+# O motivo "um humano JÁ assumiu formalmente", exportado como CONSTANTE porque ele
+# deixou de ser só texto de log: o gate dos fluxos de botões (`buffer/processor.py`)
+# compara contra ele para decidir se chama a ponte pós-handoff — é o ÚNICO dos três
+# motivos em que o lead está esperando resposta de uma pessoa (blacklist pediu para
+# sair e etapa incompatível não tem promessa pendente). Uma segunda cópia da frase no
+# processor é exatamente a divergência que `campaigns/node_registry.py` documenta: a
+# frase é prosa (vai para a nota do operador), alguém a reescreveria aqui e o
+# consumidor passaria a nunca casar — em silêncio, devolvendo o lead ao vácuo que este
+# conserto fechou.
+MOTIVO_HANDOFF_FORMAL = "human_control=true (handoff formal já registrado)"
+
+
 def _motivo_para_nao_rodar(lead: dict, estado: dict | None, deal: dict | None) -> str | None:
     """Razão para o bot sair de cena neste turno, ou None para seguir.
 
@@ -277,7 +289,7 @@ def _motivo_para_nao_rodar(lead: dict, estado: dict | None, deal: dict | None) -
     `stage_id` daria diferente SEMPRE e tiraria o bot de cena para sempre.
     """
     if lead.get("human_control") is True:
-        return "human_control=true (handoff formal já registrado)"
+        return MOTIVO_HANDOFF_FORMAL
     stage_gravado = (estado or {}).get("deal_stage_id") if isinstance(estado, dict) else None
     stage_atual = (deal or {}).get("stage_id")
     if stage_gravado and stage_atual and stage_atual != stage_gravado:

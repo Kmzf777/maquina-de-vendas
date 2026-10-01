@@ -173,8 +173,22 @@ def aplicar(
     if efeitos.pretexto_contestado:
         _marcar_pretexto_contestado(lead, conversation_id)
 
+    # `com_handoff` é passado EXPLICITAMENTE, e não deduzido da ordem das chamadas: o
+    # mesmo `Efeitos` pede os dois efeitos nos três terminais de handoff da ValerIA, e
+    # só quem lê `efeitos` sabe disso. A ordem fica como está de propósito — silenciar
+    # antes de assumir o controle é o que os dois updates de coluna documentam
+    # (tests/test_valeria_bridge_2026_09_30.py::
+    # test_o_terminal_real_silencia_a_ia_e_depois_assume_o_controle).
+    #
+    # `com_optout` é o irmão exato disso em `T_OPTOUT`, que também declara
+    # `silenciar_ia` junto do seu desfecho — e ganha de graça uma garantia que vem da
+    # ORDEM acima: `_aplicar_optout` já rodou e já devolveu True, ou seja, a nota de
+    # opt-out já foi escrita quando `_silenciar_ia` é chamada. O porquê de a nota de
+    # silêncio não sair ali está dentro de `_silenciar_ia`.
     if efeitos.silenciar_ia:
-        _silenciar_ia(lead, conversation_id, fluxo=fluxo)
+        _silenciar_ia(lead, conversation_id, fluxo=fluxo,
+                      com_handoff=bool(efeitos.handoff),
+                      com_optout=bool(efeitos.optout))
 
     if efeitos.handoff:
         _aplicar_handoff(lead, conversation_id, vendedor=efeitos.vendedor, fluxo=fluxo)
@@ -358,19 +372,82 @@ def _marcar_pretexto_contestado(lead: dict, conversation_id: str) -> None:
 
 
 def _silenciar_ia(lead: dict, conversation_id: str, *,
-                  fluxo: str = FLUXO_RECUPERACAO) -> None:
+                  fluxo: str = FLUXO_RECUPERACAO,
+                  com_handoff: bool = False,
+                  com_optout: bool = False) -> None:
     """Entrega a conversa ao vendedor sem carimbar handoff.
 
     Encerrar o nó só tira o BOT do caminho — no número da ValerIA o LLM assumiria em
     seguida. Aqui NÃO usamos o carimbo de handoff de propósito: ele marcaria como lead
     qualificado alguém que só escreveu texto livre duas vezes, sujando a cascata de
     Qualificados/Aceites.
+
+    `com_handoff` = o MESMO `Efeitos` também pede handoff, e aí a nota NÃO é escrita.
+    Desligar a IA continua acontecendo nos dois caminhos; só a anotação muda.
+
+    `com_optout` = o mesmo `Efeitos` também pede opt-out, e a nota também não é
+    escrita — por uma razão DIFERENTE da do handoff, que está no guarda abaixo.
     """
     lead_id = lead["id"]
     try:
         update_lead(lead_id, ai_enabled=False)
     except Exception as exc:
         logger.warning("[BUTTON FLOW] falha ao silenciar IA do lead %s: %s", lead_id, exc)
+        return
+    if com_handoff:
+        # NÃO "restaure" a nota aqui. Ela afirma um MOTIVO — "insistiu em texto livre" —
+        # que só é verdade no caminho sem handoff (`T_HUMANO` da ValerIA, o bloqueio
+        # depois de 3 nudges, e o `_ENTREGAR_AO_HUMANO`/CLASSE_ENGANO da Recuperação).
+        # Os três terminais de handoff da ValerIA (`T_HANDOFF`, `T_HANDOFF_PL`,
+        # `T_HANDOFF_ARTHUR`) declaram `silenciar_ia=True` JUNTO de `handoff=True` e
+        # reusavam este texto: em produção ele saiu em 100% dos handoffs, inclusive na
+        # conversa dd221643, de um lead com `nudges=0` — tocou todos os botões, nunca
+        # digitou — e o vendedor abria a conversa lendo um motivo falso sobre alguém
+        # que se comportou perfeitamente. Eram TRÊS notas no mesmo transbordo, uma
+        # delas mentira.
+        # Nada se perde: `_aplicar_handoff` grava as duas que importam e são verdade
+        # (o marcador `[encaminhar_humano]`, que é o KPI do dashboard, e a nota
+        # `[TRANSBORDO p/ …]` com o vendedor certo), e "a IA está desligada" fica
+        # legível no CRM pelo `ai_enabled=False`/`human_control=true` que o handoff
+        # carimba — nenhum consumidor casa este texto (nem SQL, nem frontend).
+        return
+    if com_optout:
+        # Mesma nota, mesma mentira, um grau menor — e as DUAS metades dela são o
+        # motivo de ela não sair no opt-out:
+        #   • "insistiu em texto livre": quem chega a `T_OPTOUT` escreveu UMA frase da
+        #     lista fechada (`valeria_engine.FRASES_OPTOUT`), e o motor a atende ACIMA
+        #     do contador de nudges e acima da guarda de encerramento — no primeiro
+        #     contato, até acima da tela de entrada (`valeria_runner._decidir`). O caso
+        #     normal é `nudges=0`: uma mensagem, zero insistência. "Insistiu" é o que
+        #     descreve o `T_HUMANO`, o 4º texto livre, onde a nota CONTINUA saindo.
+        #   • "conversa entregue ao vendedor": falso em TODO opt-out. A conversa foi
+        #     encerrada porque a pessoa pediu para sair — `_aplicar_optout` acabou de
+        #     gravar `opt_out=true` com evidência, mandar o card para "Descadastrado" e
+        #     rodar `apply_optout_side_effects` (Blacklist + follow-ups cancelados).
+        #     Aqui o custo de errar não é ruído: a nota manda o vendedor abordar
+        #     justamente quem pediu para ser deixado em paz, e contato depois do
+        #     opt-out é o que a Meta e a ANPD cobram.
+        #
+        # SUPRIMIR, e não reescrever. No handoff a nota era redundante porque sobravam
+        # DUAS notas verdadeiras; aqui sobra UMA, e ela já é o registro completo:
+        # "[OPT-OUT] Lead pediu para parar de receber mensagens no {fluxo}" diz o fato,
+        # o motivo e qual bot. Uma nota verdadeira em cima dela ("a IA foi desligada
+        # porque o lead pediu opt-out") não acrescentaria fato NENHUM — `_aplicar_optout`
+        # grava `ai_enabled=False` no mesmo update obrigatório do `opt_out`, então a
+        # coluna que essa nota explicaria é escrita pelo próprio opt-out. O que ela
+        # acrescentaria é um cabeçalho de atendimento humano na conversa de quem pediu
+        # silêncio, e uma segunda mensagem de sistema para um único evento.
+        #
+        # E não há como ficar sem nota: a ordem em `aplicar` faz com que chegar aqui
+        # implique `_aplicar_optout` ter devolvido True, o que só acontece DEPOIS do
+        # `anotar` dele. Quando o opt-out não grava, `aplicar` devolve False e esta
+        # função não é chamada.
+        #
+        # ValerIA-only por construção: no motor da Recuperação `optout` nunca sai no
+        # mesmo `Efeitos` que `silenciar_ia` (`engine._decidir_optout` pede só o
+        # primeiro), então o texto dela segue byte-idêntico — e há varredura de
+        # `engine.decidir` travando isso em
+        # tests/test_botoes_nota_optout_2026_10_01.py.
         return
     anotar(lead_id, conversation_id,
            f"🙋 [ATENDIMENTO HUMANO] Lead insistiu em texto livre no {fluxo}; "

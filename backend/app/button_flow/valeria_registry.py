@@ -169,7 +169,15 @@ class Terminal:
 # campaigns/node_registry.py documenta.
 CHAVE_NUDGE = "__nudge__"
 
-CORPO_NUDGE = "pra eu te passar o valor certo, é só tocar numa das opções 👇"
+# O TEXTO MUDOU EM 01/10, e o motivo saiu de producao: o corpo antigo era "pra eu te
+# passar o VALOR certo, e so tocar numa das opcoes" e ele pressupoe que o lead
+# perguntou preco. No primeiro dia do fluxo ele respondeu a um AUDIO de numero errado
+# ("Oi, minha filha, como voce esta?") e a um VIDEO — nos dois a frase nao faz sentido
+# nenhum, porque o nudge responde a QUALQUER coisa que nao seja um clique (audio,
+# video, figurinha, localizacao), e nao so a uma pergunta de preco. O corpo novo e
+# neutro e serve aos quatro casos. Continua editavel na tela pela chave reservada
+# acima, ou seja, reversivel sem deploy.
+CORPO_NUDGE = "pra seguir, é só tocar numa das opções abaixo 👇"
 
 # ── O rótulo do botão que ABRE a folha de opções numa tela de lista ─────────
 # Mesma situação do nudge, e por isso a MESMA solução: é texto que o lead LÊ (nas
