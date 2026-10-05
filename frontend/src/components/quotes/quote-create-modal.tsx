@@ -48,6 +48,7 @@ import {
 import { useBlingStatus } from "@/hooks/use-bling-status";
 import { blingGate } from "@/lib/bling-gate";
 import { CONTA_PADRAO } from "@/lib/bling-accounts";
+import { defaultsDoContato, useLeadCliente } from "@/components/sales/lead-cliente";
 import { leadMatchesSearch } from "@/lib/search";
 import type { OrderPayloadResult } from "@/lib/bling-order-state";
 import { buildQuotePayload, linesFromQuoteItems } from "@/lib/quote-state";
@@ -415,6 +416,11 @@ export function QuoteCreateModal({
     onClose();
   }
 
+  // Cadastro do lead POR ID, para pré-preencher o contato do Bling vindo de
+  // qualquer porta de entrada — inclusive a conversa, onde a lista do
+  // `pickLead` nunca é carregada. Busca também na edição: o PUT pode devolver
+  // o mesmo 409 de contato.
+  const { lead: leadCliente } = useLeadCliente(resolvedLeadId || null);
   const leadSelecionado = leads.find((l) => l.id === resolvedLeadId);
   const escondeFormulario = !!resolution || !!sucesso || convertido;
 
@@ -809,10 +815,7 @@ export function QuoteCreateModal({
               status={resolution.status}
               reason={resolution.reason}
               candidates={resolution.candidates}
-              defaults={{
-                nome: leadSelecionado?.name ?? "",
-                telefone: leadSelecionado?.phone ?? "",
-              }}
+              defaults={defaultsDoContato(leadCliente)}
               conta={conta ?? CONTA_PADRAO}
               onResolved={retryAfterContact}
               onCancel={() => setResolution(null)}

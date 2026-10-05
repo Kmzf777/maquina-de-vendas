@@ -34,6 +34,7 @@ import { blingGate } from "@/lib/bling-gate";
 import { productSummary } from "@/lib/bling";
 import { divergenceFrom, type Divergence } from "@/lib/bling-divergence";
 import { CONTA_PADRAO } from "@/lib/bling-accounts";
+import { defaultsDoContato, useLeadCliente } from "@/components/sales/lead-cliente";
 
 /**
  * `bling_account` ainda nao esta no tipo `Sale` compartilhado — adiciona-lo
@@ -658,9 +659,11 @@ export function SaleCreateModal({
 
   // ── helpers ───────────────────────────────────────────────────────────────
   const resolvedLeadId = selectedLeadId || leadId || "";
-  // Só existe no modo `pickLead` (é a lista carregada para o combobox); serve
-  // para pré-preencher o cadastro do contato e poupar digitação do vendedor.
-  const leadSelecionado = leads.find((l) => l.id === resolvedLeadId);
+  // Cadastro do lead POR ID — vale para qualquer porta de entrada (conversa,
+  // card, painel de vendas). Antes vinha da lista do `pickLead`, vazia quando o
+  // modal era aberto pela conversa, e o vendedor redigitava tudo no cadastro
+  // do Bling (call de 01/10).
+  const { lead: leadCliente } = useLeadCliente(isEditing ? null : resolvedLeadId);
 
   /** Fecha avisando o chamador quando o pedido já foi lançado (recarrega a lista). */
   function fecharModal() {
@@ -1066,10 +1069,7 @@ export function SaleCreateModal({
               status={resolution.status}
               reason={resolution.reason}
               candidates={resolution.candidates}
-              defaults={{
-                nome: leadSelecionado?.name ?? "",
-                telefone: leadSelecionado?.phone ?? "",
-              }}
+              defaults={defaultsDoContato(leadCliente)}
               // Fallback para CONTA_PADRAO so e alcancado com zero contas
               // conectadas (`conta` nunca resolveu) — mesmo comportamento de
               // antes desta funcionalidade existir, nunca pior.
