@@ -144,6 +144,14 @@ _FORMATO_DO_CAFE = re.compile(r"\b(?:em\s+)?graos\b|\bmoido\b")
 # Prefixo de quando o nó casa com vários formatos do MESMO café (decisão do dono,
 # 06/10): mostra o menor preço, sem fingir que é o preço de todos.
 PREFIXO_FAIXA = "a partir de"
+# Os qualificadores aprovados de `agent/prompts/.../atacado.py` ("Apresentacao de
+# precos"). Com "a partir de" no valor, o qualificador colado ao `{preco}` sai —
+# "gira em torno de a partir de R$ 28,70" não é português. Só o COLADO ao
+# marcador: o resto do corpo é texto do editor e não se mexe.
+_QUALIFICADOR_DO_PRECO = re.compile(
+    r"\b(?:gira em torno de|fica por volta de|na faixa de|por volta de)\s+(?=\{preco\})",
+    re.IGNORECASE,
+)
 
 
 def limpar_cache_de_fotos() -> None:
@@ -205,9 +213,16 @@ def _resolver(corpo: str, contexto: dict | None) -> str:
     O corte é genérico (qualquer `{chave}`) e não só `{preco}`: a garantia que
     interessa é "nenhum marcador chega ao lead", e uma lista de marcadores
     conhecidos envelheceria junto com o registry.
+
+    Preço em faixa ("a partir de R$ 28,70", ver `preco_do_no`) já traz a sua
+    própria ressalva: o qualificador colado ao `{preco}` sai, para o lead não
+    ler "gira em torno de a partir de".
     """
     dados = {k: str(v) for k, v in (contexto or {}).items() if v}
-    texto = flows.render(corpo or "", dados)
+    corpo = corpo or ""
+    if dados.get("preco", "").startswith(PREFIXO_FAIXA):
+        corpo = _QUALIFICADOR_DO_PRECO.sub("", corpo)
+    texto = flows.render(corpo, dados)
     limpas: list[str] = []
     for linha in texto.splitlines():
         if _MARCADOR.search(linha):

@@ -109,3 +109,56 @@ def test_produto_base_ignora_formato_acento_e_pontuacao(nome):
 def test_produto_base_distingue_cafes_diferentes():
     assert (runner._produto_base("Canastra Clássico — Moído 250g")
             != runner._produto_base("Canastra Suave — Moído 250g"))
+
+
+# ── o corpo que o lead lê ───────────────────────────────────────────────────
+class ProvedorFalso:
+    def __init__(self):
+        self.chamadas = []
+
+    async def send_interactive_buttons(self, to, body, buttons, image_url=None):
+        self.chamadas.append(body)
+        return {"messages": [{"id": "wamid.1"}]}
+
+
+@pytest.fixture
+def sem_foto(monkeypatch):
+    monkeypatch.setattr(runner, "url_publica_da_foto", lambda _c: None)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("no_id", ["N5", "N5b"])
+async def test_corpo_com_faixa_nao_empilha_qualificador(no_id, catalogo, sem_foto):
+    with catalogo(CATALOGO):
+        contexto = {"preco": runner.preco_do_no(reg.NOS[no_id])}
+    p = ProvedorFalso()
+    await runner.enviar_no(p, "5534988861441", reg.NOS[no_id], contexto)
+    corpo = p.chamadas[0]
+    assert "a partir de R$ 28,70 a unidade no atacado." in corpo
+    assert "gira em torno de a partir de" not in corpo
+    assert "{preco}" not in corpo
+    assert "gostaria de ser encaminhado ao vendedor?" in corpo
+
+
+@pytest.mark.asyncio
+async def test_preco_unico_mantem_o_qualificador(sem_foto):
+    p = ProvedorFalso()
+    await runner.enviar_no(p, "5534988861441", reg.NOS["N5"], {"preco": "R$ 28,70"})
+    assert "gira em torno de R$ 28,70 a unidade no atacado." in p.chamadas[0]
+
+
+@pytest.mark.parametrize("qualificador", [
+    "gira em torno de", "fica por volta de", "na faixa de", "por volta de",
+    "Gira em torno de",
+])
+def test_qualquer_qualificador_aprovado_sai_antes_da_faixa(qualificador):
+    corpo = f"{qualificador} {{preco}} a unidade."
+    texto = runner._resolver(corpo, {"preco": "a partir de R$ 28,70"})
+    assert texto == "a partir de R$ 28,70 a unidade."
+
+
+def test_qualificador_longe_do_marcador_fica():
+    """Só sai o qualificador COLADO no {preco}; o resto do texto é do editor."""
+    corpo = "o preço gira em torno de mercado.\nvalor: {preco}."
+    texto = runner._resolver(corpo, {"preco": "a partir de R$ 28,70"})
+    assert texto == "o preço gira em torno de mercado.\nvalor: a partir de R$ 28,70."
