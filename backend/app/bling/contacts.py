@@ -505,6 +505,51 @@ def _lead_por_contato(contact_id: int, account: str) -> dict | None:
     return _find_lead("id", linha["lead_id"])
 
 
+def _celular_br(e164: str | None) -> str | None:
+    """O numero e celular brasileiro? Devolve-o com o 9, ou None se for fixo.
+
+    Celular: 55 + DDD + 9 + 8 digitos (13), ou o formato antigo sem o 9
+    (12 digitos, primeiro digito local de 6 a 9). Fixo comeca de 2 a 5.
+    `_to_e164_br` nao injeta o 9 de proposito (nao distingue fixo com DDI), entao
+    a decisao fica aqui, onde o primeiro digito local ja esta isolado.
+    """
+    if not e164 or not e164.startswith("55"):
+        return None
+    if len(e164) == 13 and e164[4] == "9":
+        return e164
+    if len(e164) == 12 and e164[4] in "6789":
+        return e164[:4] + "9" + e164[4:]
+    return None
+
+
+def _chaves_de_celular(contato: dict) -> list[str]:
+    """Telefones do contato que podem achar (e nomear) o lead, em ordem.
+
+    Bug da call de 01/10: no Bling o celular costuma estar em `telefone`, nao em
+    `celular`. Olhar so o campo `celular` criava lead `bling-<id>` para cliente
+    que ja existia (138 duplicatas, a venda caia sem origem). O que separa fixo
+    de celular e o NUMERO: de `telefone` so entra celular; de `celular` entra o
+    que vier (o vendedor declarou que e celular).
+
+    Para cada celular vao as duas grafias: com o 9 (como `leads.phone` grava
+    hoje) e sem (leads legados importados antes da normalizacao).
+    """
+    chaves: list[str] = []
+    for campo in ("celular_e164", "telefone_e164"):
+        bruto = contato.get(campo)
+        celular = _celular_br(bruto)
+        if celular:
+            candidatos = [celular, celular[:4] + celular[5:]]
+        elif campo == "celular_e164" and bruto:
+            candidatos = [bruto]
+        else:
+            candidatos = []
+        for c in candidatos:
+            if c not in chaves:
+                chaves.append(c)
+    return chaves
+
+
 async def ensure_lead(contato: dict, account: str = config.DEFAULT_ACCOUNT) -> str | None:
     """Devolve o lead_id do contato NESTA conta, criando o lead se preciso
     (decisao D6). A logica de casamento (documento -> celular -> criar) nao
@@ -536,15 +581,16 @@ async def ensure_lead(contato: dict, account: str = config.DEFAULT_ACCOUNT) -> s
     # distintos ao mesmo cadastro. O fixo continua no espelho
     # (`bling_contacts.telefone_e164`), entao nada se perde. Em `_query_by_phones`
     # o fixo pode entrar, porque la o resultado so SUGERE.
-    telefone = contato.get("celular_e164")
-    if telefone:
+    # "Celular" e o NUMERO, nao o campo: ver `_chaves_de_celular`.
+    chaves = _chaves_de_celular(contato)
+    for chave in chaves:
         # ASSIMETRIA PROPOSITAL com `resolve`: la, telefone so SUGERE; aqui pode
         # gravar. Os riscos sao opostos — `resolve` decide em que cadastro do ERP a
         # venda entra, enquanto aqui nada e escrito no ERP — e `leads.phone` e
         # UNIQUE, entao ignorar o lead achado nao seria "mais seguro", seria
         # estourar a constraint no insert. Mas gravar o vinculo continua sendo uma
         # decisao separada de reaproveitar a linha: ver `_pode_vincular_por_telefone`.
-        achado = await asyncio.to_thread(_find_lead, "phone", telefone)
+        achado = await asyncio.to_thread(_find_lead, "phone", chave)
         if achado:
             contato_da_conta = await asyncio.to_thread(
                 _contato_do_lead, achado["id"], account)
@@ -557,7 +603,7 @@ async def ensure_lead(contato: dict, account: str = config.DEFAULT_ACCOUNT) -> s
     payload = {
         # leads.phone e UNIQUE NOT NULL. Sem telefone, um placeholder unico por
         # construcao. A coluna ja aceita valores nao-E.164 (BSUIDs do WhatsApp).
-        "phone": telefone or f"bling-{contact_id}",
+        "phone": chaves[0] if chaves else f"bling-{contact_id}",
         "name": contato.get("fantasia") or contato.get("nome"),
         "company": contato.get("nome"),
         "razao_social": contato.get("nome"),

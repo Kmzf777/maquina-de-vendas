@@ -62,10 +62,11 @@ def _to_e164_br(raw: str | None) -> str | None:
     partir do JID do WhatsApp — que e sempre celular, nunca fixo — a suposicao
     dela se sustenta la (todo 12-digitos-comecando-com-55 que aparece via
     WhatsApp É de fato um celular sem o 9). Consequencia pratica: o casamento por
-    TELEFONE entre CRM e Bling so e confiavel para `celular_e164`. `telefone_e164`
-    (fixo) fica no espelho como informativo — nunca deve virar chave de
-    casamento, porque do lado do CRM nao existe um numero de fixo com o qual
-    comparar (WhatsApp nao tem fixo).
+    TELEFONE entre CRM e Bling so e confiavel para CELULAR. Fixo nunca deve virar
+    chave de casamento, porque do lado do CRM nao existe um numero de fixo com o
+    qual comparar (WhatsApp nao tem fixo). Mas "celular" e o numero, nao o campo:
+    na base real o celular costuma estar em `telefone_e164` — quem decide e
+    `app.bling.contacts._celular_br`.
     """
     if not raw:
         return None

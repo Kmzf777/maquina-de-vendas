@@ -718,6 +718,74 @@ def test_ensure_lead_nao_usa_fixo_como_chave_de_vinculo(monkeypatch):
         "sem celular, placeholder — o fixo nao vira nem chave nem telefone do lead"
 
 
+def test_ensure_lead_casa_celular_digitado_no_campo_telefone(monkeypatch):
+    """Bug da call de 01/10: no Bling o celular costuma estar em `telefone`.
+
+    Caso real: "Jovens Com Uma Missao" (conta secundaria) so tinha `telefone`
+    5543999565650 — o mesmo numero do lead pago "Hiago Angelucci" (Google Ads).
+    Sem casar, o pedido criou um lead `bling-<id>` e a venda perdeu a origem.
+    O que separa fixo de celular e o NUMERO, nao o campo onde ele foi digitado.
+    """
+    contato = {"id": 18410375514, "nome": "Jovens Com Uma Missao",
+               "doc_digits": "06132231000135",
+               "telefone_e164": "5543999565650", "celular_e164": None}
+
+    def leads(filters):
+        if filters.get("phone") == "5543999565650":
+            return [{"id": "LEAD-HIAGO", "cnpj": None}]
+        return []
+
+    sb = FakeSupabase({"leads": leads})
+    monkeypatch.setattr(ct, "get_supabase", lambda: sb)
+
+    out = asyncio.run(ct.ensure_lead(contato, "secundaria"))
+
+    assert out == "LEAD-HIAGO"
+    assert not any("insert" in q.filters for q in sb.queries if q.name == "leads")
+    assert any(q.name == "lead_bling_contacts" and
+               q.filters.get("upsert", {}).get("bling_contact_id") == 18410375514
+               for q in sb.queries)
+
+
+def test_ensure_lead_casa_celular_antigo_sem_o_nono_digito(monkeypatch):
+    """Celular digitado no formato antigo, "(66) 9722-2209", vira 12 digitos no
+    espelho (`_to_e164_br` nao injeta o 9 de proposito). `leads.phone` vem do
+    WhatsApp, sempre com o 9: sem completar o 9 aqui, nunca casa."""
+    contato = {"id": 77, "nome": "Cliente", "doc_digits": None,
+               "telefone_e164": "556697222209", "celular_e164": None}
+
+    def leads(filters):
+        if filters.get("phone") == "5566997222209":
+            return [{"id": "LEAD-SERGINHO", "cnpj": None}]
+        return []
+
+    sb = FakeSupabase({"leads": leads})
+    monkeypatch.setattr(ct, "get_supabase", lambda: sb)
+
+    assert asyncio.run(ct.ensure_lead(contato)) == "LEAD-SERGINHO"
+
+
+def test_ensure_lead_cria_lead_com_o_celular_do_campo_telefone(monkeypatch):
+    """Sem lead existente, o lead novo nasce com o celular de verdade, nao com o
+    placeholder: quando o cliente chamar no WhatsApp, cai NESTE lead em vez de
+    abrir um segundo (a duplicata no sentido inverso)."""
+    contato = {"id": 88, "nome": "Cliente Novo", "doc_digits": None,
+               "telefone_e164": "556697222209", "celular_e164": None}
+
+    def leads(filters):
+        if "insert" in filters:
+            return [{"id": "LEAD-NOVO"}]
+        return []
+
+    sb = FakeSupabase({"leads": leads})
+    monkeypatch.setattr(ct, "get_supabase", lambda: sb)
+
+    asyncio.run(ct.ensure_lead(contato))
+
+    inseridos = [q.filters["insert"] for q in sb.queries if "insert" in q.filters]
+    assert inseridos[0]["phone"] == "5566997222209"
+
+
 def test_ensure_lead_cria_com_placeholder_quando_contato_nao_tem_telefone(monkeypatch):
     """leads.phone e UNIQUE NOT NULL — precisa de valor sempre."""
     contato = {"id": 55, "nome": "Sem Telefone", "doc_digits": "12345678909",
