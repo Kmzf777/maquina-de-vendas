@@ -75,6 +75,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import re
+import unicodedata
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -136,6 +137,13 @@ _urls_de_foto: dict[str, str] = {}
 # Marcador de corpo não resolvido. Qualquer `{chave}` que sobre depois do render
 # leva a LINHA inteira embora — ver `_resolver`.
 _MARCADOR = re.compile(r"\{[a-z_]+\}")
+# P7 (call de 01/10). O FORMATO do café (moído / em grãos) não muda o produto:
+# "Canastra Clássico — Moído 250g" e "— Em Grãos 250g" são o mesmo café. Casado
+# sobre o nome já sem acento e em caixa baixa (ver `_produto_base`).
+_FORMATO_DO_CAFE = re.compile(r"\b(?:em\s+)?graos\b|\bmoido\b")
+# Prefixo de quando o nó casa com vários formatos do MESMO café (decisão do dono,
+# 06/10): mostra o menor preço, sem fingir que é o preço de todos.
+PREFIXO_FAIXA = "a partir de"
 
 
 def limpar_cache_de_fotos() -> None:
@@ -212,10 +220,44 @@ def _resolver(corpo: str, contexto: dict | None) -> str:
     return "\n".join(limpas).strip()
 
 
+def _produto_base(nome: str) -> str:
+    """O café sem o formato: "Canastra Clássico — Em Grãos 250g" -> "canastra classico 250g".
+
+    Acento, caixa e pontuação não contam (o catálogo usa travessão; um SKU
+    cadastrado com hífen não pode virar outro produto).
+    """
+    sem_acento = unicodedata.normalize("NFKD", nome or "")
+    sem_acento = "".join(c for c in sem_acento if not unicodedata.combining(c)).lower()
+    return " ".join(re.findall(r"[a-z0-9]+", _FORMATO_DO_CAFE.sub(" ", sem_acento)))
+
+
+def _faixa_a_partir_de(produto: str, candidatos: list[dict]) -> str:
+    """"a partir de <menor preço>" se os candidatos são UM café; senão "".
+
+    Cafés diferentes continuam sem preço: cotar o menor seria cotar um café pelo
+    preço de outro (incidente Ritz). Preço ilegível também corta — melhor sem a
+    linha do que um "a partir de" que não é o menor de verdade.
+    """
+    from app.agent.pricing import parse_brl
+    bases = {_produto_base(p.get("name", "")) for p in candidatos}
+    if len(bases) != 1:
+        logger.info("%s produto %r casou com %d SKUs de %d cafés — entrega SEM preço",
+                    _LOG, produto, len(candidatos), len(bases))
+        return ""
+    try:
+        menor = min(candidatos,
+                    key=lambda p: parse_brl(p.get("price_formatted") or ""))
+    except ValueError as exc:
+        logger.warning("%s preço ilegível entre os SKUs de %r — entrega SEM preço: %s",
+                       _LOG, produto, exc)
+        return ""
+    return f"{PREFIXO_FAIXA} {menor['price_formatted'].strip()}"
+
+
 def preco_do_no(no: reg.No) -> str:
     """Preço do SKU ativo declarado pelo nó, ou "" quando não dá para afirmar.
 
-    Match ÚNICO e DENTRO DO SETOR do ramo, as duas regras do irmão
+    Match ÚNICO (ou um café só) e DENTRO DO SETOR do ramo, as duas regras do irmão
     (`runner._preco_de_tabela`) pelos mesmos dois motivos: dois candidatos
     significam que não sabemos qual SKU é (incidente Ritz — drip cotado a R$
     27,70 misturando com Microlote), e `products` é particionada por `sector`
@@ -227,6 +269,11 @@ def preco_do_no(no: reg.No) -> str:
     `catalog._normalize`), então o ramo do registry é o filtro de setor sem
     tabela de tradução no meio — uma tabela a mais seria uma a mais para
     divergir.
+
+    Exceção (P7, call de 01/10): vários candidatos que são o MESMO café em
+    formatos diferentes ("Clássico 250g" = Moído R$ 28,70 + Em Grãos R$ 31,70)
+    devolvem "a partir de <menor>" — ver `_faixa_a_partir_de`. Sem isso o N5 e
+    o N5b saíam sem preço nenhum.
     """
     if not no.produto:
         return ""
@@ -245,11 +292,13 @@ def preco_do_no(no: reg.No) -> str:
         logger.warning("%s nenhum SKU ativo no setor %r — entrega SEM preço",
                        _LOG, no.ramo)
         return ""
-    if len(candidatos) != 1:
-        logger.info("%s produto %r casou com %d SKUs ativos — entrega SEM preço",
-                    _LOG, no.produto, len(candidatos))
+    if not candidatos:
+        logger.info("%s produto %r não casou com SKU ativo — entrega SEM preço",
+                    _LOG, no.produto)
         return ""
-    return (candidatos[0].get("price_formatted") or "").strip()
+    if len(candidatos) == 1:
+        return (candidatos[0].get("price_formatted") or "").strip()
+    return _faixa_a_partir_de(no.produto, candidatos)
 
 
 def _prazo_humano(dias: int | None) -> str:
