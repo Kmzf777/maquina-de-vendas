@@ -89,23 +89,64 @@ def _sb_with(rows):
 
 
 def test_deadend_72h_vira_optout():
+    """`autospec=True` é o ponto deste teste (05/10/2026). O dublê antigo era um
+    MagicMock solto, que aceita qualquer argumento — e o teste AFIRMAVA a chamada errada
+    (`apply_optout_side_effects("lead-wn-1")`, sem `phone` e `reason`). Em produção
+    isso levantava TypeError a cada tick desde 09/07, e nenhum lead marcado como número
+    errado jamais virou opt-out. Com autospec o dublê exige a assinatura real."""
     row = _lead_row(marked_hours_ago=80)
     with patch.object(W, "get_supabase", return_value=_sb_with([row])), \
-         patch.object(W, "apply_optout_side_effects") as m_opt, \
+         patch.object(W, "apply_optout_side_effects", autospec=True) as m_opt, \
          patch.object(W, "append_lead_observation") as m_note, \
          patch.object(W, "update_lead") as m_upd:
         n = W.process_wrong_number_deadends()
 
     assert n == 1
-    m_opt.assert_called_once_with("lead-wn-1")
+    m_opt.assert_called_once_with("lead-wn-1", "5567999295671", reason="numero_errado")
     assert "ponta morta" in m_note.call_args.args[1].lower()
+
+
+def test_deadend_grava_opt_out_de_verdade_antes_dos_efeitos():
+    """"Vira opt-out" é `leads.opt_out = true` — o que `is_lead_blacklisted` lê e o que
+    tira o lead da própria varredura (`.eq("opt_out", False)`). Só os efeitos colaterais
+    não bastam: sem a marca, o mesmo lead voltaria a cada tick e ganharia uma observação
+    nova a cada 30 segundos. Mesmo par dos outros caminhos (`_gravar_optout`,
+    `registrar_optout`): IA desligada + opt_out, e só então os efeitos."""
+    row = _lead_row(marked_hours_ago=80)
+    ordem = []
+    with patch.object(W, "get_supabase", return_value=_sb_with([row])), \
+         patch.object(W, "apply_optout_side_effects", autospec=True,
+                      side_effect=lambda *a, **k: ordem.append("efeitos")) as m_opt, \
+         patch.object(W, "append_lead_observation"), \
+         patch.object(W, "update_lead",
+                      side_effect=lambda *a, **k: ordem.append(("update", a, k))):
+        W.process_wrong_number_deadends()
+
+    assert ordem[0] == ("update", ("lead-wn-1",), {"ai_enabled": False, "opt_out": True})
+    assert ordem[1] == "efeitos"
+    m_opt.assert_called_once()
+
+
+def test_deadend_sem_conseguir_gravar_o_opt_out_nao_aplica_efeitos_nem_anota():
+    """Falhou a marca → nada mais roda, e o lead volta na próxima varredura para tentar
+    de novo. Anotar sem ter gravado empilharia uma observação por tick."""
+    row = _lead_row(marked_hours_ago=80)
+    with patch.object(W, "get_supabase", return_value=_sb_with([row])), \
+         patch.object(W, "apply_optout_side_effects", autospec=True) as m_opt, \
+         patch.object(W, "append_lead_observation") as m_note, \
+         patch.object(W, "update_lead", side_effect=RuntimeError("db down")):
+        n = W.process_wrong_number_deadends()
+
+    assert n == 0
+    m_opt.assert_not_called()
+    m_note.assert_not_called()
 
 
 def test_lead_que_respondeu_depois_volta_ao_fluxo():
     """Resposta humana DEPOIS do marcador → limpa o marcador, sem opt-out."""
     row = _lead_row(marked_hours_ago=80, last_reply_hours_ago=2)
     with patch.object(W, "get_supabase", return_value=_sb_with([row])), \
-         patch.object(W, "apply_optout_side_effects") as m_opt, \
+         patch.object(W, "apply_optout_side_effects", autospec=True) as m_opt, \
          patch.object(W, "update_lead") as m_upd:
         n = W.process_wrong_number_deadends()
 
@@ -118,7 +159,7 @@ def test_lead_que_respondeu_depois_volta_ao_fluxo():
 def test_dentro_da_janela_no_op():
     row = _lead_row(marked_hours_ago=10)
     with patch.object(W, "get_supabase", return_value=_sb_with([row])), \
-         patch.object(W, "apply_optout_side_effects") as m_opt, \
+         patch.object(W, "apply_optout_side_effects", autospec=True) as m_opt, \
          patch.object(W, "update_lead") as m_upd:
         n = W.process_wrong_number_deadends()
 

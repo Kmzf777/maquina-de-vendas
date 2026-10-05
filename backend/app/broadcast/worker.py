@@ -1016,7 +1016,15 @@ def process_wrong_number_deadends(now: datetime | None = None) -> int:
                 continue
             if now - marked_at < timedelta(hours=_WRONG_NUMBER_DEADLINE_HOURS):
                 continue  # ainda dentro da janela de resposta
-            apply_optout_side_effects(lead_id)
+            # "Vira opt-out" é a MARCA, e ela vem primeiro — o mesmo par de
+            # `campaigns/worker.py::_gravar_optout` e `registrar_optout`. Até 05/10/2026
+            # esta linha não existia e a de baixo chamava o helper só com `lead_id`
+            # (TypeError a cada tick desde 09/07): nenhum número errado virou opt-out.
+            # E sem a marca o lead nunca sairia desta varredura (`.eq("opt_out", False)`),
+            # ganhando uma observação nova por tick. Se a marca falhar, o `except` abaixo
+            # pula os efeitos e a nota, e a próxima varredura tenta de novo.
+            update_lead(lead_id, ai_enabled=False, opt_out=True)
+            apply_optout_side_effects(lead_id, row.get("phone") or "", reason="numero_errado")
             _ctx = meta.get("wrong_number_context") or ""
             append_lead_observation(
                 lead_id,
