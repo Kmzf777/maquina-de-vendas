@@ -400,8 +400,19 @@ def is_optout_reply(text: str | None) -> bool:
     `button` e `interactive.button_reply` viram `type='text'` com o rótulo no corpo),
     então botão e digitação são indistinguíveis aqui — a igualdade é o que garante que
     só a frase exata conte.
+
+    A igualdade é POR MENSAGEM, não pelo texto inteiro (05/10/2026). O buffer do inbound
+    junta as mensagens que chegam dentro do debounce com "\\n" (`buffer/manager.py`)
+    antes de entregar aqui, então o clique no botão seguido de um "Bom dia" chegava como
+    "Parar mensagens\\nBom dia" — e não casava. 4 leads apertaram o botão entre 30/09 e
+    02/10 e continuaram matriculados. Cada linha é uma mensagem que o lead mandou
+    separada; uma delas ser EXATAMENTE o rótulo é o clique. "não tenho interesse em
+    cápsulas" continua sendo interesse, porque a linha inteira não é o rótulo.
     """
-    return _normalize_reply(text) in _OPTOUT_REPLY_LABELS
+    return any(
+        _normalize_reply(linha) in _OPTOUT_REPLY_LABELS
+        for linha in (text or "").splitlines()
+    )
 
 
 def _optout_por_politica(enrollment: dict, texto: str | None) -> None:

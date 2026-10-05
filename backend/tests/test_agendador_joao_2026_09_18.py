@@ -98,6 +98,12 @@ class _FakeTable:
     def limit(self, *a):
         return self
 
+    # `range` desde 05/10/2026: a leitura da trava de matrícula pagina (o PostgREST
+    # corta em 1.000 linhas). O dublê devolve tudo de uma vez, e uma página incompleta
+    # encerra a paginação — o comportamento dos testes antigos não muda.
+    def range(self, *a):
+        return self
+
     def single(self):
         return self
 
@@ -1256,6 +1262,9 @@ class _TabelaDeVerdade:
     def limit(self, *a, **k):
         return self
 
+    def range(self, *a):
+        return self
+
     def gte(self, *a):
         return self
 
@@ -2294,7 +2303,7 @@ def test_orcamento_conta_job_agendado_para_hoje_que_ainda_nao_saiu():
         _job_agendado(fire_at=NOW, lead="b"),
         _job_agendado(fire_at=NOW, lead="c"),
     ]})
-    assert S.disparos_comprometidos_hoje(fake, now=NOW) == 3
+    assert S.disparos_comprometidos(fake, now=NOW) == 3
 
 
 def test_orcamento_conta_o_que_saiu_junto_com_o_que_esta_agendado():
@@ -2302,7 +2311,7 @@ def test_orcamento_conta_o_que_saiu_junto_com_o_que_esta_agendado():
         _job_disparado(hora_utc=NOW, lead="ja-saiu"),
         _job_agendado(fire_at=NOW, lead="ainda-nao"),
     ]})
-    assert S.disparos_comprometidos_hoje(fake, now=NOW) == 2
+    assert S.disparos_comprometidos(fake, now=NOW) == 2
 
 
 def test_o_move_nao_gasta_orcamento_de_matricula_tambem():
@@ -2311,13 +2320,13 @@ def test_o_move_nao_gasta_orcamento_de_matricula_tambem():
         _job_agendado(fire_at=NOW, lead="a"),
         _job_agendado(fire_at=NOW, lead="b", acao="mover_etapa"),
     ]})
-    assert S.disparos_comprometidos_hoje(fake, now=NOW) == 1
+    assert S.disparos_comprometidos(fake, now=NOW) == 1
 
 
 def test_o_orcamento_pergunta_por_fire_at_e_nao_por_sent_at():
     """É o recorte que distingue as duas contagens, e o que conserta a avaria."""
     fake = _FakeSupabase(rows={"follow_up_jobs": []})
-    S.disparos_comprometidos_hoje(fake, now=NOW)
+    S.disparos_comprometidos(fake, now=NOW)
     filtros = _filtros_do_select(fake)[0]
     colunas = {coluna for op, coluna, _ in filtros if op in ("gte", "lt")}
     assert colunas == {"fire_at"}, filtros
@@ -2325,7 +2334,7 @@ def test_o_orcamento_pergunta_por_fire_at_e_nao_por_sent_at():
 
 def test_orcamento_ilegivel_e_fail_closed():
     fake = _FakeSupabase(tabelas_quebradas={"follow_up_jobs"})
-    assert S.disparos_comprometidos_hoje(fake, now=NOW) == S.DISPAROS_ILEGIVEIS
+    assert S.disparos_comprometidos(fake, now=NOW) == S.DISPAROS_ILEGIVEIS
 
 
 def test_o_agendador_decide_pelo_que_esta_NA_FILA_e_nao_pelo_que_ja_saiu():
@@ -2347,7 +2356,7 @@ def test_o_agendador_decide_pelo_que_esta_NA_FILA_e_nao_pelo_que_ja_saiu():
                   {"chave": "teto_diario_disparos", "valor": 2}]},
         rpc_rows=[_linha_rpc(n) for n in range(1, 6)],
     )
-    with patch.object(S, "disparos_de_hoje", return_value=0),          patch.object(S, "disparos_comprometidos_hoje", return_value=99):
+    with patch.object(S, "disparos_de_hoje", return_value=0),          patch.object(S, "disparos_comprometidos", return_value=99):
         criados = _rodar(fake, _ligada("novo"))
 
     assert criados == 0, (
@@ -2463,7 +2472,7 @@ def test_o_teto_da_tela_segura_o_DIA_inteiro_e_nao_so_um_tick():
     o incidente de 16/09/2026 (888 mensagens em 6 minutos) com outro nome.
 
     Cada volta reconstrói o dublê com o acumulado do dia, que é o que
-    `disparos_comprometidos_hoje` leria do banco no tick seguinte.
+    `disparos_comprometidos` leria do banco no tick seguinte.
     """
     acumulado = 0
     por_tick = []

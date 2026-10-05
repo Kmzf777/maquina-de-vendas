@@ -18,6 +18,7 @@ from app.follow_up.service import (
     adiar_job_para_amanha,
     carregar_ajustes_joao,
     disparos_de_hoje,
+    templates_do_joao_hoje,
     _ENV_TAG,
 )
 # Import de topo, sem risco de ciclo: `cadence_joao` é config-as-code pura (zero I/O,
@@ -2321,6 +2322,45 @@ async def _process_joao_touch(job: dict, now: datetime) -> None:
             metadata.get("phone_number_id") or JOAO_PHONE_NUMBER_ID, job["id"],
         )
         return
+
+    # ── No máximo UM template do João por lead por dia ──────────────────────────────
+    # Incidente de 05/10/2026: 24 leads levaram o mesmo template duas vezes no mesmo
+    # segundo (duas matrículas abertas), e 105 tinham dois toques da mesma matrícula
+    # vencendo no mesmo dia — ver `templates_do_joao_hoje`. A trava da matrícula e o
+    # índice único do banco impedem a duplicata de nascer; esta guarda é a que impede o
+    # que nascer mesmo assim de virar mensagem, e cada uma custa um template de marketing.
+    #
+    #   mesmo template já saiu hoje  -> CANCELA: é cópia de algo que o lead já leu
+    #   outro template já saiu hoje  -> ADIA para amanhã, NUNCA cancela (o mesmo laço de
+    #                                   cooldown que `_adiar_por_teto_diario` evita)
+    #   erro de leitura              -> não envia nem encerra, como a etapa acima
+    lead_id = job.get("lead_id")
+    if lead_id:
+        try:
+            ja_hoje = templates_do_joao_hoje(get_supabase(), lead_id, now=now)
+        except Exception as exc:
+            logger.error(
+                "[JOAO_TOUCH] não consegui conferir o que o lead %s já recebeu hoje: %s — "
+                "toque ADIADO para o próximo tick", lead_id, exc, exc_info=True,
+            )
+            return  # transitório → nada de estado terminal
+        if template_name in ja_hoje:
+            _cancel_job(job["id"], "template_repetido_no_dia")
+            logger.warning(
+                "[JOAO_TOUCH] '%s' já saiu hoje p/ lead %s — job %s (cadencia=%s funil=%s "
+                "toque=%s) cancelado como DUPLICATA",
+                template_name, lead_id, job["id"], metadata.get("cadencia"), funil,
+                metadata.get("toque"),
+            )
+            return
+        if ja_hoje:
+            adiar_job_para_amanha(job["id"], get_supabase(), now=now)
+            _devolver_job_a_pending(job["id"])
+            logger.info(
+                "[JOAO_TOUCH] lead %s já recebeu %s hoje — '%s' (job %s) adiado para amanhã",
+                lead_id, sorted(ja_hoje), template_name, job["id"],
+            )
+            return
 
     language_code = metadata.get("language_code") or JOAO_TOUCH_TEMPLATE_LANGUAGE
     template_variables = metadata.get("template_variables") or JOAO_TOUCH_TEMPLATE_VARIABLES

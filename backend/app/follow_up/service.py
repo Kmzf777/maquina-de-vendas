@@ -1143,14 +1143,67 @@ def disparos_de_hoje(sb, *, now: datetime | None = None) -> int:
     )
 
 
+def templates_do_joao_hoje(
+    sb, lead_id: str, *, now: datetime | None = None,
+) -> set[str]:
+    """Os templates do João que ESTE lead já recebeu hoje (dia de America/Sao_Paulo).
+
+    A última linha antes do envio, e ela existe por causa de 05/10/2026: o teto de
+    envio segurou o volume (50), mas gastou 48 deles em PARES — 24 leads levaram o
+    mesmo template duas vezes no mesmo segundo, porque cada um tinha duas matrículas
+    abertas e nada no envio olhava o que já tinha saído para aquele lead. Na mesma
+    auditoria, 105 leads tinham o toque 2 e o toque 3 da mesma matrícula vencendo no
+    mesmo dia (o teto adia um job por vez, e o toque seguinte alcança o anterior).
+
+    Quem chama decide com o conjunto: o MESMO template de novo é duplicata; um
+    template DIFERENTE no mesmo dia é um toque que chegou cedo demais. "Hoje" e não
+    "nunca": a cadência que se repete ("Em atenção") manda o mesmo template a cada N
+    dias por desenho.
+
+    Só `.eq` na consulta e o resto em Python: os jobs `sent` de um lead são poucos
+    (cada um é uma mensagem que ele recebeu de verdade). O job de mover não conta — não
+    manda mensagem. Erro PROPAGA: quem chama não envia sem responder esta pergunta.
+    """
+    now = now or datetime.now(timezone.utc)
+    inicio, fim = (_parse_ts(t) for t in _dia_em_sao_paulo(now))
+    linhas = sb.table("follow_up_jobs").select(
+        "id, job_type, sent_at, metadata"
+    ).eq("lead_id", lead_id).eq("status", "sent").execute().data or []
+    hoje: set[str] = set()
+    for linha in linhas:
+        if linha.get("job_type") not in JOAO_JOB_TYPES:
+            continue
+        md = _job_metadata(linha)
+        if md.get("acao") == "mover_etapa":
+            continue
+        enviado = _parse_ts(linha.get("sent_at"))
+        if enviado and inicio <= enviado < fim:
+            hoje.add(str(md.get("template_name") or ""))
+    return hoje
+
+
 # Status que ainda vão consumir a cota de hoje. `cancelled` e `failed` ficam de fora:
 # aquele job não vai sair, e contá-lo seria cobrar do orçamento uma mensagem que
 # ninguém recebe.
 _STATUS_COMPROMETIDOS = ("pending", "processing", "sent")
 
 
-def disparos_comprometidos_hoje(sb, *, now: datetime | None = None) -> int:
-    """Quantos templates do João já estão COMPROMETIDOS para hoje. UMA consulta.
+def disparos_comprometidos(sb, *, now: datetime | None = None) -> int:
+    """Quantos templates do João já estão COMPROMETIDOS para o dia em que uma matrícula
+    feita AGORA dispararia o toque 1. UMA consulta.
+
+    ── O DIA É O DO DISPARO, NÃO O DO RELÓGIO (incidente de 03–04/10/2026) ──────
+    Até 05/10 esta função se chamava `disparos_comprometidos_hoje` e contava os jobs
+    com `fire_at` no dia corrente. Só que o toque 1 tem offset 0 e é clampado para a
+    janela comercial: matrícula feita no sábado marca o toque 1 para segunda 09:00, e
+    matrícula feita numa quarta às 17h marca para quinta 09:00. Nos dois casos "o que
+    está comprometido para HOJE" é zero — e o saldo voltava CHEIO a cada tick de 30
+    segundos. No fim de semana de 03–04/10 isso matriculou ~50 cards por tick durante
+    48 horas, todos com o toque 1 na segunda às 09:00.
+
+    O recorte agora é o dia de `_clamp_to_business_window(now)` — exatamente o dia que
+    `_montar_jobs_da_matricula` grava no toque 1. As duas metades usam a MESMA função
+    de clamp, e é isso que impede que voltem a divergir.
 
     ── POR QUE ISTO NÃO É `disparos_de_hoje` ───────────────────────────────────
     As duas contam coisas diferentes porque os dois tetos perguntam coisas diferentes:
@@ -1190,7 +1243,7 @@ def disparos_comprometidos_hoje(sb, *, now: datetime | None = None) -> int:
     mais.
     """
     now = now or datetime.now(timezone.utc)
-    inicio, fim = _dia_em_sao_paulo(now)
+    inicio, fim = _dia_em_sao_paulo(_clamp_to_business_window(now))
     try:
         linhas = sb.table("follow_up_jobs").select(
             "id, metadata"
@@ -1275,6 +1328,43 @@ def resolver_para_agendar(
 
 
 # ── O estado do card, lido dos jobs que ele já teve ───────────────────────────
+#
+# O PostgREST desta VPS corta TODA resposta em 1.000 linhas (`PGRST_DB_MAX_ROWS=1000`
+# no `supabase_rest`) e não avisa: a consulta volta "com sucesso", só que truncada.
+#
+# Foi isso que fez a explosão de 03–04/10/2026 (1.019.281 jobs para 467 leads). A
+# janela de candidatos tem até 2.000 cards, e a leitura dos jobs deles numa consulta só
+# parava na linha 1.000. O card cujo job aberto ficava depois do corte parecia livre,
+# `motivo_para_pular_joao` não via `cadencia_em_andamento`, e ele era matriculado de
+# novo — e cada rematrícula empurrava mais cards para além do corte. Às 00:05 de sábado
+# veio a primeira; dali até domingo 23:59, só rematrículas, a cada tick de 30 segundos.
+#
+# Toda leitura da qual a idempotência depende PAGINA até a página vir incompleta.
+_PAGINA_POSTGREST = 1000
+# 2.000 UUIDs num `in.(...)` são ~75 KB de URL. Lotes de 200 ficam longe de qualquer
+# limite de proxy (mesmo número de `campaigns/traffic_report.py::_chunks`).
+_LOTE_DE_LEADS = 200
+
+
+def _ler_todas_as_paginas(montar_consulta) -> list[dict]:
+    """Executa a consulta paginando com `.range()` até a página vir incompleta.
+
+    `montar_consulta` é chamado a cada página porque o builder do postgrest-py acumula
+    estado. A consulta TEM de vir ordenada por uma chave única (`order("id")`): sem
+    ordem, o Postgres pode devolver a mesma linha em duas páginas e pular outra.
+    Erro em qualquer página PROPAGA — quem chama decide o fail-closed.
+    """
+    linhas: list[dict] = []
+    inicio = 0
+    while True:
+        pagina = montar_consulta().range(
+            inicio, inicio + _PAGINA_POSTGREST - 1).execute().data or []
+        linhas.extend(pagina)
+        if len(pagina) < _PAGINA_POSTGREST:
+            return linhas
+        inicio += _PAGINA_POSTGREST
+
+
 def _jobs_joao_dos_leads(sb, lead_ids: list[str]) -> list[dict] | None:
     """Todos os jobs de cadência do João destes leads, numa consulta só.
 
@@ -1287,18 +1377,25 @@ def _jobs_joao_dos_leads(sb, lead_ids: list[str]) -> list[dict] | None:
     """
     if not lead_ids:
         return []
+    jobs: list[dict] = []
     try:
-        return sb.table("follow_up_jobs").select(
-            "id, lead_id, job_type, status, sequence, fire_at, sent_at, created_at, "
-            # `cancel_reason` entrou em 26/09: `motivo_para_pular_joao` precisa
-            # distinguir "o lead respondeu no meio" de "o lead disse que quer repor".
-            "cancel_reason, metadata"
-        ).in_("lead_id", lead_ids).in_(
-            "job_type", sorted(JOAO_JOB_TYPES)
-        ).execute().data or []
+        for i in range(0, len(lead_ids), _LOTE_DE_LEADS):
+            lote = lead_ids[i:i + _LOTE_DE_LEADS]
+            jobs.extend(_ler_todas_as_paginas(lambda lote=lote: sb.table(
+                "follow_up_jobs").select(
+                "id, lead_id, job_type, status, sequence, fire_at, sent_at, created_at, "
+                # `cancel_reason` entrou em 26/09: `motivo_para_pular_joao` precisa
+                # distinguir "o lead respondeu no meio" de "o lead disse que quer repor".
+                "cancel_reason, metadata"
+            ).in_("lead_id", lote).in_(
+                "job_type", sorted(JOAO_JOB_TYPES)
+            ).order("id")))
     except Exception as exc:
+        # Metade dos jobs é tão perigoso quanto nenhum: o card cujo job ficou na
+        # página que não veio parece livre. Fail-closed vale para a leitura inteira.
         logger.error("[JOAO_CADENCIA] falha ao ler os jobs existentes: %s", exc)
         return None
+    return jobs
 
 
 def _jobs_do_card(jobs: list[dict], lead_id: str, deal_id: str | None) -> list[dict]:
@@ -1818,11 +1915,11 @@ def agendar_cadencias_joao(now: datetime | None = None, teto: int | None = None)
             if saldo is None:
                 teto_diario = carregar_ajustes_joao()["teto_diario_disparos"]
                 # COMPROMETIDOS, não ENVIADOS — ver a docstring de
-                # `disparos_comprometidos_hoje`. A janela é 09h-16h; medir por
+                # `disparos_comprometidos`. A janela é 09h-16h; medir por
                 # `sent_at` faria o saldo voltar cheio a cada tick de 30s enquanto a
                 # janela estivesse fechada, e a base inteira seria matriculada de
                 # madrugada com o toque 1 marcado para as 09h.
-                saldo = max(0, teto_diario - disparos_comprometidos_hoje(sb, now=now))
+                saldo = max(0, teto_diario - disparos_comprometidos(sb, now=now))
             if saldo <= 0:
                 # O log sai UMA vez por passagem, e não uma por cadência: o tick roda a
                 # cada 30s e o orçamento fica em zero pelo resto do dia — uma linha por
@@ -1891,11 +1988,13 @@ def processar_resposta_joao(
     now = now or datetime.now(timezone.utc)
     sb = get_supabase()
     try:
-        jobs = sb.table("follow_up_jobs").select(
+        # Paginado: um opt-out que cancelasse só os primeiros 1.000 pendentes deixaria
+        # o resto sair para quem pediu para parar (ver `_ler_todas_as_paginas`).
+        jobs = _ler_todas_as_paginas(lambda: sb.table("follow_up_jobs").select(
             "id, lead_id, job_type, status, sequence, fire_at, sent_at, metadata"
         ).eq("lead_id", lead_id).in_(
             "job_type", sorted(JOAO_JOB_TYPES)
-        ).in_("status", ["pending", "sent"]).execute().data or []
+        ).in_("status", ["pending", "sent"]).order("id"))
     except Exception as exc:
         logger.error(
             "[JOAO_CADENCIA] falha ao ler as matrículas do lead %s: %s", lead_id, exc)
