@@ -3,12 +3,6 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import type { TeamUser, Sale } from "@/lib/types";
 import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
-import {
   Select,
   SelectContent,
   SelectItem,
@@ -35,6 +29,7 @@ import { productSummary } from "@/lib/bling";
 import { divergenceFrom, type Divergence } from "@/lib/bling-divergence";
 import { CONTA_PADRAO } from "@/lib/bling-accounts";
 import { defaultsDoContato, useLeadCliente } from "@/components/sales/lead-cliente";
+import { PainelLateral } from "@/components/sales/painel-lateral";
 
 /**
  * `bling_account` ainda nao esta no tipo `Sale` compartilhado — adiciona-lo
@@ -672,46 +667,14 @@ export function SaleCreateModal({
   }
 
   return (
-    <Dialog open onOpenChange={(open) => { if (!open) fecharModal(); }}>
-      {/* Coluna flex com teto de altura: o corpo é o único trecho que rola, e
-          header/ações ficam presos nas bordas. Sem o teto, o modal cresce com
-          os campos que aparecem (novo deal, itens do Bling, avisos) e, por ser
-          centralizado com `-translate-y-1/2`, sobra para fora da viewport em
-          cima e embaixo — sem barra de rolagem para alcançar o que sumiu.
-          `dvh` em vez de `vh` porque no mobile a barra do navegador entra na
-          conta de `vh` e o modal continuaria estourando. */}
-      <DialogContent
-        showCloseButton={false}
-        className={`bg-white border border-[#dedbd6] rounded-[8px] p-0 w-full shadow-lg gap-0 flex flex-col max-h-[88dvh] ${
-          blingLayout ? "max-w-2xl" : "max-w-md"
-        }`}
-      >
-        {/* Header */}
-        <DialogHeader className="shrink-0 flex-row items-center justify-between px-5 py-4 border-b border-[#dedbd6] mb-0 gap-0">
-          <DialogTitle className="text-[15px] font-medium text-[#111111]">
-            {isEditing ? "Editar Venda" : "Registrar Venda"}
-          </DialogTitle>
-          <button
-            type="button"
-            onClick={fecharModal}
-            aria-label="Fechar"
-            className="w-7 h-7 flex items-center justify-center rounded-[4px] text-[#7b7b78] hover:bg-[#dedbd6]/60 transition-colors"
-          >
-            <svg
-              className="w-4 h-4"
-              fill="none"
-              stroke="currentColor"
-              viewBox="0 0 24 24"
-              strokeWidth={2}
-            >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                d="M6 18L18 6M6 6l12 12"
-              />
-            </svg>
-          </button>
-        </DialogHeader>
+    // Painel lateral sem overlay (call de 01/10): o `Dialog` borrava e
+    // bloqueava a conversa, e o vendedor fechava o pedido para copiar um dado
+    // do chat. O corpo é o único trecho que rola; header e ações ficam presos.
+    <PainelLateral
+      titulo={isEditing ? "Editar Venda" : "Registrar Venda"}
+      largura={blingLayout ? "lg" : "md"}
+      onFechar={fecharModal}
+    >
 
         {/* Form — fica montado (só escondido) enquanto o resolvedor de contato
             aparece, senão o vendedor perderia o pedido inteiro que já digitou. */}
@@ -720,13 +683,13 @@ export function SaleCreateModal({
           className={
             resolution || sucesso || pendingBlingUpdate
               ? "hidden"
-              : "flex min-h-0 flex-col"
+              : "flex min-h-0 flex-1 flex-col"
           }
         >
           {/* Corpo rolável. `min-h-0` é obrigatório: item de flex nasce com
               `min-height: auto`, que se recusa a encolher abaixo do conteúdo e
               anularia o `overflow-y-auto` — o teto do modal vazaria de novo. */}
-          <div className="min-h-0 overflow-y-auto p-5 space-y-4">
+          <div className="min-h-0 flex-1 overflow-y-auto p-5 space-y-4">
 
             {/* Lead selector — searchable combobox, only in pickLead mode and not editing */}
             {pickLead && !isEditing && (
@@ -1129,7 +1092,6 @@ export function SaleCreateModal({
             </div>
           </div>
         )}
-      </DialogContent>
-    </Dialog>
+    </PainelLateral>
   );
 }

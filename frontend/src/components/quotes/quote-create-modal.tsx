@@ -24,12 +24,6 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { CheckIcon, ChevronDownIcon, DownloadIcon } from "lucide-react";
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
@@ -49,6 +43,7 @@ import { useBlingStatus } from "@/hooks/use-bling-status";
 import { blingGate } from "@/lib/bling-gate";
 import { CONTA_PADRAO } from "@/lib/bling-accounts";
 import { defaultsDoContato, useLeadCliente } from "@/components/sales/lead-cliente";
+import { PainelLateral } from "@/components/sales/painel-lateral";
 import { leadMatchesSearch } from "@/lib/search";
 import type { OrderPayloadResult } from "@/lib/bling-order-state";
 import { buildQuotePayload, linesFromQuoteItems } from "@/lib/quote-state";
@@ -425,27 +420,14 @@ export function QuoteCreateModal({
   const escondeFormulario = !!resolution || !!sucesso || convertido;
 
   return (
-    <Dialog open onOpenChange={(open) => { if (!open) fecharModal(); }}>
-      <DialogContent
-        showCloseButton={false}
-        className="bg-white border border-[#dedbd6] rounded-[8px] p-0 w-full max-w-4xl max-h-[90vh] overflow-y-auto shadow-lg gap-0"
-      >
-        <DialogHeader className="flex-row items-center justify-between px-5 py-4 border-b border-[#dedbd6] mb-0 gap-0">
-          <DialogTitle className="text-[15px] font-medium text-[#111111]">
-            {isEditing ? "Editar Orçamento" : "Novo Orçamento"}
-          </DialogTitle>
-          <button
-            type="button"
-            onClick={fecharModal}
-            aria-label="Fechar"
-            className="w-7 h-7 flex items-center justify-center rounded-[4px] text-[#7b7b78] hover:bg-[#dedbd6]/60 transition-colors"
-          >
-            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
-            </svg>
-          </button>
-        </DialogHeader>
-
+    // Painel lateral sem overlay (call de 01/10): a conversa continua visível
+    // e selecionável enquanto o orçamento é montado.
+    <PainelLateral
+      titulo={isEditing ? "Editar Orçamento" : "Novo Orçamento"}
+      largura="xl"
+      onFechar={fecharModal}
+    >
+      <div className="min-h-0 flex-1 overflow-y-auto">
         {/* O formulário fica montado (só escondido) durante o resolvedor de
             contato: desmontá-lo perderia o orçamento inteiro já digitado. */}
         <form
@@ -881,7 +863,7 @@ export function QuoteCreateModal({
             </div>
           </div>
         )}
-      </DialogContent>
-    </Dialog>
+      </div>
+    </PainelLateral>
   );
 }
