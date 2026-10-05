@@ -8,6 +8,7 @@ import { useLeadSales } from "@/hooks/use-lead-sales";
 import { useLeadQuotes } from "@/hooks/use-lead-quotes";
 import { useCurrentUserEmail } from "@/hooks/use-current-user";
 import { WhatsappWindowIndicator } from "@/components/conversas/whatsapp-window-indicator";
+import { LeadCabecalho } from "@/components/sales/lead-cabecalho";
 import { CrmPerfilTab } from "./tabs/crm-perfil-tab";
 import { CrmNotasTab } from "./tabs/crm-notas-tab";
 import { CrmCampanhasTab } from "./tabs/crm-campanhas-tab";
@@ -210,6 +211,16 @@ export function ContactDetail({
           </div>
         </div>
       </div>
+
+      {/* Topo do lead estilo RD (call de 01/10): telefone, e-mail, CNPJ e
+          "Já é cliente?" sem precisar abrir a aba Perfil. */}
+      {lead && (
+        <LeadCabecalho
+          lead={lead}
+          currentUserEmail={currentUserEmail}
+          onSaveField={updateLeadField}
+        />
+      )}
 
       <div className="flex border-b border-[#dedbd6] flex-shrink-0">
         {TABS.map((tab) => (
