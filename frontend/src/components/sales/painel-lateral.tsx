@@ -19,10 +19,11 @@
 import { useRef } from "react";
 import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
 
+// Sem "xl" (896 px): o orçamento usava e cobria quase todo o chat, que é
+// justamente o que o painel não-modal existe para deixar à vista.
 const LARGURA = {
   md: "data-[side=right]:sm:max-w-md",
   lg: "data-[side=right]:sm:max-w-2xl",
-  xl: "data-[side=right]:sm:max-w-4xl",
 } as const;
 
 /**
@@ -61,6 +62,7 @@ export function PainelLateral({
         showCloseButton={false}
         aria-describedby={undefined}
         ref={conteudo}
+        data-largura={largura}
         onInteractOutside={(e) => e.preventDefault()}
         onEscapeKeyDown={(e) => {
           const foco = document.activeElement;

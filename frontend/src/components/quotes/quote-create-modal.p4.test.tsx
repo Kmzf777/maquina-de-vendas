@@ -185,3 +185,23 @@ describe("QuoteCreateModal — lead e conversa congelados na abertura (revisão 
     expect(await screen.findByText("Novo orçamento — Iago")).toBeTruthy();
   });
 });
+
+describe("QuoteCreateModal — largura do painel (revisão P4)", () => {
+  it("usa a largura do painel de venda (não cobre o chat) e uma coluna só", async () => {
+    h.maybeSingle.mockResolvedValue({ data: LEAD_VIDA, error: null });
+    render(
+      <QuoteCreateModal
+        leadId="lead-1"
+        conversationId="conv-1"
+        onClose={vi.fn()}
+        onSaved={vi.fn()}
+      />,
+    );
+    const painel = await screen.findByRole("dialog");
+    expect(painel.getAttribute("data-largura")).toBe("lg");
+    await screen.findByRole("button", { name: "Gerar orçamento" });
+    // O resumo lateral de 268px espremia os itens a ~340px nessa largura: ele
+    // vai para baixo do formulário.
+    expect(painel.querySelector('[class*="_268px]"]')).toBeNull();
+  });
+});

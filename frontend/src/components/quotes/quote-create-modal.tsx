@@ -417,7 +417,8 @@ export function QuoteCreateModal({
           ? "Editar Orçamento"
           : comNome("Novo orçamento", leadCliente?.name ?? leadEscolhido?.name)
       }
-      largura="xl"
+      // Mesma largura do painel de venda: o "xl" (896 px) cobria o chat.
+      largura="lg"
       onFechar={fecharModal}
     >
       <div className="min-h-0 flex-1 overflow-y-auto">
@@ -438,7 +439,9 @@ export function QuoteCreateModal({
               PDF para enviar ao cliente.
             </p>
           ) : (
-            <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_268px] lg:items-start">
+            // Uma coluna: na largura do painel, o resumo lateral de 268 px
+            // espremia a tabela de itens. O resumo vem depois do formulário.
+            <div className="grid gap-5">
               {/* ── coluna do documento ─────────────────────────────────── */}
               <div className="space-y-4 min-w-0">
                 {pickLead && !isEditing && (
@@ -628,7 +631,7 @@ export function QuoteCreateModal({
               </div>
 
               {/* ── resumo ──────────────────────────────────────────────── */}
-              <aside className="lg:sticky lg:top-0 space-y-4">
+              <aside className="space-y-4">
                 <div className="bg-[#faf9f6] border border-[#dedbd6] rounded-[8px] px-4 py-3">
                   <span className={label}>Resumo</span>
 
