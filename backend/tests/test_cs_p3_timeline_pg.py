@@ -509,6 +509,53 @@ def test_role_sem_privilegio_grava_os_eventos():
     assert "WARNING" not in r.stderr, r.stderr
 
 
+
+# Revisão (item 2): a venda é editável (vendedor, valor, produto, data, origem). O evento
+# acompanha a edição; a exclusão da venda apaga os eventos dela.
+CENARIO_VENDA_EDITADA = """
+begin;
+insert into public.leads (id, phone) values ('cdcdcdcd-0000-0000-0000-0000000000c1', '5511900000061');
+insert into public.sales (id, lead_id, value, product, origin, sold_by, sold_at) values
+  ('cdcdcdcd-0000-0000-0000-0000000000e1', 'cdcdcdcd-0000-0000-0000-0000000000c1', 60, 'Kit',
+   'crm', 'joao@x.com', '2026-09-01 12:00+00');
+update public.sales set status = 'cancelada' where id = 'cdcdcdcd-0000-0000-0000-0000000000e1';
+update public.lead_events set occurred_at = '2026-09-02 12:00+00'
+ where dedupe_key = 'venda_cancelada:cdcdcdcd-0000-0000-0000-0000000000e1';
+update public.sales set sold_by = 'ana@x.com', value = 80, product = 'Clássico',
+       sold_at = '2026-09-05 12:00+00', origin = 'bling'
+ where id = 'cdcdcdcd-0000-0000-0000-0000000000e1';
+do $$
+declare v public.lead_events; c public.lead_events;
+begin
+  select * into v from public.lead_events where dedupe_key = 'venda:cdcdcdcd-0000-0000-0000-0000000000e1';
+  assert v.metadata->>'sold_by' = 'ana@x.com' and (v.metadata->>'valor')::numeric = 80
+     and v.metadata->>'produto' = 'Clássico' and v.metadata->>'origin' = 'bling'
+     and v.metadata->>'status' = 'cancelada', v.metadata::text;
+  assert v.new_value = '80.00' and v.source = 'bling', v.new_value || ' ' || v.source;
+  assert v.occurred_at = '2026-09-05 12:00+00', 'venda vai para a nova data: ' || v.occurred_at;
+  select * into c from public.lead_events where dedupe_key = 'venda_cancelada:cdcdcdcd-0000-0000-0000-0000000000e1';
+  assert c.metadata->>'sold_by' = 'ana@x.com' and c.new_value = '80.00', c.metadata::text;
+  assert c.occurred_at = '2026-09-02 12:00+00', 'cancelamento mantem a data dele: ' || c.occurred_at;
+end $$;
+-- exclusão da venda (como authenticated, que em produção pode apagar venda)
+grant select, delete on public.sales to authenticated;
+set local role authenticated;
+delete from public.sales where id = 'cdcdcdcd-0000-0000-0000-0000000000e1';
+reset role;
+do $$ begin
+  assert not exists (select 1 from public.lead_events where lead_id = 'cdcdcdcd-0000-0000-0000-0000000000c1'),
+    'venda apagada leva venda e venda_cancelada junto';
+end $$;
+rollback;
+"""
+
+
+@_precisa_pg
+def test_venda_editada_e_apagada():
+    r = _rodar(CENARIO_VENDA_EDITADA)
+    assert "WARNING" not in r.stderr, r.stderr
+
+
 # ── Backfill: semente SEM triggers (o backfill é quem cria os eventos) ─────────────────
 # L1 CTWA novo: referral na criação (+ repetido 5 min depois)  → 1 entrada (referral)
 # L2 importado em 08/01, clicou em 09/10 (referral de número SEM o 9) → 1 entrada (referral)

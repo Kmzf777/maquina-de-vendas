@@ -10,8 +10,9 @@
 --                    (limitacao aceita). Update so de meta_ad_id NAO e entrada: enriquece a
 --                    entrada mais recente com o mesmo ctwa_clid.
 --   etapa            deals: insert e update de stage_id.
---   venda            sales: insert. metadata.kit vem de sale_items (descricao ~ 'kit degust'),
---                    recalculado pelo trigger de sale_items porque os itens chegam DEPOIS.
+--   venda            sales: insert; acompanha a edicao da venda; delete da venda apaga.
+--                    metadata.kit vem de sale_items (descricao ~ 'kit degust'), recalculado
+--                    pelo trigger de sale_items porque os itens chegam DEPOIS.
 --   venda_cancelada  sales: status passa a 'cancelada'.
 --   disparo          broadcast_leads: sent_at passa a ter valor.
 -- mesclagem e atribuicao_manual sao gravados pelo codigo do P1/P2.
@@ -294,6 +295,9 @@ create trigger trg_lead_events_deals_etapa
   for each row execute function public.fn_lead_events_deals_etapa();
 
 -- ── 4. VENDA / VENDA_CANCELADA (sales) ─────────────────────────────────────────────────
+-- A venda e editavel (vendedor, valor, produto, data, origem): o evento acompanha a edicao —
+-- o sold_by do metadata decide o escopo do vendedor na rota. venda vai para a nova sold_at;
+-- venda_cancelada mantem a data do cancelamento. Venda apagada leva os eventos junto.
 create or replace function public.fn_lead_events_sales_venda()
 returns trigger language plpgsql security definer set search_path = public, pg_temp as $$
 declare
@@ -301,6 +305,15 @@ declare
   v_source text;
   v_cancelou boolean;
 begin
+  if tg_op = 'DELETE' then
+    begin
+      delete from public.lead_events
+       where dedupe_key in ('venda:' || old.id, 'venda_cancelada:' || old.id);
+    exception when others then
+      raise warning 'fn_lead_events_sales_venda: %', sqlerrm;
+    end;
+    return old;
+  end if;
   begin
     if new.lead_id is null then
       return new;
@@ -315,9 +328,13 @@ begin
       on conflict (dedupe_key) where dedupe_key is not null do nothing;
       v_cancelou := new.status = 'cancelada';
     else
-      update public.lead_events
-         set metadata = coalesce(metadata, '{}'::jsonb) || jsonb_build_object('status', new.status)
-       where dedupe_key = 'venda:' || new.id;
+      update public.lead_events e
+         set metadata = coalesce(e.metadata, '{}'::jsonb) || v_meta,
+             new_value = new.value::text,
+             source = v_source,
+             occurred_at = case when e.event_type = 'venda' then coalesce(new.sold_at, e.occurred_at)
+                                else e.occurred_at end
+       where e.dedupe_key in ('venda:' || new.id, 'venda_cancelada:' || new.id);
       v_cancelou := new.status = 'cancelada' and old.status is distinct from 'cancelada';
     end if;
 
@@ -338,7 +355,7 @@ revoke execute on function public.fn_lead_events_sales_venda() from public, anon
 
 drop trigger if exists trg_lead_events_sales_venda on public.sales;
 create trigger trg_lead_events_sales_venda
-  after insert or update of status
+  after insert or update of status, sold_by, value, product, sold_at, origin or delete
   on public.sales
   for each row execute function public.fn_lead_events_sales_venda();
 

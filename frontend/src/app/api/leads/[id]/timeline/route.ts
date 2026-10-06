@@ -3,8 +3,10 @@
 // calculados na leitura a partir das mensagens inbound em `messages`.
 //
 // Qualquer usuário autenticado: o vendedor abre pela conversa (contact-detail). As vendas
-// seguem o MESMO escopo de /api/leads/[id]/sales — o evento traz `sold_by` e `origin` no
-// metadata justamente para a rota aplicar `podeVerVenda`.
+// seguem o MESMO escopo de /api/leads/[id]/sales. Com escopo, a decisão usa o `sold_by` e o
+// `origin` ATUAIS de `sales` (busca pelos `sale_id` dos eventos), não a cópia no metadata:
+// a venda é editável e a cópia pode estar velha. Venda que não está mais em `sales`, ou
+// falha na busca, esconde o evento (partial "vendas").
 //
 // Seções falham de forma independente e aparecem em `partial` (mesmo contrato da rota
 // overview): sem a P0 aplicada, `occurred_at` não existe e "eventos" cai — os dias de
@@ -13,7 +15,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { getServiceSupabase } from "@/lib/supabase/api";
 import { getCurrentUser, type CurrentUser } from "@/lib/supabase/pipeline-access";
-import { podeVerVenda, scopeAtivo } from "@/lib/sales/sales-scope";
+import { podeVerVenda, salesScopeFilter, scopeAtivo } from "@/lib/sales/sales-scope";
 import type {
   TimelineConversou,
   TimelineEvent,
@@ -89,14 +91,51 @@ function diasConversou(inbound: string[]): TimelineConversou[] {
   }));
 }
 
-function vendaVisivel(e: TimelineEvent, user: CurrentUser, escopo: boolean): boolean {
-  if (!TIPOS_VENDA.has(e.event_type)) return true;
+type Dono = { sold_by: string | null; origin: string | null };
+
+/** false = sem escopo (admin ou flag desligada). E-mail inválido conta como escopo. */
+function temEscopo(user: CurrentUser, escopo: boolean): boolean {
   try {
-    return podeVerVenda(
-      { sold_by: str(e.metadata.sold_by), origin: str(e.metadata.origin) },
-      { userId: user.userId, email: user.email, role: user.role },
-      escopo,
+    return salesScopeFilter({ userId: user.userId, email: user.email, role: user.role }, escopo) !== null;
+  } catch {
+    return true;
+  }
+}
+
+/** sold_by/origin atuais das vendas citadas nos eventos; null se a busca falhou. */
+async function donosAtuais(sb: Sb, eventos: TimelineEvent[]): Promise<Map<string, Dono> | null> {
+  const ids = [
+    ...new Set(
+      eventos
+        .filter((e) => TIPOS_VENDA.has(e.event_type))
+        .map((e) => str(e.metadata.sale_id))
+        .filter((v): v is string => v !== null),
+    ),
+  ];
+  if (ids.length === 0) return new Map();
+  try {
+    const { data, error } = await sb.from("sales").select("id, sold_by, origin").in("id", ids);
+    if (error) return null;
+    return new Map(
+      ((data ?? []) as unknown as Row[]).map((r) => [String(r.id), { sold_by: str(r.sold_by), origin: str(r.origin) }]),
     );
+  } catch {
+    return null;
+  }
+}
+
+function vendaVisivel(
+  e: TimelineEvent,
+  user: CurrentUser,
+  escopo: boolean,
+  donos: Map<string, Dono> | null,
+): boolean {
+  if (!TIPOS_VENDA.has(e.event_type)) return true;
+  const saleId = str(e.metadata.sale_id);
+  const dono = donos && saleId ? donos.get(saleId) : undefined;
+  if (!dono) return false;
+  try {
+    return podeVerVenda(dono, { userId: user.userId, email: user.email, role: user.role }, escopo);
   } catch {
     // e-mail ausente/inválido: na dúvida, esconde (mesma postura do escopo de /painel-vendas)
     return false;
@@ -204,10 +243,13 @@ export async function GET(
   ]);
 
   const escopo = scopeAtivo();
-  const visiveis = await completarCampanhas(
-    sb,
-    eventos.filter((e) => vendaVisivel(e, user, escopo)),
-  );
+  let filtrados = eventos;
+  if (temEscopo(user, escopo)) {
+    const donos = await donosAtuais(sb, eventos);
+    if (donos === null) partial.push("vendas");
+    filtrados = eventos.filter((e) => vendaVisivel(e, user, escopo, donos));
+  }
+  const visiveis = await completarCampanhas(sb, filtrados);
 
   const items: TimelineItem[] = [...visiveis, ...diasConversou(inbound)].sort(
     (a, b) => ts(b.at) - ts(a.at),

@@ -121,3 +121,15 @@ def test_migracao_numa_transacao_so():
     codigo = [ln for ln in SQL.splitlines() if ln.strip() and not ln.lstrip().startswith("--")]
     assert codigo[0] == "begin;"
     assert codigo[-1] == "commit;"
+
+
+def test_venda_acompanha_edicao_e_exclusao_da_sale():
+    """Revisão: sold_by/value/product/sold_at/origin são editáveis. O evento era uma foto que
+    nunca atualizava (e o sold_by velho decidia o escopo do vendedor na rota)."""
+    m = re.search(r"after insert or update of ([a-z_, ]+?) or delete\s+on public\.sales\s", SQL)
+    assert m
+    assert {c.strip() for c in m.group(1).split(",")} == {
+        "status", "sold_by", "value", "product", "sold_at", "origin"}
+    corpo = _corpo("fn_lead_events_sales_venda")
+    assert "tg_op = 'DELETE'" in corpo
+    assert "delete from public.lead_events" in corpo
