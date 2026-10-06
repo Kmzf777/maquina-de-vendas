@@ -119,4 +119,33 @@ describe("LeadCabecalho", () => {
     // O resto do cabeçalho continua.
     expect(screen.getByText("compras@vidanatural.com")).toBeTruthy();
   });
+
+  it("PATCH em voo de um lead não vaza para o lead seguinte", async () => {
+    h.maybeSingle.mockImplementation(async () => ({
+      data: { id: "x", ja_era_cliente: null, ja_era_cliente_fonte: null },
+      error: null,
+    }));
+    let responder: (r: Response) => void = () => {};
+    fetchMock.mockImplementationOnce(() => new Promise<Response>((r) => { responder = r; }));
+    const { rerender } = render(
+      <LeadCabecalho lead={{ ...LEAD, id: "lead-voo-a" }} currentUserEmail="joao@cafecanastra.com" onSaveField={vi.fn()} />,
+    );
+    const sim = await screen.findByRole("button", { name: "Sim" });
+    await waitFor(() => expect((sim as HTMLButtonElement).disabled).toBe(false));
+    fireEvent.click(sim);
+    await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+
+    rerender(
+      <LeadCabecalho lead={{ ...LEAD, id: "lead-voo-b" }} currentUserEmail="joao@cafecanastra.com" onSaveField={vi.fn()} />,
+    );
+    const simB = await screen.findByRole("button", { name: "Sim" });
+    // O lead B não herda o "salvando" nem a resposta otimista do A.
+    await waitFor(() => expect((simB as HTMLButtonElement).disabled).toBe(false));
+    expect(simB.getAttribute("aria-pressed")).toBe("false");
+
+    responder({ ok: false, status: 500, json: async () => ({ error: "falhou o A" }) } as Response);
+    await new Promise((r) => setTimeout(r, 20));
+    expect(screen.queryByText("falhou o A")).toBeNull();
+    expect(screen.getByRole("button", { name: "Sim" }).getAttribute("aria-pressed")).toBe("false");
+  });
 });

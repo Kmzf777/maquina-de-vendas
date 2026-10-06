@@ -9,7 +9,7 @@
  * se testa aqui é o modal, não o catálogo (coberto em bling-order-form*.test).
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 
 const h = vi.hoisted(() => ({
   maybeSingle: vi.fn(),
@@ -66,6 +66,7 @@ vi.mock("@/components/sales/bling-order-form", async () => {
 });
 
 import { SaleCreateModal } from "./sale-create-modal";
+import { LeadCabecalho } from "./lead-cabecalho";
 
 const LEAD_VIDA = {
   id: "lead-1",
@@ -276,5 +277,74 @@ describe("SaleCreateModal — Salvar espera o lead (revisão P4)", () => {
     expect(await screen.findByText(/Não foi possível carregar o lead/)).toBeTruthy();
     const salvar = screen.getByRole("button", { name: "Registrar Venda" }) as HTMLButtonElement;
     expect(salvar.disabled).toBe(true);
+  });
+});
+
+describe("Cabeçalho e painel de venda — uma fonte de verdade (revisão P4)", () => {
+  const LEAD_TOPO = { id: "lead-sync", phone: "5531999998888", email: null, cnpj: null };
+
+  function montarOsDois() {
+    const onSaved = vi.fn();
+    render(
+      <>
+        <div data-testid="topo">
+          <LeadCabecalho lead={LEAD_TOPO} currentUserEmail="joao@cafecanastra.com" onSaveField={vi.fn()} />
+        </div>
+        <SaleCreateModal
+            leadId="lead-sync"
+            lockedDealId="deal-1"
+            conversationId="conv-1"
+            currentUserEmail="joao@cafecanastra.com"
+            blingEnabled={false}
+            onClose={vi.fn()}
+            onSaved={onSaved}
+          />
+      </>,
+    );
+    return { onSaved };
+  }
+
+  it("responder no cabeçalho atualiza o painel: a pergunta obrigatória some", async () => {
+    h.maybeSingle.mockResolvedValue({
+      data: { ...LEAD_VIDA, id: "lead-sync", ja_era_cliente: null, ja_era_cliente_fonte: null },
+      error: null,
+    });
+    montarOsDois();
+    // O painel é um Sheet em portal: fica fora da árvore, no body.
+    const painel = await screen.findByRole("dialog");
+    expect(await within(painel).findByRole("group", { name: "Já é cliente?" })).toBeTruthy();
+
+    const topo = screen.getByTestId("topo");
+    const sim = await within(topo).findByRole("button", { name: "Sim" });
+    await waitFor(() => expect((sim as HTMLButtonElement).disabled).toBe(false));
+    fireEvent.click(sim);
+
+    await waitFor(() =>
+      expect(within(painel).queryByRole("group", { name: "Já é cliente?" })).toBeNull(),
+    );
+    expect(
+      (within(painel).getByRole("button", { name: "Registrar Venda" }) as HTMLButtonElement).disabled,
+    ).toBe(false);
+  });
+
+  it("responder no painel atualiza o cabeçalho", async () => {
+    h.maybeSingle.mockResolvedValue({
+      data: { ...LEAD_VIDA, id: "lead-sync", ja_era_cliente: null, ja_era_cliente_fonte: null },
+      error: null,
+    });
+    const { onSaved } = montarOsDois();
+    // O painel é um Sheet em portal: fica fora da árvore, no body.
+    const painel = await screen.findByRole("dialog");
+    await within(painel).findByRole("group", { name: "Já é cliente?" });
+    fireEvent.click(within(painel).getByRole("button", { name: "Não" }));
+    fireEvent.change(within(painel).getByPlaceholderText("Ex: Café especial 5kg"), { target: { value: "Kit" } });
+    fireEvent.change(within(painel).getByPlaceholderText("0,00"), { target: { value: "60" } });
+    fireEvent.click(within(painel).getByRole("button", { name: "Registrar Venda" }));
+    await waitFor(() => expect(onSaved).toHaveBeenCalled());
+
+    const topo = screen.getByTestId("topo");
+    await waitFor(() =>
+      expect(within(topo).getByRole("button", { name: "Não" }).getAttribute("aria-pressed")).toBe("true"),
+    );
   });
 });
