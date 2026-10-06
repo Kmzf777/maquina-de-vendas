@@ -348,3 +348,13 @@ def test_main_excluir_aceita_lista_separada_por_virgula(monkeypatch):
     monkeypatch.setattr(m, "executar", falso)
     m.main(["--psql", "psql", "--saida", "/tmp/x", "--excluir", f"{HIAGO}, {SOB2}"])
     assert visto["excluir"] == [HIAGO, SOB2]
+
+
+def test_sql_trava_os_dois_leads_logo_apos_o_begin():
+    """Sem a trava, uma venda inserida no duplicado entre o UPDATE de sales e o DELETE do
+    lead era apagada em cascata. O FOR UPDATE espera o insert concorrente (FK pega FOR KEY
+    SHARE na linha do lead) ou o bloqueia ate o commit."""
+    linhas = m.sql_mesclar_par(DUP, HIAGO, {"sales"}, "m").splitlines()
+    assert linhas[0] == "begin;"
+    assert linhas[1] == (f"select 1 from public.leads where id in ('{DUP}', '{HIAGO}')"
+                         " for update;")

@@ -272,6 +272,10 @@ def sql_mesclar_par(duplicado, sobrevivente, tabelas, motivo):
     d, s = _uuid(duplicado), _uuid(sobrevivente)
     linhas = [
         "begin;",
+        # Trava os dois leads antes de mover: um insert concorrente com lead_id = duplicado
+        # (webhook do Bling, mensagem) espera o commit em vez de cair no lead que o DELETE
+        # do fim apaga em cascata.
+        f"select 1 from public.leads where id in ('{d}', '{s}') for update;",
         "do $$ begin",
         f"  if (select count(*) from public.leads where id in ('{d}', '{s}')) <> 2 then",
         f"    raise exception 'par {d} -> {s}: um dos leads nao existe mais';",
