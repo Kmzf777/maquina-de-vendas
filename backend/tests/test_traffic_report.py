@@ -181,6 +181,7 @@ class _FakeQuery:
     def is_(self, *a, **k): return self
     def in_(self, *a, **k): return self
     def eq(self, *a, **k): return self
+    def order(self, *a, **k): return self  # _fetch_all pagina com ORDER BY (linhas já em ordem)
     def range(self, start, end):
         # Fatia de verdade (inclusiva nas duas pontas, como o PostgREST) — um fake que
         # ignorasse o range faria a paginação parecer certa mesmo quebrada.

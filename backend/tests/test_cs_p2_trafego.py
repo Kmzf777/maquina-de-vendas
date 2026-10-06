@@ -20,7 +20,7 @@ class _Query:
     def __init__(self, banco, tabela):
         self.banco, self.tabela = banco, tabela
         self.filtros, self.cols, self.op, self.payload = [], "*", "select", None
-        self._range = self._limit = None
+        self._range = self._limit = self._ordem = None
 
     def select(self, cols="*", **_):
         self.cols = cols
@@ -51,6 +51,10 @@ class _Query:
         self._range = (a, b)
         return self
 
+    def order(self, col, desc=False):
+        self._ordem = col
+        return self
+
     def update(self, patch):
         self.op, self.payload = "update", patch
         return self
@@ -79,6 +83,15 @@ class _Query:
             if col in self.cols:
                 raise Exception(f"column {self.tabela}.{col} does not exist")
         if self._range is not None:
+            self.banco.paginadas.append((self.tabela, self._ordem))
+        if self._ordem is not None:
+            alvo.sort(key=lambda r: str(r.get(self._ordem) or ""))
+        elif self.banco.embaralha:
+            # Postgres sem ORDER BY não promete a mesma ordem entre duas consultas.
+            self.banco.execucoes += 1
+            if self.banco.execucoes % 2 == 0:
+                alvo.reverse()
+        if self._range is not None:
             alvo = alvo[self._range[0]:self._range[1] + 1]
         if self._limit is not None:
             alvo = alvo[:self._limit]
@@ -92,6 +105,9 @@ class _Banco:
         self.colunas_ausentes: dict[str, list[str]] = {}
         self.falha_insert: set[str] = set()
         self.selects: list[str] = []  # colunas de cada select executado, em ordem
+        self.paginadas: list[tuple[str, str | None]] = []  # (tabela, order) de cada .range()
+        self.embaralha = False
+        self.execucoes = 0
 
     def table(self, nome):
         return _Query(self, nome)
@@ -178,6 +194,40 @@ def test_modo_venda_nao_traz_lead_so_com_venda_cancelada(monkeypatch):
     monkeypatch.setattr(tr, "get_supabase", lambda: banco)
     out = tr.traffic_report(period="all", mode="sale")
     assert out["total"]["leads"] == 1 and out["total"]["receita"] == 80.0
+
+
+def test_fetch_all_pagina_com_ordem_estavel():
+    """Sem ORDER BY a paginação por .range() perde e repete linhas entre as páginas."""
+    banco = _Banco(t=[{"id": f"{i:02d}"} for i in range(5)])
+    banco.embaralha = True
+    out = tr._fetch_all(lambda: banco.table("t").select("id"), page=2)
+    assert [r["id"] for r in out] == ["00", "01", "02", "03", "04"]
+
+
+_CHAVE_UNICA = {"meta_ad_campaigns": "ad_id", "lead_primeira_origem": "lead_id"}
+
+
+def test_toda_paginacao_do_relatorio_ordena_por_chave_unica(monkeypatch):
+    banco = _banco_colunas()
+    banco.tabelas["leads"].append({"id": "l3", "ctwa_clid": "c3", "meta_ad_id": "ad3",
+                                   "created_at": "2026-09-01T12:00:00+00:00"})
+    banco.tabelas.update(
+        meta_ad_campaigns=[{"ad_id": "ad3", "campaign_id": "cm_atac"}],
+        conversations=[], pipeline_stages=[], deals=[],
+        ad_spend=[{"id": 1, "platform": "meta", "campaign_id": "cm_atac",
+                   "campaign_name": "Atacado WA", "cost": 10.0,
+                   "date": datetime.now(tr._TZ).date().isoformat()}],
+    )
+    monkeypatch.setattr(tr, "get_supabase", lambda: banco)
+    monkeypatch.setattr(ta, "get_supabase", lambda: banco)
+    tr.traffic_report(period="all", mode="lead")
+    tr.traffic_report(period="all", mode="sale")
+    tr.campaign_leads("Google Ads", "black", period="all")
+    tr.campaign_leads("Meta Ads", "Atacado WA", period="all")
+    ta.campanhas_com_gasto()
+    tabelas = {t for t, _ in banco.paginadas}
+    assert {"leads", "sales", "meta_ad_campaigns", "lead_primeira_origem", "ad_spend"} <= tabelas
+    assert sorted({(t, o) for t, o in banco.paginadas if o != _CHAVE_UNICA.get(t, "id")}) == []
 
 
 # --- 2.2 Atribuição manual ---------------------------------------------------------------
