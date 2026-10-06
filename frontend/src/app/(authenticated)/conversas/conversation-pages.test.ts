@@ -89,11 +89,55 @@ describe("insertIntoPages", () => {
     expect(out).toBe(data);
   });
 
-  it("with respectWindow, skips a conversation older than the loaded window", () => {
+  it("skips a conversation older than the loaded window (the next page brings it)", () => {
     const data = pages();
-    expect(insertIntoPages(data, conv("old", "2026-10-01T00:00:00+00:00"), { respectWindow: true })).toBe(data);
-    const inside = insertIntoPages(data, conv("new", "2026-10-06T13:00:00+00:00"), { respectWindow: true });
+    expect(insertIntoPages(data, conv("old", "2026-10-01T00:00:00+00:00"))).toBe(data);
+    expect(insertIntoPages(data, conv("nul", null))).toBe(data);
+    const inside = insertIntoPages(data, conv("new", "2026-10-06T13:00:00+00:00"));
     expect(flattenPages(inside)[0].id).toBe("new");
+  });
+
+  it("compares instants, not strings (Z vs +00:00, fractions)", () => {
+    const out = insertIntoPages(pages(), conv("x", "2026-10-06T11:30:00.5Z"));
+    expect(flattenPages(out).map((c) => c.id)).toEqual(["a", "x", "b", "c", "d"]);
+    // 09:00-03:00 = 12:00Z, empatada com "a": desempata por id desc ("y" > "a").
+    const later = insertIntoPages(pages(), conv("y", "2026-10-06T09:00:00-03:00"));
+    expect(flattenPages(later).map((c) => c.id).slice(0, 2)).toEqual(["y", "a"]);
+  });
+
+  it("breaks timestamp ties by id desc, like the route", () => {
+    const data = pages();
+    data.pages[0].conversations[1] = conv(ID_B, "2026-10-06T11:00:00+00:00");
+    const tie = "2026-10-06T11:00:00+00:00";
+    const higher = insertIntoPages(data, conv("00000000-0000-0000-0000-00000000000c", tie));
+    expect(flattenPages(higher).map((c) => c.id).slice(0, 3)).toEqual([
+      "a",
+      "00000000-0000-0000-0000-00000000000c",
+      ID_B,
+    ]);
+    const lower = insertIntoPages(data, conv("00000000-0000-0000-0000-00000000000a", tie));
+    expect(flattenPages(lower).map((c) => c.id).slice(0, 3)).toEqual([
+      "a",
+      ID_B,
+      "00000000-0000-0000-0000-00000000000a",
+    ]);
+  });
+
+  it("does not reorder the rest of the list", () => {
+    const data = pages();
+    // Fora de ordem de propósito (patch local ainda não reordenado).
+    data.pages[1].conversations.reverse();
+    const out = insertIntoPages(data, conv("x", "2026-10-06T11:30:00+00:00"));
+    expect(flattenPages(out).map((c) => c.id)).toEqual(["a", "x", "b", "d", "c"]);
+  });
+});
+
+describe("isWithinLoadedWindow — empate no cursor", () => {
+  it("uses the id to place a row tied with the boundary timestamp", () => {
+    const at = "2026-10-06T09:00:00+00:00"; // fronteira: t=09:00, id=ID_B
+    expect(isWithinLoadedWindow(pages(), at, "00000000-0000-0000-0000-00000000000c")).toBe(true);
+    expect(isWithinLoadedWindow(pages(), at, ID_B)).toBe(true);
+    expect(isWithinLoadedWindow(pages(), at, "00000000-0000-0000-0000-00000000000a")).toBe(false);
   });
 });
 

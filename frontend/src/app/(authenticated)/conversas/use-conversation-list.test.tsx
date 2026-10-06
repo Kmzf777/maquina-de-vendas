@@ -419,3 +419,29 @@ describe("useConversationList — caches das outras abas", () => {
     expect(server.count((u) => u.includes("tab=nao_lidas"))).toBe(1);
   });
 });
+
+describe("useConversationList — conversa aberta de fora da janela carregada", () => {
+  it("keeps an old conversation out of the list but selected, patched, and in order once paged in", async () => {
+    server.db = [conv("a", 12), conv("b", 11), conv("c", 10), conv("d", 9), conv("e", 8)];
+    const { result } = setup();
+    await vi.waitFor(() => expect(result.current.conversations).toHaveLength(2));
+
+    const old = structuredClone(server.db[4]); // veio da busca de contatos
+    act(() => {
+      result.current.ensureInList(old);
+      result.current.setSelectedId(old.id);
+    });
+    expect(ids(result.current.conversations)).toEqual([uid("a"), uid("b")]); // fora da lista
+    expect(result.current.selectedConversation?.id).toBe(uid("e"));
+
+    act(() => updateEvent({ id: uid("e"), followup_enabled: false }));
+    expect(result.current.selectedConversation?.followup_enabled).toBe(false);
+
+    act(() => result.current.loadMore());
+    await vi.waitFor(() => expect(result.current.conversations).toHaveLength(4));
+    act(() => result.current.loadMore());
+    await vi.waitFor(() => expect(result.current.conversations).toHaveLength(5));
+    expect(ids(result.current.conversations)).toEqual(["a", "b", "c", "d", "e"].map(uid));
+    expect(result.current.selectedConversation?.id).toBe(uid("e"));
+  });
+});

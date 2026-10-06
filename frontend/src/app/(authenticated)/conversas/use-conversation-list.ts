@@ -196,7 +196,10 @@ export function useConversationList({
         log.push(fn);
         inFlightPatchesRef.current.set(query.queryHash, log);
       }
-      queryClient.setQueryData<ConversationPages>(queryKey, (old) => (old ? fn(old) : old));
+      const old = queryClient.getQueryData<ConversationPages>(queryKey);
+      if (!old) return;
+      const next = fn(old);
+      if (next !== old) queryClient.setQueryData<ConversationPages>(queryKey, next);
     },
     [queryClient],
   );
@@ -321,9 +324,7 @@ export function useConversationList({
         const [fresh] = applyOverrides([conv]);
         for (const query of queryClient.getQueryCache().findAll({ queryKey: ["conversations"] })) {
           if (!conversationBelongsToKey(fresh, query.queryKey)) continue;
-          updatePages(query.queryKey, (data) =>
-            insertIntoPages(data, fresh, { respectWindow: true }),
-          );
+          updatePages(query.queryKey, (data) => insertIntoPages(data, fresh));
         }
         if (!conversationBelongsToKey(fresh, activeKey)) {
           ignoredUntil.set(fresh.id, Date.now() + IGNORE_OUTSIDE_TAB_MS);
@@ -349,7 +350,7 @@ export function useConversationList({
           const data = query.state.data as ConversationPages | undefined;
           if (!data) return false;
           if (flattenPages(data).some((c) => c.id === row.id)) return false; // o patch cobre
-          if (!isWithinLoadedWindow(data, row.last_msg_at)) return false; // a próxima página a traz
+          if (!isWithinLoadedWindow(data, row.last_msg_at, row.id)) return false; // a próxima página a traz
           return shouldFetchUnknownRow(row, keyTab);
         },
       });
@@ -411,7 +412,7 @@ export function useConversationList({
           if (flattenPages(cached).some((c) => c.id === row.id)) return;
           // Desconhecida: fora da janela carregada → a próxima página a trará; aba que
           // não pode contê-la → ignora; senão busca só ela pelo id.
-          if (!isWithinLoadedWindow(cached, row.last_msg_at)) return;
+          if (!isWithinLoadedWindow(cached, row.last_msg_at, row.id)) return;
           if (!shouldFetchUnknownRow(row, tab)) return;
           if ((ignoredUntil.get(row.id) ?? 0) > Date.now()) return;
           pendingUnknown.add(row.id);
