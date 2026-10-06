@@ -40,6 +40,12 @@ import {
   trocaLimpaFormulario,
   type ContaBling,
 } from "@/lib/bling-accounts";
+import {
+  TERMO_KIT,
+  comKitsNoTopo,
+  ehKitDegustacao,
+  kitsPrimeiro,
+} from "@/components/sales/kits";
 
 /**
  * Conta Bling deste formulario — primeiro campo, porque catalogo, pagamento e
@@ -175,6 +181,8 @@ export function BlingOrderForm({
 
   const [metodos, setMetodos] = useState<BlingPaymentMethod[]>([]);
   const [resultados, setResultados] = useState<BlingProduct[]>([]);
+  // Kits de degustação buscados à parte (ver o efeito mais abaixo).
+  const [kits, setKits] = useState<BlingProduct[]>([]);
   const [conhecidos, setConhecidos] = useState<Record<number, BlingProduct>>({});
   const [busca, setBusca] = useState("");
   // Texto cru do campo numérico em edição (um por vez): ver `numeroProps`.
@@ -253,6 +261,7 @@ export function BlingOrderForm({
     // coincidem) — limpar evita mostrar por uma fracao de segundo um resultado
     // de busca que pertence ao CNPJ errado.
     setResultados([]);
+    setKits([]);
     setConhecidos({});
     setContaAtual(nova);
   };
@@ -271,6 +280,33 @@ export function BlingOrderForm({
         const lista: BlingPaymentMethod[] = Array.isArray(d?.data) ? d.data : [];
         setMetodos(lista);
         setPaymentMethodId((atual) => atual ?? defaultPaymentMethodId(lista));
+      })
+      .catch(() => undefined);
+    return () => {
+      vivo = false;
+    };
+  }, [contaResolvida, contaAtual]);
+
+  // Kits de degustação buscados à parte: a página inicial (100 por nome) pode
+  // nem trazê-los, e eles são a venda direta mais comum da conversa — precisam
+  // estar no topo sem o vendedor digitar nada (call de 01/10).
+  useEffect(() => {
+    if (!contaResolvida) return;
+    let vivo = true;
+    const contaQs = contaAtual ? `&account=${encodeURIComponent(contaAtual)}` : "";
+    fetch(`/api/bling/products?limit=20&q=${encodeURIComponent(TERMO_KIT)}${contaQs}`)
+      .then((r) => (r.ok ? r.json() : Promise.reject(new Error("http"))))
+      .then((d) => {
+        if (!vivo) return;
+        const lista: BlingProduct[] = (Array.isArray(d?.data) ? d.data : []).filter(
+          (p: BlingProduct) => ehKitDegustacao(p.nome),
+        );
+        setKits(lista);
+        setConhecidos((antes) => {
+          const mapa = { ...antes };
+          for (const p of lista) mapa[p.id] = p;
+          return mapa;
+        });
       })
       .catch(() => undefined);
     return () => {
@@ -339,6 +375,11 @@ export function BlingOrderForm({
   }, [result]);
 
   // ── render ───────────────────────────────────────────────────────────────
+  // Com busca digitada, só reordena o que a busca trouxe (kits primeiro); sem
+  // busca, os kits buscados à parte entram no topo da página inicial.
+  const visiveis = busca.trim() ? kitsPrimeiro(resultados) : comKitsNoTopo(kits, resultados);
+  const grupoKits = visiveis.filter((p) => ehKitDegustacao(p.nome));
+  const demais = visiveis.filter((p) => !ehKitDegustacao(p.nome));
   const semParcela = result.total > 0 && result.installments.length === 0;
 
   /**
@@ -375,6 +416,31 @@ export function BlingOrderForm({
       onBlur: () => setRascunho(null),
     };
   };
+
+  /** Uma opção do seletor de produto da linha `i`. */
+  const opcaoDeProduto = (p: BlingProduct, i: number, linha: OrderLine) => (
+    <button
+      key={p.id}
+      type="button"
+      onClick={() => {
+        // `visiveis`, não `resultados`: o kit pode ter vindo só da busca de kits.
+        setLinhas((atuais) => applyProduct(atuais, i, p.id, visiveis));
+        setAberta(null);
+        setBusca("");
+      }}
+      className="flex w-full items-center justify-between gap-2 rounded-md px-2 py-1.5 text-left hover:bg-[#f4f2ee]"
+    >
+      <span className="min-w-0">
+        <span className="block truncate text-[13px] text-[#111111]">{p.nome}</span>
+        <span className="block text-[11px] text-[#7b7b78]">
+          {p.codigo ?? "sem SKU"}
+          {p.preco != null && ` · R$ ${brl(p.preco)}`}
+          {p.saldo_virtual != null && ` · saldo ${p.saldo_virtual}`}
+        </span>
+      </span>
+      {linha.blingProductId === p.id && <CheckIcon className="size-4 shrink-0" />}
+    </button>
+  );
 
   return (
     <div className="space-y-4">
@@ -490,40 +556,23 @@ export function BlingOrderForm({
                           Buscando...
                         </div>
                       )}
-                      {!carregando && resultados.length === 0 && (
+                      {!carregando && visiveis.length === 0 && (
                         <div className="px-2 py-3 text-[13px] text-[#8a8a8a]">
                           Nenhum produto encontrado.
                         </div>
                       )}
-                      {resultados.map((p) => (
-                        <button
-                          key={p.id}
-                          type="button"
-                          onClick={() => {
-                            setLinhas((atuais) =>
-                              applyProduct(atuais, i, p.id, resultados),
-                            );
-                            setAberta(null);
-                            setBusca("");
-                          }}
-                          className="flex w-full items-center justify-between gap-2 rounded-md px-2 py-1.5 text-left hover:bg-[#f4f2ee]"
-                        >
-                          <span className="min-w-0">
-                            <span className="block truncate text-[13px] text-[#111111]">
-                              {p.nome}
-                            </span>
-                            <span className="block text-[11px] text-[#7b7b78]">
-                              {p.codigo ?? "sem SKU"}
-                              {p.preco != null && ` · R$ ${brl(p.preco)}`}
-                              {p.saldo_virtual != null &&
-                                ` · saldo ${p.saldo_virtual}`}
-                            </span>
-                          </span>
-                          {linha.blingProductId === p.id && (
-                            <CheckIcon className="size-4 shrink-0" />
-                          )}
-                        </button>
-                      ))}
+                      {grupoKits.length > 0 && (
+                        <div className="px-2 pt-1.5 pb-1 text-[10px] uppercase tracking-[0.6px] text-[#7b7b78]">
+                          Kits
+                        </div>
+                      )}
+                      {grupoKits.map((p) => opcaoDeProduto(p, i, linha))}
+                      {grupoKits.length > 0 && demais.length > 0 && (
+                        <div className="mt-1 px-2 pt-2 pb-1 border-t border-[#eee] text-[10px] uppercase tracking-[0.6px] text-[#7b7b78]">
+                          Produtos
+                        </div>
+                      )}
+                      {demais.map((p) => opcaoDeProduto(p, i, linha))}
                     </div>
                   </PopoverContent>
                 </Popover>
