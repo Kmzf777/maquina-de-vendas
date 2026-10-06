@@ -30,6 +30,8 @@ const PAGE = 1000;
 const MAX_MESSAGE_PAGES = 20;
 const TZ = "America/Sao_Paulo";
 const TIPOS_VENDA = new Set(["venda", "venda_cancelada"]);
+/** `leads.id` é uuid: outro formato faria o Postgres responder 500 com a mensagem dele. */
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 type Row = Record<string, unknown>;
 type Sb = Awaited<ReturnType<typeof getServiceSupabase>>;
@@ -230,6 +232,7 @@ export async function GET(
   }
 
   const { id } = await params;
+  if (!UUID_RE.test(id)) return NextResponse.json({ error: "lead_not_found" }, { status: 404 });
   const sb = await getServiceSupabase();
 
   const { data: lead, error: leadError } = await sb.from("leads").select("id").eq("id", id).maybeSingle();

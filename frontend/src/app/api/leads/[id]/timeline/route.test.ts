@@ -41,10 +41,12 @@ function fakeSupabase(tables: Record<string, Result | Result[]>) {
   };
 }
 
-const call = (id = "lead-1") =>
+const LEAD_ID = "6f1c2e7a-0000-4000-8000-000000000001";
+
+const call = (id = LEAD_ID) =>
   GET(new Request(`http://localhost/api/leads/${id}/timeline`) as never, { params: Promise.resolve({ id }) });
 
-const LEAD: Result = { data: { id: "lead-1" }, error: null };
+const LEAD: Result = { data: { id: LEAD_ID }, error: null };
 
 const ev = (p: Record<string, unknown>) => ({
   id: "e",
@@ -72,6 +74,15 @@ describe("GET /api/leads/[id]/timeline", () => {
   it("401 sem sessão", async () => {
     vi.mocked(getCurrentUser).mockRejectedValueOnce(new Error("no session"));
     expect((await call()).status).toBe(401);
+  });
+
+  it("404 para id que não é UUID, sem consultar o banco", async () => {
+    const sb = fakeSupabase({ leads: { data: null, error: { message: 'invalid input syntax for type uuid: "x"' } } });
+    vi.mocked(getServiceSupabase).mockResolvedValue(sb as never);
+    const res = await call("nao-e-uuid");
+    expect(res.status).toBe(404);
+    expect(await res.json()).toEqual({ error: "lead_not_found" });
+    expect(sb.calls).toHaveLength(0);
   });
 
   it("404 lead inexistente", async () => {
