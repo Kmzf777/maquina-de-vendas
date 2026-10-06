@@ -42,7 +42,7 @@ import { useBlingStatus } from "@/hooks/use-bling-status";
 import { blingGate } from "@/lib/bling-gate";
 import { CONTA_PADRAO } from "@/lib/bling-accounts";
 import { defaultsDoContato, useLeadCliente } from "@/components/sales/lead-cliente";
-import { PainelLateral } from "@/components/sales/painel-lateral";
+import { PainelLateral, comNome } from "@/components/sales/painel-lateral";
 import { LeadPicker, type LeadEscolhido } from "@/components/sales/lead-picker";
 import type { OrderPayloadResult } from "@/lib/bling-order-state";
 import { buildQuotePayload, linesFromQuoteItems } from "@/lib/quote-state";
@@ -137,16 +137,21 @@ const diaMesAno = (iso: string) =>
 const NENHUM = "__none__";
 
 export function QuoteCreateModal({
-  leadId,
+  leadId: leadIdDaAbertura,
   pickLead,
   lockedDealId,
-  conversationId,
+  conversationId: conversaDaAbertura,
   currentUserEmail,
   editingQuote,
   onClose,
   onSaved,
 }: QuoteCreateModalProps) {
   const isEditing = !!editingQuote;
+  // Lead e conversa ficam CONGELADOS no estado de abertura. O painel é
+  // não-modal e a conversa por trás pode mudar com ele aberto: sem isto a
+  // gravação sairia com o lead de uma conversa e o `conversation_id` de outra.
+  const [leadId] = useState(leadIdDaAbertura);
+  const [conversationId] = useState(conversaDaAbertura);
   // Um orçamento convertido em venda não aceita mais edição (decisão 1 da
   // spec). O backend garante isso com 409, mas conferir aqui evita abrir um
   // formulário inteiro para uma gravação que já se sabe que vai ser recusada.
@@ -407,7 +412,11 @@ export function QuoteCreateModal({
     // Painel lateral sem overlay (call de 01/10): a conversa continua visível
     // e selecionável enquanto o orçamento é montado.
     <PainelLateral
-      titulo={isEditing ? "Editar Orçamento" : "Novo Orçamento"}
+      titulo={
+        isEditing
+          ? "Editar Orçamento"
+          : comNome("Novo orçamento", leadCliente?.name ?? leadEscolhido?.name)
+      }
       largura="xl"
       onFechar={fecharModal}
     >

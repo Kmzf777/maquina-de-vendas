@@ -225,3 +225,36 @@ describe("SaleCreateModal — seletor de lead (P4.6)", () => {
     expect(chamadas.some((c) => c.url === "/api/leads")).toBe(false);
   });
 });
+
+describe("SaleCreateModal — lead e conversa congelados na abertura (revisão P4)", () => {
+  it("prop de conversa/lead mudando com o painel aberto não mistura a venda", async () => {
+    h.maybeSingle.mockResolvedValue({ data: LEAD_VIDA, error: null });
+    const props = {
+      lockedDealId: "deal-1",
+      lockedDealTitle: "Kit degustação",
+      currentUserEmail: "joao@cafecanastra.com",
+      blingEnabled: false,
+      onClose: vi.fn(),
+      onSaved: vi.fn(),
+    };
+    const { rerender } = render(
+      <SaleCreateModal leadId="lead-1" conversationId="conv-1" {...props} />,
+    );
+    await waitFor(() => expect(h.maybeSingle).toHaveBeenCalled());
+    rerender(<SaleCreateModal leadId="lead-2" conversationId="conv-2" {...props} />);
+
+    fireEvent.change(screen.getByPlaceholderText("Ex: Café especial 5kg"), { target: { value: "Kit" } });
+    fireEvent.change(screen.getByPlaceholderText("0,00"), { target: { value: "60" } });
+    fireEvent.click(screen.getByRole("button", { name: "Registrar Venda" }));
+
+    await waitFor(() => expect(props.onSaved).toHaveBeenCalled());
+    const venda = chamadas.find((c) => c.url === "/api/sales" && c.method === "POST");
+    expect(venda?.body).toMatchObject({ lead_id: "lead-1", conversation_id: "conv-1" });
+  });
+
+  it("o título diz para quem é a venda", async () => {
+    h.maybeSingle.mockResolvedValue({ data: LEAD_VIDA, error: null });
+    abrir({ blingEnabled: false });
+    expect(await screen.findByText("Registrar venda — Iago")).toBeTruthy();
+  });
+});

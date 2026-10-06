@@ -145,3 +145,43 @@ describe("QuoteCreateModal — seletor de lead (P4.6)", () => {
     expect(chamadas.some((c) => c.url === "/api/leads")).toBe(false);
   });
 });
+
+describe("QuoteCreateModal — lead e conversa congelados na abertura (revisão P4)", () => {
+  it("prop de conversa/lead mudando com o painel aberto não mistura o orçamento", async () => {
+    h.maybeSingle.mockResolvedValue({ data: LEAD_VIDA, error: null });
+    const props = {
+      lockedDealId: "deal-1",
+      currentUserEmail: "joao@cafecanastra.com",
+      onClose: vi.fn(),
+      onSaved: vi.fn(),
+    };
+    const { rerender } = render(
+      <QuoteCreateModal leadId="lead-1" conversationId="conv-1" {...props} />,
+    );
+    await waitFor(() => expect(h.maybeSingle).toHaveBeenCalled());
+    rerender(<QuoteCreateModal leadId="lead-2" conversationId="conv-2" {...props} />);
+
+    const enviar = await screen.findByRole("button", { name: "Gerar orçamento" });
+    await waitFor(() => expect((enviar as HTMLButtonElement).disabled).toBe(false));
+    fireEvent.click(enviar);
+
+    await waitFor(() =>
+      expect(chamadas.some((c) => c.url.startsWith("/api/quotes") && c.method === "POST")).toBe(true),
+    );
+    const post = chamadas.find((c) => c.url.startsWith("/api/quotes") && c.method === "POST");
+    expect(post?.body).toMatchObject({ lead_id: "lead-1", conversation_id: "conv-1" });
+  });
+
+  it("o título diz para quem é o orçamento", async () => {
+    h.maybeSingle.mockResolvedValue({ data: LEAD_VIDA, error: null });
+    render(
+      <QuoteCreateModal
+        leadId="lead-1"
+        conversationId="conv-1"
+        onClose={vi.fn()}
+        onSaved={vi.fn()}
+      />,
+    );
+    expect(await screen.findByText("Novo orçamento — Iago")).toBeTruthy();
+  });
+});

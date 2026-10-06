@@ -22,6 +22,15 @@ const LARGURA = {
   xl: "data-[side=right]:sm:max-w-4xl",
 } as const;
 
+/**
+ * Título do painel com o nome do lead: com o painel não-modal e a conversa
+ * visível ao lado, o título é o que diz para quem a venda ou o orçamento está sendo feito.
+ */
+export function comNome(titulo: string, nome: string | null | undefined): string {
+  const n = (nome ?? "").trim();
+  return n ? `${titulo} — ${n}` : titulo;
+}
+
 interface PainelLateralProps {
   titulo: string;
   largura?: keyof typeof LARGURA;

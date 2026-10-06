@@ -33,7 +33,7 @@ import {
   salvarJaEraCliente,
   useLeadCliente,
 } from "@/components/sales/lead-cliente";
-import { PainelLateral } from "@/components/sales/painel-lateral";
+import { PainelLateral, comNome } from "@/components/sales/painel-lateral";
 import { LeadPicker, type LeadEscolhido } from "@/components/sales/lead-picker";
 
 /**
@@ -117,11 +117,11 @@ const fieldInput =
   "w-full bg-white border border-[#dedbd6] rounded-[4px] px-3 py-2 text-[14px] text-[#111111] focus:border-[#111111] focus:outline-none focus:ring-0";
 
 export function SaleCreateModal({
-  leadId,
+  leadId: leadIdDaAbertura,
   pickLead,
   lockedDealId,
   lockedDealTitle,
-  conversationId,
+  conversationId: conversaDaAbertura,
   currentUserEmail,
   editingSale,
   blingEnabled,
@@ -130,6 +130,11 @@ export function SaleCreateModal({
   onSaved,
 }: SaleCreateModalProps) {
   const isEditing = !!editingSale;
+  // Lead e conversa ficam CONGELADOS no estado de abertura. O painel é
+  // não-modal e a conversa por trás pode mudar com ele aberto: sem isto a
+  // gravação sairia com o lead de uma conversa e o `conversation_id` de outra.
+  const [leadId] = useState(leadIdDaAbertura);
+  const [conversationId] = useState(conversaDaAbertura);
   // Editar venda com o Bling ligado agora dá PUT no pedido do ERP (Fase E) —
   // ver `blingMode` abaixo, que também exige que a venda tenha um pedido
   // (`bling_order_id`) para ter o que alterar.
@@ -697,7 +702,11 @@ export function SaleCreateModal({
     // bloqueava a conversa, e o vendedor fechava o pedido para copiar um dado
     // do chat. O corpo é o único trecho que rola; header e ações ficam presos.
     <PainelLateral
-      titulo={isEditing ? "Editar Venda" : "Registrar Venda"}
+      titulo={
+        isEditing
+          ? "Editar Venda"
+          : comNome("Registrar venda", leadCliente?.name ?? leadEscolhido?.name)
+      }
       largura={blingLayout ? "lg" : "md"}
       onFechar={fecharModal}
     >
