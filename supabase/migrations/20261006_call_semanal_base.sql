@@ -13,6 +13,8 @@
 --      retencao de 15 dias do meta_webhook_logs);
 --   5. view lead_primeira_origem.
 
+begin;
+
 -- ── 1. "JA ERA CLIENTE" ─────────────────────────────────────────────────────
 -- null = desconhecido. O sistema so grava TRUE (com evidencia); FALSE so vem de um humano.
 alter table public.leads add column if not exists ja_era_cliente boolean;
@@ -25,23 +27,28 @@ do $$ begin
     check (ja_era_cliente_fonte is null or ja_era_cliente_fonte in ('auto', 'vendedor'));
 exception when duplicate_object then null; end $$;
 
--- Evidencia: venda nao cancelada ANTERIOR a entrada do lead no CRM (ex.: pedido historico
--- do Bling). Cliente que so existia no WhatsApp fica null e o vendedor responde.
+-- Evidencia: venda nao cancelada de um DIA anterior a entrada do lead no CRM (ex.: pedido
+-- historico do Bling). Compara DATAS em Sao Paulo, nao instantes: o sold_at do Bling e a
+-- data do pedido as 12:00 UTC e o da venda manual e 12:00 local, entao o lead que chega de
+-- manha e compra no mesmo dia nao pode virar "ja era cliente". Cliente que so existia no
+-- WhatsApp fica null e o vendedor responde.
 create or replace function public.fn_sales_marca_ja_era_cliente()
-returns trigger language plpgsql as $$
+returns trigger language plpgsql security definer set search_path = public, pg_temp as $$
 begin
+  -- Guardas baratas FORA do bloco com exception: ele abre subtransacao por linha.
+  if new.lead_id is null
+     or new.sold_at is null
+     or coalesce(new.status, 'registrada') = 'cancelada' then
+    return new;
+  end if;
   begin
-    if new.lead_id is not null
-       and coalesce(new.status, 'registrada') <> 'cancelada'
-       and new.sold_at is not null then
-      update public.leads l
-         set ja_era_cliente = true,
-             ja_era_cliente_fonte = 'auto',
-             ja_era_cliente_em = now()
-       where l.id = new.lead_id
-         and l.ja_era_cliente is null
-         and new.sold_at < l.created_at;
-    end if;
+    update public.leads l
+       set ja_era_cliente = true,
+           ja_era_cliente_fonte = 'auto',
+           ja_era_cliente_em = now()
+     where l.id = new.lead_id
+       and l.ja_era_cliente is null
+       and (new.sold_at at time zone 'America/Sao_Paulo')::date < (l.created_at at time zone 'America/Sao_Paulo')::date;
   exception when others then
     raise warning 'fn_sales_marca_ja_era_cliente: %', sqlerrm;
   end;
@@ -63,7 +70,7 @@ update public.leads l
      select 1 from public.sales s
       where s.lead_id = l.id
         and coalesce(s.status, 'registrada') <> 'cancelada'
-        and s.sold_at < l.created_at
+        and (s.sold_at at time zone 'America/Sao_Paulo')::date < (l.created_at at time zone 'America/Sao_Paulo')::date
    );
 
 -- ── 2. ATRIBUICAO MANUAL DE CAMPANHA ────────────────────────────────────────
@@ -105,6 +112,12 @@ create table if not exists public.meta_referrals_arquivo (
   source_type text,
   referral jsonb not null
 );
+-- A ACL padrao do schema public neste banco da arwdDxtm a anon/authenticated em toda
+-- tabela nova: sem isto, a anon key do browser leria o telefone de todo lead CTWA. So o
+-- backend (service_role) le esta tabela.
+alter table public.meta_referrals_arquivo enable row level security;
+revoke all on public.meta_referrals_arquivo from anon, authenticated;
+
 create unique index if not exists meta_referrals_arquivo_log_ref_uidx
   on public.meta_referrals_arquivo (log_id, md5(referral::text));
 create index if not exists meta_referrals_arquivo_ctwa_idx
@@ -113,7 +126,7 @@ create index if not exists meta_referrals_arquivo_from_idx
   on public.meta_referrals_arquivo (from_number, received_at);
 
 create or replace function public.fn_arquiva_meta_referrals(p_log public.meta_webhook_logs)
-returns void language sql as $$
+returns void language sql security definer set search_path = public, pg_temp as $$
   insert into public.meta_referrals_arquivo
     (log_id, received_at, from_number, ctwa_clid, source_id, source_type, referral)
   select p_log.id,
@@ -129,7 +142,7 @@ returns void language sql as $$
 $$;
 
 create or replace function public.fn_meta_webhook_logs_arquiva_referral()
-returns trigger language plpgsql as $$
+returns trigger language plpgsql security definer set search_path = public, pg_temp as $$
 begin
   begin
     if new.direction = 'inbound' and new.payload::text like '%"referral"%' then
@@ -140,6 +153,14 @@ begin
   end;
   return new;
 end $$;
+
+-- As tres funcoes sao SECURITY DEFINER (rodam como o dono): o efeito nao depende do papel
+-- de quem grava (RLS/grants de authenticated barrariam o update/insert em silencio).
+-- Por isso mesmo nao podem ser RPC: EXECUTE fora do alcance de anon/authenticated. O
+-- trigger dispara assim mesmo — EXECUTE de funcao de trigger so e checado no CREATE TRIGGER.
+revoke execute on function public.fn_arquiva_meta_referrals(public.meta_webhook_logs) from public, anon, authenticated;
+revoke execute on function public.fn_meta_webhook_logs_arquiva_referral() from public, anon, authenticated;
+revoke execute on function public.fn_sales_marca_ja_era_cliente() from public, anon, authenticated;
 
 drop trigger if exists trg_meta_webhook_logs_arquiva_referral on public.meta_webhook_logs;
 create trigger trg_meta_webhook_logs_arquiva_referral
@@ -155,7 +176,8 @@ select public.fn_arquiva_meta_referrals(l)
 -- ── 5. PRIMEIRA ORIGEM ──────────────────────────────────────────────────────
 -- Primeiro evento `entrada` de cada lead. metadata da entrada: canal, campanha_id,
 -- campanha_nome (gravados pelo P3).
-create or replace view public.lead_primeira_origem as
+-- security_invoker: a view respeita o RLS de lead_events em vez de rodar como o dono.
+create or replace view public.lead_primeira_origem with (security_invoker = true) as
 select distinct on (e.lead_id)
        e.lead_id,
        e.metadata->>'canal'         as canal,
@@ -166,3 +188,7 @@ select distinct on (e.lead_id)
  where e.event_type = 'entrada'
    and e.lead_id is not null
  order by e.lead_id, e.occurred_at asc, e.id asc;
+
+revoke all on public.lead_primeira_origem from anon;
+
+commit;
