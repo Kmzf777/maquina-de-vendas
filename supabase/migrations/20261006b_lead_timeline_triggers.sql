@@ -157,22 +157,22 @@ declare
   v_meta jsonb;
   v_ultimo uuid;
 begin
-  begin
-    if not public.fn_lead_tem_rastreio(new.gclid, new.fbclid, new.ctwa_clid, new.meta_ad_id,
-                                       new.utm_source, new.utm_campaign) then
+  -- Guardas baratas FORA do bloco com exception: ele abre subtransacao por linha.
+  if not public.fn_lead_tem_rastreio(new.gclid, new.fbclid, new.ctwa_clid, new.meta_ad_id,
+                                     new.utm_source, new.utm_campaign) then
+    return new;
+  end if;
+  if tg_op = 'UPDATE' then
+    if new.ctwa_clid is not distinct from old.ctwa_clid
+       and new.gclid is not distinct from old.gclid
+       and new.fbclid is not distinct from old.fbclid
+       and new.meta_ad_id is not distinct from old.meta_ad_id
+       and new.utm_source is not distinct from old.utm_source
+       and new.utm_campaign is not distinct from old.utm_campaign then
       return new;
     end if;
-    if tg_op = 'UPDATE' then
-      if new.ctwa_clid is not distinct from old.ctwa_clid
-         and new.gclid is not distinct from old.gclid
-         and new.fbclid is not distinct from old.fbclid
-         and new.meta_ad_id is not distinct from old.meta_ad_id
-         and new.utm_source is not distinct from old.utm_source
-         and new.utm_campaign is not distinct from old.utm_campaign then
-        return new;
-      end if;
-    end if;
-
+  end if;
+  begin
     v_meta := public.fn_lead_entrada_metadata(new.gclid, new.fbclid, new.ctwa_clid, new.meta_ad_id,
                                               new.utm_source, new.utm_medium, new.utm_campaign,
                                               new.traffic_type);
@@ -254,17 +254,17 @@ declare
   v_meta jsonb;
   v_quando timestamptz;
 begin
-  begin
-    if new.lead_id is null or new.stage_id is null then
+  -- Guardas baratas FORA do bloco com exception: ele abre subtransacao por linha.
+  if new.lead_id is null or new.stage_id is null then
+    return new;
+  end if;
+  if tg_op = 'UPDATE' then
+    if new.stage_id is not distinct from old.stage_id then
       return new;
     end if;
-    if tg_op = 'UPDATE' then
-      if new.stage_id is not distinct from old.stage_id then
-        return new;
-      end if;
-      v_de := old.stage_id;
-    end if;
-
+    v_de := old.stage_id;
+  end if;
+  begin
     v_meta := public.fn_lead_events_etapa_metadata(new.id, new.pipeline_id, v_de, new.stage_id);
 
     if tg_op = 'INSERT' then
@@ -306,18 +306,28 @@ declare
   v_source text;
   v_cancelou boolean;
 begin
-  if tg_op = 'DELETE' then
-    begin
-      delete from public.lead_events
-       where dedupe_key in ('venda:' || old.id, 'venda_cancelada:' || old.id);
-    exception when others then
-      raise warning 'fn_lead_events_sales_venda: %', sqlerrm;
-    end;
-    return old;
-  end if;
-  begin
+  -- Guardas baratas FORA do bloco com exception: ele abre subtransacao por linha.
+  if tg_op <> 'DELETE' then
     if new.lead_id is null then
       return new;
+    end if;
+    -- o Bling regrava a venda inteira a cada webhook: sem mudanca nos campos do evento, nada
+    if tg_op = 'UPDATE' then
+      if new.status is not distinct from old.status
+         and new.sold_by is not distinct from old.sold_by
+         and new.value is not distinct from old.value
+         and new.product is not distinct from old.product
+         and new.sold_at is not distinct from old.sold_at
+         and new.origin is not distinct from old.origin then
+        return new;
+      end if;
+    end if;
+  end if;
+  begin
+    if tg_op = 'DELETE' then
+      delete from public.lead_events
+       where dedupe_key in ('venda:' || old.id, 'venda_cancelada:' || old.id);
+      return old;
     end if;
     v_meta := public.fn_lead_events_venda_metadata(new);
     v_source := case when new.origin = 'bling' then 'bling' else 'crm' end;
@@ -368,12 +378,21 @@ declare
   v_sale uuid;
   v_kit boolean;
 begin
-  begin
-    if tg_op = 'DELETE' then
-      v_sale := old.sale_id;
-    else
-      v_sale := new.sale_id;
+  -- Guardas baratas FORA do bloco com exception: ele abre subtransacao por linha.
+  if tg_op = 'UPDATE' then
+    if new.descricao is not distinct from old.descricao and new.sale_id is not distinct from old.sale_id then
+      return null;
     end if;
+  end if;
+  if tg_op = 'DELETE' then
+    v_sale := old.sale_id;
+  else
+    v_sale := new.sale_id;
+  end if;
+  if v_sale is null then
+    return null;
+  end if;
+  begin
     v_kit := exists (select 1 from public.sale_items i
                       where i.sale_id = v_sale and i.descricao ilike '%kit degust%');
     update public.lead_events e
@@ -400,22 +419,28 @@ returns trigger language plpgsql security definer set search_path = public, pg_t
 declare
   v_meta jsonb;
 begin
-  begin
-    if new.lead_id is null then
+  -- Guardas baratas FORA do bloco com exception: ele abre subtransacao por linha.
+  if new.lead_id is null then
+    return new;
+  end if;
+  if tg_op = 'INSERT' then
+    if new.sent_at is null then
+      return new;  -- pendente
+    end if;
+  else
+    if old.sent_at is null and new.sent_at is null then
       return new;
     end if;
+    if old.sent_at is not null and new.sent_at is not null then
+      return new;  -- ja contado
+    end if;
+  end if;
+  begin
     if new.sent_at is null then
       -- envio desfeito (cap da Meta, 131049: broadcast/worker.py limpa sent_at): ninguem
       -- recebeu, entao o disparo sai da timeline. O reenvio grava de novo.
-      if tg_op = 'UPDATE' and old.sent_at is not null then
-        delete from public.lead_events where dedupe_key = 'disparo:' || new.id;
-      end if;
+      delete from public.lead_events where dedupe_key = 'disparo:' || new.id;
       return new;
-    end if;
-    if tg_op = 'UPDATE' then
-      if old.sent_at is not null then
-        return new;
-      end if;
     end if;
     v_meta := public.fn_lead_events_disparo_metadata(new);
     insert into public.lead_events (lead_id, event_type, new_value, metadata, occurred_at, source, dedupe_key)

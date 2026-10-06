@@ -145,3 +145,29 @@ def test_venda_acompanha_edicao_e_exclusao_da_sale():
     corpo = _corpo("fn_lead_events_sales_venda")
     assert "tg_op = 'DELETE'" in corpo
     assert "delete from public.lead_events" in corpo
+
+
+GUARDAS = {
+    "fn_lead_events_leads_entrada": ["fn_lead_tem_rastreio(", "new.utm_campaign is not distinct from old.utm_campaign"],
+    "fn_lead_events_deals_etapa": ["new.lead_id is null", "new.stage_id is not distinct from old.stage_id"],
+    "fn_lead_events_sales_venda": ["new.lead_id is null", "new.sold_by is not distinct from old.sold_by",
+                                   "new.status is not distinct from old.status"],
+    "fn_lead_events_sale_items_kit": ["new.descricao is not distinct from old.descricao"],
+    "fn_lead_events_broadcast_disparo": ["new.lead_id is null", "old.sent_at is not null",
+                                         "old.sent_at is null"],
+}
+
+
+@pytest.mark.parametrize("fn, guardas", GUARDAS.items())
+def test_guardas_baratas_ficam_fora_da_subtransacao(fn, guardas):
+    """Revisão: um bloco begin/exception abre subtransação a cada linha; o caminho que não faz
+    nada não deve pagar isso (UPDATE em massa estoura o cache de subxid)."""
+    corpo = _corpo(fn)
+    externo = corpo.index("\nbegin\n") + len("\nbegin\n")
+    antes = corpo[externo:corpo.index("begin\n", externo)]
+    assert "exception when" not in antes
+    for g in guardas:
+        assert g in antes, (fn, g)
+    assert "return" in antes
+    # uma subtransação só por função
+    assert corpo.count("exception when others then") == 1, fn
