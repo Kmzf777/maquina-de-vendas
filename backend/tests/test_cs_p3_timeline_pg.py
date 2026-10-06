@@ -602,6 +602,50 @@ def test_disparo_retido_pelo_cap_e_reenvio():
     assert "WARNING" not in r.stderr, r.stderr
 
 
+
+# Revisão (item 5): o Bling regrava a venda a cada webhook. Evento que já mostra o estado
+# atual não é reescrito (ctid igual = nenhuma versão nova da linha).
+CENARIO_VENDA_SEM_REESCRITA = """
+begin;
+insert into public.leads (id, phone) values ('cececece-0000-0000-0000-0000000000c1', '5511900000081');
+insert into public.sales (id, lead_id, value, product, origin, sold_by, status) values
+  ('cececece-0000-0000-0000-0000000000e1', 'cececece-0000-0000-0000-0000000000c1', 60, 'Kit',
+   'bling', null, 'registrada');
+create temp table antes as
+  select ctid::text as versao from public.lead_events where dedupe_key = 'venda:cececece-0000-0000-0000-0000000000e1';
+-- regravação idêntica do webhook
+update public.sales set status = 'registrada', value = 60, product = 'Kit', origin = 'bling', sold_by = null
+ where id = 'cececece-0000-0000-0000-0000000000e1';
+do $$ begin
+  assert (select ctid::text from public.lead_events where dedupe_key = 'venda:cececece-0000-0000-0000-0000000000e1')
+    = (select versao from antes), 'regravacao identica nao reescreve o evento';
+end $$;
+-- o evento já mostra o status novo (ex.: gravado pelo backfill): nada a reescrever
+update public.lead_events set metadata = metadata || '{"status": "entregue"}'
+ where dedupe_key = 'venda:cececece-0000-0000-0000-0000000000e1';
+update antes set versao = (select ctid::text from public.lead_events
+                          where dedupe_key = 'venda:cececece-0000-0000-0000-0000000000e1');
+update public.sales set status = 'entregue' where id = 'cececece-0000-0000-0000-0000000000e1';
+do $$ begin
+  assert (select ctid::text from public.lead_events where dedupe_key = 'venda:cececece-0000-0000-0000-0000000000e1')
+    = (select versao from antes), 'evento ja atualizado nao e reescrito';
+end $$;
+-- mudança de verdade continua chegando
+update public.sales set status = 'faturada' where id = 'cececece-0000-0000-0000-0000000000e1';
+do $$ begin
+  assert (select metadata->>'status' from public.lead_events
+           where dedupe_key = 'venda:cececece-0000-0000-0000-0000000000e1') = 'faturada', 'status novo chega';
+end $$;
+rollback;
+"""
+
+
+@_precisa_pg
+def test_venda_nao_reescreve_evento_igual():
+    r = _rodar(CENARIO_VENDA_SEM_REESCRITA)
+    assert "WARNING" not in r.stderr, r.stderr
+
+
 # ── Backfill: semente SEM triggers (o backfill é quem cria os eventos) ─────────────────
 # L1 CTWA novo: referral na criação (+ repetido 5 min depois)  → 1 entrada (referral)
 # L2 importado em 08/01, clicou em 09/10 (referral de número SEM o 9) → 1 entrada (referral)

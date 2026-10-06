@@ -171,3 +171,12 @@ def test_guardas_baratas_ficam_fora_da_subtransacao(fn, guardas):
     assert "return" in antes
     # uma subtransação só por função
     assert corpo.count("exception when others then") == 1, fn
+
+
+def test_venda_so_reescreve_o_evento_quando_algo_muda():
+    """Revisão: o Bling regrava a venda a cada webhook; o evento que já mostra o estado atual
+    não é reescrito (metadata, new_value, source e data comparados antes do update)."""
+    corpo = _corpo("fn_lead_events_sales_venda")
+    trecho = corpo.split("update public.lead_events e")[1].split(";")[0]
+    assert "e.metadata is distinct from coalesce(e.metadata, '{}'::jsonb) || v_meta" in trecho
+    assert "e.new_value is distinct from new.value::text" in trecho

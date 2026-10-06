@@ -345,7 +345,13 @@ begin
              source = v_source,
              occurred_at = case when e.event_type = 'venda' then coalesce(new.sold_at, e.occurred_at)
                                 else e.occurred_at end
-       where e.dedupe_key in ('venda:' || new.id, 'venda_cancelada:' || new.id);
+       where e.dedupe_key in ('venda:' || new.id, 'venda_cancelada:' || new.id)
+         -- so reescreve se o evento nao mostra o estado atual (status e campos editaveis)
+         and (e.metadata is distinct from coalesce(e.metadata, '{}'::jsonb) || v_meta
+              or e.new_value is distinct from new.value::text
+              or e.source is distinct from v_source
+              or (e.event_type = 'venda' and new.sold_at is not null
+                  and e.occurred_at is distinct from new.sold_at));
       v_cancelou := new.status = 'cancelada' and old.status is distinct from 'cancelada';
     end if;
 
