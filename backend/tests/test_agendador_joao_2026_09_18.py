@@ -2026,7 +2026,7 @@ def test_a_contagem_pergunta_so_pelos_job_types_do_joao():
     filtros = _filtros_do_select(fake)[0]
     tipos = next(valor for op, coluna, valor in filtros
                  if op == "in" and coluna == "job_type")
-    assert set(tipos) == set(C.JOB_TYPES)
+    assert set(tipos) == set(C.JOB_TYPES_TODOS)  # o kit (P6) também conta no teto
     assert "standard" not in tipos
     assert "handoff_rescue" not in tipos
 
