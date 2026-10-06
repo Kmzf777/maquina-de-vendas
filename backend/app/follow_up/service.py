@@ -15,7 +15,8 @@ from app.follow_up.cadence_joao import (
     ADIAMENTO_ESTOQUE,
     ADIAMENTO_RESPOSTA,
     FUNIS,
-    JOB_TYPES as JOAO_JOB_TYPES,
+    # TODOS: as 5 da tela + as complementares (o `kit`). Ver `cadence_joao.JOB_TYPES_TODOS`.
+    JOB_TYPES_TODOS as JOAO_JOB_TYPES,
     RESPOSTA_ADIAR,
     RESPOSTA_INTERESSE,
     RESPOSTA_OPTOUT,
@@ -23,6 +24,7 @@ from app.follow_up.cadence_joao import (
     Touch,
     adiar_toques,
     cadencia_do_funil,
+    cadencias_do_funil,
     classificar_resposta,
     resolver,
 )

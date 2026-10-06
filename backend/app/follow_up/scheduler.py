@@ -108,6 +108,9 @@ JOAO_JOB_TYPE_PREFIX = "joao_"
 JOAO_JOB_TYPES: frozenset[str] = frozenset({
     JOAO_JOB_TYPE, "joao_novo", "joao_em_conversa", "joao_proposta", "joao_reposicao",
     "joao_em_atencao",
+    # Cadência complementar da Reposição (spec 2026-10-06, P6) — ver
+    # `cadence_joao.CADENCIAS_COMPLEMENTARES`.
+    "joao_kit",
 })
 
 # A MARCA do job que MOVE o card em vez de mandar mensagem (spec 2026-09-23 §3), gravada

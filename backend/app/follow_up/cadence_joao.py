@@ -773,6 +773,46 @@ FUNIS: tuple[Funil, ...] = (
     Funil("recuperacao", "João - Recuperação", PIPELINE_RECUPERACAO, ()),
 )
 
+# ═══════════════════════════════════════════════════════════════════════════════
+# Cadências COMPLEMENTARES — existem no funil, ainda não na TELA (spec 2026-10-06, P6)
+# ═══════════════════════════════════════════════════════════════════════════════
+#
+# `FUNIS[*].cadencias` é o contrato da tela (GET de definição) e está fixado pela suíte
+# em 5 cadências. A `kit` foi pedida na call de 01/10 e mora nos MESMOS funis de
+# Reposição, mas entra por aqui até a tela ganhar a coluna: `cadencias_do_funil` e
+# `cadencia_do_funil` enxergam as duas listas, e é por elas que o agendador, a
+# sobreposição do banco, o `resolver`, o PUT da API e o handler acham o kit.
+#
+# ── "Kit degustação" — follow-up de quem comprou o kit ───────────────────────────
+# Gatilho: card em "Cliente Ativo" (key `novo` da Reposição) há >= 20 dias E a ÚLTIMA
+# venda não cancelada do lead é kit (`follow_up/kit.py`) — a segunda metade é regra de
+# VENDA, aplicada pelo agendador (`service.motivo_venda_para_matricula`). Toques nos
+# dias 0 e 7. Não move card: ele segue em "Cliente Ativo" e a Reposição (45 dias) o
+# pega depois — "um card, uma cadência por vez" impede as duas ao mesmo tempo.
+#
+# `template_name=None` nos dois toques, de propósito (decisão 1 no cabeçalho): os
+# templates previstos (`followjoao_kit_1`, `followjoao_kit_2`) não existem na Meta em
+# 06/10/2026. Eles entram por `followup_joao_toque` quando aprovados; até lá ligar a
+# cadência é RECUSADO (API e agendador), em vez de matricular e morrer no envio.
+_KIT_OFFSETS = (0, 7)
+
+
+def _cadencia_kit() -> Cadencia:
+    return Cadencia(
+        codigo="kit",
+        rotulo="Kit degustação",
+        gatilho_stage_key="novo",
+        gatilho_stage_rotulo="Cliente Ativo",
+        gatilho_dias=20,
+        touches=_toques(_KIT_OFFSETS, (None,) * len(_KIT_OFFSETS)),
+    )
+
+
+CADENCIAS_COMPLEMENTARES: Mapping[str, tuple[Cadencia, ...]] = {
+    "reposicao_atacado": (_cadencia_kit(),),
+    "reposicao_private_label": (_cadencia_kit(),),
+}
+
 # Só depende de `codigo`, não de funil — `joao_novo`, `joao_em_conversa`,
 # `joao_proposta` (novo em 23/09/2026), `joao_reposicao` e `joao_em_atencao`, mesmo
 # que cada código exista em dois objetos `Cadencia` distintos (um por funil-irmão).
@@ -780,6 +820,12 @@ FUNIS: tuple[Funil, ...] = (
 # `FUNIS` — mas a lista hardcoded do handler dos jobs é outra, e precisa dele à mão.
 JOB_TYPES: frozenset[str] = frozenset(
     cadencia.job_type for f in FUNIS for cadencia in f.cadencias
+)
+# `JOB_TYPES` acima é o das cadências da TELA (fixado em 5 pela suíte). Quem lê/conta
+# jobs do João (teto diário, trava de matrícula, 1 template por dia) usa ESTE: um job
+# de kit fora dessas contas escaparia de todas as travas.
+JOB_TYPES_TODOS: frozenset[str] = JOB_TYPES | frozenset(
+    c.job_type for cs in CADENCIAS_COMPLEMENTARES.values() for c in cs
 )
 
 FUNIL_CODIGOS: tuple[str, ...] = tuple(f.codigo for f in FUNIS)
@@ -791,15 +837,26 @@ def funil(codigo: str) -> Funil | None:
     return _POR_FUNIL.get(codigo)
 
 
+def cadencias_do_funil(funil_codigo: str) -> tuple[Cadencia, ...]:
+    """TODAS as cadências do funil: as da tela (`Funil.cadencias`) e as complementares
+    (hoje, o `kit` da Reposição). `()` para funil inexistente. É esta a lista que o
+    agendador percorre."""
+    f = _POR_FUNIL.get(funil_codigo)
+    if not f:
+        return ()
+    return f.cadencias + tuple(CADENCIAS_COMPLEMENTARES.get(funil_codigo, ()))
+
+
 def cadencia_do_funil(funil_codigo: str, cadencia_codigo: str) -> Cadencia | None:
     """A cadência de UM funil, ou None se o par não existe (ex. qualquer par com
     `funil_codigo="recuperacao"`, ou `funil_codigo="atacado"` com
     `cadencia_codigo="reposicao"`). É o `cj.CADENCIAS[codigo]` de antes, com o funil
-    como parte obrigatória da chave — o mesmo motivo do cabeçalho deste módulo."""
-    f = _POR_FUNIL.get(funil_codigo)
-    if not f:
-        return None
-    return next((c for c in f.cadencias if c.codigo == cadencia_codigo), None)
+    como parte obrigatória da chave — o mesmo motivo do cabeçalho deste módulo.
+    Enxerga também as cadências complementares (`CADENCIAS_COMPLEMENTARES`)."""
+    return next(
+        (c for c in cadencias_do_funil(funil_codigo) if c.codigo == cadencia_codigo),
+        None,
+    )
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
