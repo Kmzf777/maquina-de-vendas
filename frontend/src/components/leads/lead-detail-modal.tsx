@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback } from "react";
 import { LeadBroadcastHistory } from "./lead-broadcast-history";
 import { LeadBlingSection } from "./lead-bling-section";
 import { LeadFunisTab } from "./lead-funis-tab";
+import { LeadTimeline } from "./lead-timeline";
 import { SaleCreateModal } from "@/components/sales/sale-create-modal";
 import { useCurrentUserEmail } from "@/hooks/use-current-user";
 import type { Lead, Pipeline, Tag, LeadNote, LeadEvent } from "@/lib/types";
@@ -23,10 +24,11 @@ interface LeadDetailModalProps {
   onDelete?: (leadId: string) => Promise<void>;
 }
 
-type TabKey = "dados" | "funis" | "campanhas" | "tags_notas" | "metricas";
+type TabKey = "dados" | "linha_do_tempo" | "funis" | "campanhas" | "tags_notas" | "metricas";
 
 const TABS: { key: TabKey; label: string }[] = [
   { key: "dados", label: "Dados Gerais" },
+  { key: "linha_do_tempo", label: "Linha do tempo" },
   { key: "funis", label: "Funis" },
   { key: "campanhas", label: "Campanhas" },
   { key: "tags_notas", label: "Tags & Notas" },
@@ -441,6 +443,9 @@ export function LeadDetailModal({
               )}
             </div>
           )}
+
+          {/* TAB: Linha do tempo */}
+          {activeTab === "linha_do_tempo" && <LeadTimeline leadId={lead.id} />}
 
           {/* TAB: Funis — montada so quando a aba esta ativa, entao trocar de
               aba e voltar rebusca os cards (e o que mantem a lista fresca
