@@ -93,8 +93,7 @@ describe("LeadCabecalho", () => {
     h.maybeSingle.mockResolvedValue({ data: { id: "lead-1", ja_era_cliente: null }, error: null });
     fetchMock.mockResolvedValueOnce({ ok: false, status: 500, json: async () => ({ error: "boom" }) } as Response);
     abrir();
-    await waitFor(() => expect(h.maybeSingle).toHaveBeenCalled());
-    fireEvent.click(screen.getByRole("button", { name: "Sim" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Sim" }));
     expect(await screen.findByText("boom")).toBeTruthy();
     expect(screen.getByRole("button", { name: "Sim" }).getAttribute("aria-pressed")).toBe("false");
   });
@@ -107,5 +106,56 @@ describe("LeadCabecalho", () => {
     fireEvent.change(campo, { target: { value: "11.222.333/0001-81" } });
     fireEvent.keyDown(campo, { key: "Enter" });
     expect(onSaveField).toHaveBeenCalledWith("cnpj", "11222333000181");
+  });
+
+  it("banco sem a migração do P0 (coluna não existe): o toggle não aparece", async () => {
+    h.maybeSingle
+      .mockResolvedValueOnce({ data: null, error: { code: "42703", message: "column leads.ja_era_cliente does not exist" } })
+      .mockResolvedValueOnce({ data: { id: "lead-1", name: "Iago" }, error: null });
+    abrir();
+    await waitFor(() => expect(h.maybeSingle).toHaveBeenCalledTimes(2));
+    await new Promise((r) => setTimeout(r, 20));
+    expect(screen.queryByRole("group", { name: "Já é cliente?" })).toBeNull();
+    // O resto do cabeçalho continua.
+    expect(screen.getByText("compras@vidanatural.com")).toBeTruthy();
+  });
+
+  it("PATCH em voo de um lead não vaza para o lead seguinte", async () => {
+    h.maybeSingle.mockImplementation(async () => ({
+      data: { id: "x", ja_era_cliente: null, ja_era_cliente_fonte: null },
+      error: null,
+    }));
+    let responder: (r: Response) => void = () => {};
+    fetchMock.mockImplementationOnce(() => new Promise<Response>((r) => { responder = r; }));
+    const { rerender } = render(
+      <LeadCabecalho lead={{ ...LEAD, id: "lead-voo-a" }} currentUserEmail="joao@cafecanastra.com" onSaveField={vi.fn()} />,
+    );
+    const sim = await screen.findByRole("button", { name: "Sim" });
+    await waitFor(() => expect((sim as HTMLButtonElement).disabled).toBe(false));
+    fireEvent.click(sim);
+    await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+
+    rerender(
+      <LeadCabecalho lead={{ ...LEAD, id: "lead-voo-b" }} currentUserEmail="joao@cafecanastra.com" onSaveField={vi.fn()} />,
+    );
+    const simB = await screen.findByRole("button", { name: "Sim" });
+    // O lead B não herda o "salvando" nem a resposta otimista do A.
+    await waitFor(() => expect((simB as HTMLButtonElement).disabled).toBe(false));
+    expect(simB.getAttribute("aria-pressed")).toBe("false");
+
+    responder({ ok: false, status: 500, json: async () => ({ error: "falhou o A" }) } as Response);
+    await new Promise((r) => setTimeout(r, 20));
+    expect(screen.queryByText("falhou o A")).toBeNull();
+    expect(screen.getByRole("button", { name: "Sim" }).getAttribute("aria-pressed")).toBe("false");
+  });
+
+  it("CNPJ apagado grava null, não string vazia", async () => {
+    h.maybeSingle.mockResolvedValue({ data: { id: "lead-1", ja_era_cliente: null }, error: null });
+    const { onSaveField } = abrir();
+    fireEvent.click(screen.getByText("12.345.678/0001-90"));
+    const campo = screen.getByDisplayValue("12.345.678/0001-90");
+    fireEvent.change(campo, { target: { value: "" } });
+    fireEvent.keyDown(campo, { key: "Enter" });
+    expect(onSaveField).toHaveBeenCalledWith("cnpj", null);
   });
 });

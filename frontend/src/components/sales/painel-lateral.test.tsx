@@ -58,4 +58,36 @@ describe("PainelLateral", () => {
     );
     expect(screen.getByText("Novo Orçamento")).toBeTruthy();
   });
+
+  it("Esc com o foco fora do painel (no chat) não fecha nem descarta o pedido", async () => {
+    const onFechar = vi.fn();
+    const campoDoChat = document.createElement("textarea");
+    document.body.appendChild(campoDoChat);
+    render(
+      <PainelLateral titulo="Registrar Venda" onFechar={onFechar}>
+        <input aria-label="dentro" />
+      </PainelLateral>,
+    );
+    await espera();
+    campoDoChat.focus();
+    fireEvent.keyDown(campoDoChat, { key: "Escape" });
+    await espera();
+    expect(onFechar).not.toHaveBeenCalled();
+    campoDoChat.remove();
+  });
+
+  it("Esc com o foco dentro do painel fecha", async () => {
+    const onFechar = vi.fn();
+    render(
+      <PainelLateral titulo="Registrar Venda" onFechar={onFechar}>
+        <input aria-label="dentro" />
+      </PainelLateral>,
+    );
+    await espera();
+    const dentro = screen.getByLabelText("dentro");
+    dentro.focus();
+    fireEvent.keyDown(dentro, { key: "Escape" });
+    await espera();
+    expect(onFechar).toHaveBeenCalledTimes(1);
+  });
 });

@@ -42,7 +42,7 @@ import { useBlingStatus } from "@/hooks/use-bling-status";
 import { blingGate } from "@/lib/bling-gate";
 import { CONTA_PADRAO } from "@/lib/bling-accounts";
 import { defaultsDoContato, useLeadCliente } from "@/components/sales/lead-cliente";
-import { PainelLateral } from "@/components/sales/painel-lateral";
+import { PainelLateral, comNome } from "@/components/sales/painel-lateral";
 import { LeadPicker, type LeadEscolhido } from "@/components/sales/lead-picker";
 import type { OrderPayloadResult } from "@/lib/bling-order-state";
 import { buildQuotePayload, linesFromQuoteItems } from "@/lib/quote-state";
@@ -137,16 +137,21 @@ const diaMesAno = (iso: string) =>
 const NENHUM = "__none__";
 
 export function QuoteCreateModal({
-  leadId,
+  leadId: leadIdDaAbertura,
   pickLead,
   lockedDealId,
-  conversationId,
+  conversationId: conversaDaAbertura,
   currentUserEmail,
   editingQuote,
   onClose,
   onSaved,
 }: QuoteCreateModalProps) {
   const isEditing = !!editingQuote;
+  // Lead e conversa ficam CONGELADOS no estado de abertura. O painel é
+  // não-modal e a conversa por trás pode mudar com ele aberto: sem isto a
+  // gravação sairia com o lead de uma conversa e o `conversation_id` de outra.
+  const [leadId] = useState(leadIdDaAbertura);
+  const [conversationId] = useState(conversaDaAbertura);
   // Um orçamento convertido em venda não aceita mais edição (decisão 1 da
   // spec). O backend garante isso com 409, mas conferir aqui evita abrir um
   // formulário inteiro para uma gravação que já se sabe que vai ser recusada.
@@ -407,8 +412,13 @@ export function QuoteCreateModal({
     // Painel lateral sem overlay (call de 01/10): a conversa continua visível
     // e selecionável enquanto o orçamento é montado.
     <PainelLateral
-      titulo={isEditing ? "Editar Orçamento" : "Novo Orçamento"}
-      largura="xl"
+      titulo={
+        isEditing
+          ? "Editar Orçamento"
+          : comNome("Novo orçamento", leadCliente?.name ?? leadEscolhido?.name)
+      }
+      // Mesma largura do painel de venda: o "xl" (896 px) cobria o chat.
+      largura="lg"
       onFechar={fecharModal}
     >
       <div className="min-h-0 flex-1 overflow-y-auto">
@@ -429,7 +439,9 @@ export function QuoteCreateModal({
               PDF para enviar ao cliente.
             </p>
           ) : (
-            <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_268px] lg:items-start">
+            // Uma coluna: na largura do painel, o resumo lateral de 268 px
+            // espremia a tabela de itens. O resumo vem depois do formulário.
+            <div className="grid gap-5">
               {/* ── coluna do documento ─────────────────────────────────── */}
               <div className="space-y-4 min-w-0">
                 {pickLead && !isEditing && (
@@ -619,7 +631,7 @@ export function QuoteCreateModal({
               </div>
 
               {/* ── resumo ──────────────────────────────────────────────── */}
-              <aside className="lg:sticky lg:top-0 space-y-4">
+              <aside className="space-y-4">
                 <div className="bg-[#faf9f6] border border-[#dedbd6] rounded-[8px] px-4 py-3">
                   <span className={label}>Resumo</span>
 

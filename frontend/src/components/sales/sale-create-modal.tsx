@@ -33,7 +33,7 @@ import {
   salvarJaEraCliente,
   useLeadCliente,
 } from "@/components/sales/lead-cliente";
-import { PainelLateral } from "@/components/sales/painel-lateral";
+import { PainelLateral, comNome } from "@/components/sales/painel-lateral";
 import { LeadPicker, type LeadEscolhido } from "@/components/sales/lead-picker";
 
 /**
@@ -117,11 +117,11 @@ const fieldInput =
   "w-full bg-white border border-[#dedbd6] rounded-[4px] px-3 py-2 text-[14px] text-[#111111] focus:border-[#111111] focus:outline-none focus:ring-0";
 
 export function SaleCreateModal({
-  leadId,
+  leadId: leadIdDaAbertura,
   pickLead,
   lockedDealId,
   lockedDealTitle,
-  conversationId,
+  conversationId: conversaDaAbertura,
   currentUserEmail,
   editingSale,
   blingEnabled,
@@ -130,6 +130,11 @@ export function SaleCreateModal({
   onSaved,
 }: SaleCreateModalProps) {
   const isEditing = !!editingSale;
+  // Lead e conversa ficam CONGELADOS no estado de abertura. O painel é
+  // não-modal e a conversa por trás pode mudar com ele aberto: sem isto a
+  // gravação sairia com o lead de uma conversa e o `conversation_id` de outra.
+  const [leadId] = useState(leadIdDaAbertura);
+  const [conversationId] = useState(conversaDaAbertura);
   // Editar venda com o Bling ligado agora dá PUT no pedido do ERP (Fase E) —
   // ver `blingMode` abaixo, que também exige que a venda tenha um pedido
   // (`bling_order_id`) para ter o que alterar.
@@ -241,9 +246,15 @@ export function SaleCreateModal({
   // modal era aberto pela conversa, e o vendedor redigitava tudo no cadastro
   // do Bling (call de 01/10).
   const resolvedLeadId = selectedLeadId || leadId || "";
-  const { lead: leadCliente, atualizar: atualizarLeadCliente } = useLeadCliente(
-    isEditing ? null : resolvedLeadId,
-  );
+  const {
+    lead: leadCliente,
+    carregando: carregandoLead,
+    erro: erroLead,
+    atualizar: atualizarLeadCliente,
+  } = useLeadCliente(isEditing ? null : resolvedLeadId);
+  // Sem o lead carregado não se sabe se "Já é cliente?" é obrigatório: salvar
+  // antes disso registraria a venda sem a pergunta.
+  const leadPendente = !isEditing && !!resolvedLeadId && (carregandoLead || !!erroLead);
   // Obrigatório só quando o banco não sabe (decisão de 06/10: automático
   // quando há evidência, o vendedor responde só na dúvida). Edição não pergunta.
   const perguntarCliente = !isEditing && precisaPerguntarJaEraCliente(leadCliente);
@@ -697,7 +708,11 @@ export function SaleCreateModal({
     // bloqueava a conversa, e o vendedor fechava o pedido para copiar um dado
     // do chat. O corpo é o único trecho que rola; header e ações ficam presos.
     <PainelLateral
-      titulo={isEditing ? "Editar Venda" : "Registrar Venda"}
+      titulo={
+        isEditing
+          ? "Editar Venda"
+          : comNome("Registrar venda", leadCliente?.name ?? leadEscolhido?.name)
+      }
       largura={blingLayout ? "lg" : "md"}
       onFechar={fecharModal}
     >
@@ -988,6 +1003,13 @@ export function SaleCreateModal({
               </p>
             )}
 
+            {erroLead && !isEditing && (
+              <p className="text-[12px] text-red-600">
+                Não foi possível carregar o lead ({erroLead}). Feche o painel e
+                abra de novo.
+              </p>
+            )}
+
             {faltaRespostaCliente && !error && (
               <p className="text-[11px] text-[#7b7b78]">
                 Responda “Já é cliente?” para registrar a venda.
@@ -1013,7 +1035,8 @@ export function SaleCreateModal({
                   saving ||
                   !gate.canSubmit ||
                   (blingMode && !orderResult?.valid) ||
-                  faltaRespostaCliente
+                  faltaRespostaCliente ||
+                  leadPendente
                 }
                 className="flex-1 py-2 text-[13px] font-medium text-white rounded-[4px] transition-colors bg-[#1f9d57] hover:bg-[#1b8a4c] disabled:bg-[#7b7b78]"
               >

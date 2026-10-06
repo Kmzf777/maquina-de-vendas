@@ -19,14 +19,19 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
-const conversa = (leadId: string, name: string, extra: Record<string, unknown> = {}) => ({
-  id: `conv-${leadId}-${Math.random()}`,
-  leads: { id: leadId, name, phone: "5531999990000", email: null, cnpj: null, razao_social: null, ...extra },
+const lead = (id: string, name: string, extra: Record<string, unknown> = {}) => ({
+  id,
+  name,
+  phone: "5531999990000",
+  email: null,
+  cnpj: null,
+  razao_social: null,
+  ...extra,
 });
 
 describe("leadsDaBusca", () => {
-  it("um lead por id, mesmo com duas conversas", () => {
-    const out = leadsDaBusca([conversa("a", "Vida"), conversa("a", "Vida"), conversa("b", "Iago"), { id: "x", leads: null }]);
+  it("linhas de /api/leads?q= viram leads, um por id", () => {
+    const out = leadsDaBusca([lead("a", "Vida"), lead("a", "Vida"), lead("b", "Iago"), null, { name: "sem id" }]);
     expect(out.map((l) => l.id)).toEqual(["a", "b"]);
   });
   it("resposta que não é lista vira vazio", () => {
@@ -39,7 +44,7 @@ describe("LeadPicker", () => {
     vi.useFakeTimers();
     const fetchMock = vi.fn(async () => ({
       ok: true,
-      json: async () => [conversa("lead-9", "Vida Natural", { cnpj: "12345678000190" })],
+      json: async () => [lead("lead-9", "Vida Natural", { cnpj: "12345678000190" })],
     }) as Response);
     global.fetch = fetchMock as unknown as typeof fetch;
     const onEscolher = vi.fn();
@@ -58,7 +63,7 @@ describe("LeadPicker", () => {
     expect(fetchMock).not.toHaveBeenCalled();
     await act(async () => { vi.advanceTimersByTime(1); });
     expect(fetchMock).toHaveBeenCalledTimes(1);
-    expect(fetchMock).toHaveBeenCalledWith("/api/conversations/search-contacts?q=vida");
+    expect(fetchMock).toHaveBeenCalledWith("/api/leads?q=vida&limit=30");
 
     vi.useRealTimers();
     const opcao = await screen.findByText("Vida Natural");
@@ -79,5 +84,24 @@ describe("LeadPicker", () => {
     fireEvent.click(screen.getByRole("button", { name: /Selecione o lead/ }));
     fireEvent.change(screen.getByPlaceholderText("Buscar por nome, telefone, e-mail ou CNPJ..."), { target: { value: "vida" } });
     expect(await screen.findByText("Não foi possível buscar. Tente de novo.")).toBeTruthy();
+  });
+
+  it("acha lead sem conversa (bling-*, importado): a busca é na base de leads", async () => {
+    const fetchMock = vi.fn(async () => ({
+      ok: true,
+      json: async () => [lead("lead-bling", "Serginho Empório", { phone: "bling-998877" })],
+    }) as Response);
+    global.fetch = fetchMock as unknown as typeof fetch;
+    const onEscolher = vi.fn();
+    render(<LeadPicker selecionado={null} onEscolher={onEscolher} />);
+    fireEvent.click(screen.getByRole("button", { name: /Selecione o lead/ }));
+    fireEvent.change(screen.getByPlaceholderText("Buscar por nome, telefone, e-mail ou CNPJ..."), {
+      target: { value: "serginho" },
+    });
+    fireEvent.click((await screen.findByText("Serginho Empório")).closest("button")!);
+    expect(fetchMock).toHaveBeenCalledWith("/api/leads?q=serginho&limit=30");
+    expect(onEscolher).toHaveBeenCalledWith(expect.objectContaining({ id: "lead-bling" }));
+    // Telefone sintético do Bling não aparece como se fosse número.
+    expect(screen.queryByText("bling-998877")).toBeNull();
   });
 });

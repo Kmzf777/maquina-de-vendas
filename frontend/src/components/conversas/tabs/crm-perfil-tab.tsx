@@ -15,10 +15,11 @@ import {
   quoteStatusView,
 } from "@/lib/quote-modal-state";
 import { LeadOriginBlock } from "@/components/leads/lead-origin-block";
+import { docDigits, formatDocument } from "@/lib/documento";
 
 interface CrmPerfilTabProps {
   lead: Lead;
-  onSaveField: (field: string, value: string) => Promise<void>;
+  onSaveField: (field: string, value: string | null) => Promise<void>;
   deals: LeadDeal[];
   tags: Tag[];
   leadTags: Tag[];
@@ -246,7 +247,14 @@ export function CrmPerfilTab({
 
       <div className="border-t border-[#dedbd6] pt-4 space-y-3">
         <h4 className="text-[11px] uppercase tracking-[0.6px] text-[#7b7b78]">Empresa B2B</h4>
-        <EditableField label="CNPJ" value={lead.cnpj} onSave={(v) => onSaveField("cnpj", v)} placeholder="00.000.000/0000-00" />
+        {/* Mesma regra do cabeçalho do lead: mostra formatado, grava só os
+            dígitos (como o Bling e o P1 casam o documento) e null se apagado. */}
+        <EditableField
+          label="CNPJ"
+          value={lead.cnpj ? formatDocument(lead.cnpj) : null}
+          onSave={(v) => onSaveField("cnpj", docDigits(v))}
+          placeholder="00.000.000/0000-00"
+        />
         <EditableField label="Razao Social" value={lead.razao_social} onSave={(v) => onSaveField("razao_social", v)} />
         <EditableField label="Nome Fantasia" value={lead.nome_fantasia} onSave={(v) => onSaveField("nome_fantasia", v)} />
         <EditableField label="Inscricao Estadual" value={lead.inscricao_estadual} onSave={(v) => onSaveField("inscricao_estadual", v)} />

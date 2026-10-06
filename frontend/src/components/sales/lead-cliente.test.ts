@@ -42,7 +42,7 @@ describe("buscarLeadCliente", () => {
 
   it("sem a migração do P0, cai para o cadastro e não trava a venda", async () => {
     maybeSingle
-      .mockResolvedValueOnce({ data: null, error: { message: "column leads.ja_era_cliente does not exist" } })
+      .mockResolvedValueOnce({ data: null, error: { code: "42703", message: "column leads.ja_era_cliente does not exist" } })
       .mockResolvedValueOnce({ data: { id: "l1", name: "Iago" }, error: null });
     const lead = await buscarLeadCliente("l1");
     expect(colunas[1]).not.toContain("ja_era_cliente");
@@ -51,9 +51,26 @@ describe("buscarLeadCliente", () => {
     expect(precisaPerguntarJaEraCliente(lead)).toBe(false);
   });
 
-  it("erro nas duas leituras devolve null", async () => {
-    maybeSingle.mockResolvedValue({ data: null, error: { message: "x" } });
-    expect(await buscarLeadCliente("l1")).toBeNull();
+  it("coluna ausente no cache do PostgREST (PGRST204) também cai para o cadastro", async () => {
+    maybeSingle
+      .mockResolvedValueOnce({ data: null, error: { code: "PGRST204", message: "Could not find the 'ja_era_cliente' column" } })
+      .mockResolvedValueOnce({ data: { id: "l1", name: "Iago" }, error: null });
+    const lead = await buscarLeadCliente("l1");
+    expect(lead?.name).toBe("Iago");
+    expect(lead?.ja_era_cliente).toBeUndefined();
+  });
+
+  it("qualquer outro erro propaga — não vira 'sem a coluna' em silêncio", async () => {
+    maybeSingle.mockResolvedValue({ data: null, error: { code: "57014", message: "statement timeout" } });
+    await expect(buscarLeadCliente("l1")).rejects.toThrow("statement timeout");
+    expect(maybeSingle).toHaveBeenCalledTimes(1);
+  });
+
+  it("erro na leitura de reserva também propaga", async () => {
+    maybeSingle
+      .mockResolvedValueOnce({ data: null, error: { code: "42703", message: "column does not exist" } })
+      .mockResolvedValueOnce({ data: null, error: { code: "08006", message: "conexão caiu" } });
+    await expect(buscarLeadCliente("l1")).rejects.toThrow("conexão caiu");
   });
 });
 

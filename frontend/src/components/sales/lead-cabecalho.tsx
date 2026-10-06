@@ -19,14 +19,18 @@ import { salvarJaEraCliente, useLeadCliente, type LeadCliente } from "./lead-cli
 interface LeadCabecalhoProps {
   lead: { id: string; phone: string | null; email: string | null; cnpj: string | null };
   currentUserEmail?: string;
-  onSaveField: (field: string, value: string) => void | Promise<void>;
+  onSaveField: (field: string, value: string | null) => void | Promise<void>;
 }
 
 export function LeadCabecalho({ lead, currentUserEmail, onSaveField }: LeadCabecalhoProps) {
-  const { lead: cliente, atualizar } = useLeadCliente(lead.id);
+  const { lead: cliente, carregando, atualizar } = useLeadCliente(lead.id);
   const [copiado, setCopiado] = useState(false);
-  const [salvando, setSalvando] = useState(false);
-  const [erro, setErro] = useState<string | null>(null);
+  // "Salvando" e erro valem para UM lead: a conversa pode trocar com o PATCH
+  // em voo, e o lead seguinte não herda o botão travado nem o erro do anterior.
+  const [salvandoId, setSalvandoId] = useState<string | null>(null);
+  const [falha, setFalha] = useState<{ id: string; msg: string } | null>(null);
+  const salvando = salvandoId === lead.id;
+  const erro = falha?.id === lead.id ? falha.msg : null;
 
   const telefone = lead.phone && !lead.phone.startsWith("bling-") ? lead.phone : null;
 
@@ -37,25 +41,28 @@ export function LeadCabecalho({ lead, currentUserEmail, onSaveField }: LeadCabec
       setCopiado(true);
       setTimeout(() => setCopiado(false), 1500);
     } catch {
-      setErro("Não foi possível copiar o telefone.");
+      setFalha({ id: lead.id, msg: "Não foi possível copiar o telefone." });
     }
   }
 
   async function responder(valor: boolean) {
+    // `lead.id` e `atualizar` são os deste render: se a conversa trocar antes
+    // da resposta, a reversão corrige o lead certo (o armazém é por id).
+    const id = lead.id;
     const anterior: Partial<LeadCliente> = {
       ja_era_cliente: cliente?.ja_era_cliente,
       ja_era_cliente_fonte: cliente?.ja_era_cliente_fonte,
     };
-    setSalvando(true);
-    setErro(null);
+    setSalvandoId(id);
+    setFalha(null);
     atualizar({ ja_era_cliente: valor, ja_era_cliente_fonte: "vendedor" });
     try {
-      await salvarJaEraCliente(lead.id, valor, currentUserEmail);
+      await salvarJaEraCliente(id, valor, currentUserEmail);
     } catch (e) {
       atualizar(anterior);
-      setErro(e instanceof Error ? e.message : "Não foi possível salvar.");
+      setFalha({ id, msg: e instanceof Error ? e.message : "Não foi possível salvar." });
     } finally {
-      setSalvando(false);
+      setSalvandoId((atual) => (atual === id ? null : atual));
     }
   }
 
@@ -89,15 +96,20 @@ export function LeadCabecalho({ lead, currentUserEmail, onSaveField }: LeadCabec
         value={lead.cnpj ? formatDocument(lead.cnpj) : null}
         // Grava só os dígitos: é a forma que o Bling e o P1 usam para casar
         // o documento (`doc_digits`). Com máscara, a busca nunca achava.
-        onSave={(v) => onSaveField("cnpj", docDigits(v) ?? "")}
+        // Apagado grava null (não ""), como o Perfil.
+        onSave={(v) => onSaveField("cnpj", docDigits(v))}
         placeholder="Digite o CNPJ ou CPF"
       />
-      <JaEraClienteToggle
-        valor={cliente?.ja_era_cliente}
-        fonte={cliente?.ja_era_cliente_fonte}
-        onEscolher={responder}
-        desabilitado={salvando}
-      />
+      {/* `undefined` = coluna inexistente (migração do P0 não aplicada) ou
+          lead ainda carregando: não há o que mostrar nem onde gravar. */}
+      {cliente && cliente.ja_era_cliente !== undefined && (
+        <JaEraClienteToggle
+          valor={cliente.ja_era_cliente}
+          fonte={cliente.ja_era_cliente_fonte}
+          onEscolher={responder}
+          desabilitado={salvando || carregando}
+        />
+      )}
       {erro && <p className="text-[11px] text-[#c41c1c]">{erro}</p>}
     </div>
   );

@@ -1,5 +1,12 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { getServiceSupabase } from "@/lib/supabase/api";
+import { buildLeadSearchOrFilter } from "@/lib/search";
+import { CONTACT_SEARCH_MIN_LEN } from "@/lib/contact-search";
+
+/** Teto da busca `?q=`: o seletor mostra uma lista curta, não a base. */
+const BUSCA_LIMITE_MAX = 30;
+/** Colunas do seletor de lead (rótulo + pré-preenchimento do contato no Bling). */
+const BUSCA_COLUNAS = "id, name, phone, email, cnpj, razao_social";
 
 function sanitizePhone(raw: string | undefined | null): { digits: string; error?: string } {
   const digits = (raw ?? "").replace(/\D/g, "");
@@ -20,6 +27,33 @@ export async function GET(request: NextRequest) {
 
   try {
     const supabase = await getServiceSupabase();
+
+    // Busca do seletor de lead dos painéis de venda/orçamento. Na tabela de
+    // LEADS, não em conversas: lead sem conversa (`bling-*`, importado, lista
+    // fria) também é cliente. Mesmo escopo do GET sem `q` (todo usuário
+    // autenticado vê a base inteira — o `proxy.ts` barra o resto); a busca só
+    // filtra (mesma regra da busca de contatos) e limita.
+    if (searchParams.has("q")) {
+      const termo = (searchParams.get("q") ?? "").trim();
+      const orFilter =
+        termo.length >= CONTACT_SEARCH_MIN_LEN ? buildLeadSearchOrFilter(termo) : null;
+      if (!orFilter) return NextResponse.json([]);
+      const pedido = Number.parseInt(searchParams.get("limit") ?? "", 10);
+      const limite =
+        Number.isFinite(pedido) && pedido > 0 ? Math.min(pedido, BUSCA_LIMITE_MAX) : BUSCA_LIMITE_MAX;
+
+      const { data, error } = await supabase
+        .from("leads")
+        .select(BUSCA_COLUNAS)
+        .or(orFilter)
+        .order("last_msg_at", { ascending: false, nullsFirst: false })
+        .limit(limite);
+      if (error) {
+        console.error("[leads] search query failed:", error);
+        return NextResponse.json({ error: `leads: ${error.message}` }, { status: 500 });
+      }
+      return NextResponse.json(data ?? []);
+    }
 
     if (pipelineId || stageId || dealCategory || noDeal) {
       if (noDeal) {

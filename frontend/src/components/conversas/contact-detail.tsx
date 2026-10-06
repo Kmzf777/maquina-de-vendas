@@ -64,6 +64,19 @@ export function ContactDetail({
   const [showCreateSale, setShowCreateSale] = useState(false);
   const [editingSale, setEditingSale] = useState<Sale | null>(null);
   const [showCreateQuote, setShowCreateQuote] = useState(false);
+  // Os painéis de venda/orçamento são não-modais: o vendedor troca de conversa
+  // com eles abertos. O modal guarda o lead no estado de abertura, então
+  // sobreviver à troca gravaria a venda com o lead de uma conversa e o
+  // `conversation_id` da outra (inclusive o pedido no Bling). Fecha na troca —
+  // durante o render, não num efeito, para o modal nunca ver a conversa nova.
+  const [conversaDosPaineis, setConversaDosPaineis] = useState(conversation.id);
+  if (conversaDosPaineis !== conversation.id) {
+    setConversaDosPaineis(conversation.id);
+    setShowCreateDeal(false);
+    setShowCreateSale(false);
+    setEditingSale(null);
+    setShowCreateQuote(false);
+  }
   const currentUserEmail = useCurrentUserEmail();
   const lead = conversation.leads as Lead | undefined | null;
   const { sales, refetch: refetchSales } = useLeadSales(lead?.id);
@@ -101,7 +114,7 @@ export function ContactDetail({
       .then((data) => setPipelines(Array.isArray(data) ? data : []));
   }, []);
 
-  async function updateLeadField(field: string, value: string) {
+  async function updateLeadField(field: string, value: string | null) {
     if (!lead) return;
     onLeadUpdate?.(lead.id, { [field]: value } as Partial<Lead>);
     try {
