@@ -14,23 +14,31 @@ REGRAS:
     digitos de `leads.cnpj`. Sobrevivente = o lead NAO-Bling. Mais de um possivel → ambiguo,
     nao mescla. Nenhum → orfao.
   - Move todas as linhas com `lead_id` (lista conferida contra information_schema — tabela
-    nao coberta ABORTA), copia cnpj/razao_social/nome_fantasia/email so onde o sobrevivente
-    esta vazio, grava `lead_events` 'mesclagem' e apaga o duplicado.
+    nao coberta ABORTA; a foto do incidente de 03/10 e ignorada de proposito), copia
+    cnpj/razao_social/nome_fantasia/email so onde o sobrevivente esta vazio, grava
+    `lead_events` 'mesclagem' e apaga o duplicado.
+  - Sobrevivente que receberia mais de 2 duplicados (celular compartilhado, contatos de
+    teste) vai INTEIRO para os ambiguos.
   - Vendas gemeas (mesmo valor, sold_at a <= 1 dia, uma bling e outra manual/crm): so relata.
 
 USO (dry-run e o padrao — so le):
   python3 scripts/bling/mesclar_leads_duplicados.py \\
       --psql "docker exec -i $(docker ps -q -f name=supabase_db | head -1) psql -U postgres -d postgres" \\
       --saida /root/mesclagem-dryrun
-  ... --aplicar     # executa, uma transacao por par — SO com OK do Rafael, depois do P0
+  ... --aplicar --pares /root/mesclagem-dryrun/pares-revisado.csv
+      # executa SO os pares do CSV revisado (copia do pares.csv com as linhas aprovadas),
+      # recalculando cada um; uma transacao por par — SO com OK do Rafael, depois do P0
 
-Saida: pares.csv, ambiguos.csv, orfaos.csv, gemeas.csv, backup.json (+ aplicados.csv) e as
+  ... --excluir <lead_id,lead_id>   # tira esses leads (duplicado ou sobrevivente) dos pares
+
+Saida: pares.csv, ambiguos.csv, orfaos.csv, excluidos.csv, gemeas.csv, backup.json (+ aplicados.csv) e as
 contagens em JSON no stdout. So stdlib: roda no host da VPS (psql), sem o venv do backend.
 """
 import argparse
 import csv
 import json
 import os
+import re
 import shlex
 import subprocess
 import sys
@@ -85,6 +93,9 @@ def doc_para_par(valor):
 # ---------------------------------------------------------------------------
 
 
+MAX_DUPLICADOS_POR_SOBREVIVENTE = 2
+
+
 def parear(candidatos, leads):
     """candidatos: [{id, phone, name, contatos: [{account, id, nome, doc_digits,
     telefone_e164, celular_e164}]}]; leads: linhas de `leads` que casaram alguma chave
@@ -126,6 +137,26 @@ def parear(candidatos, leads):
                                                 for lid, mv in sorted(achados.items()))})
         else:
             orfaos.append(base)
+
+    # Sobrevivente que receberia MAIS de 2 duplicados nao e cliente com cadastro repetido:
+    # e um celular compartilhado (contatos "Teste Rafael" do Bling com o celular do Rafael,
+    # 14 pares no dry-run de 06/10 — o --aplicar moveria 22 vendas de teste para o lead
+    # real). O grupo inteiro vai para os ambiguos, para revisao a mao.
+    por_sobrevivente = {}
+    for par in pares:
+        por_sobrevivente.setdefault(par["sobrevivente"], []).append(par)
+    lotados = {lid for lid, ps in por_sobrevivente.items()
+               if len(ps) > MAX_DUPLICADOS_POR_SOBREVIVENTE}
+    for par in pares:
+        if par["sobrevivente"] in lotados:
+            n = len(por_sobrevivente[par["sobrevivente"]])
+            ambiguos.append({
+                "duplicado": par["duplicado"], "duplicado_nome": par["duplicado_nome"],
+                "duplicado_phone": par["duplicado_phone"], "opcoes": [par["sobrevivente"]],
+                "motivo": (f"sobrevivente {par['sobrevivente']} receberia {n} duplicados"
+                           f" (limite {MAX_DUPLICADOS_POR_SOBREVIVENTE}) — revisar a mao;"
+                           f" {par['motivo']}")})
+    pares = [p for p in pares if p["sobrevivente"] not in lotados]
     return {"pares": pares, "ambiguos": ambiguos, "orfaos": orfaos}
 
 
@@ -183,7 +214,7 @@ def vendas_gemeas(pares, vendas):
 SO_MOVER = (
     "sales", "deals", "quotes", "lead_notes", "lead_events", "conversations", "messages",
     "messages_archive", "conversion_events", "campaign_execution_log", "lp_email_jobs",
-    "token_usage", "follow_up_jobs_incidente_20261003",
+    "token_usage",
 )
 
 # Com unicidade: a linha do duplicado que colidiria com uma do sobrevivente e APAGADA (o
@@ -209,13 +240,20 @@ COLISAO = {
 
 TABELAS_COBERTAS = frozenset(SO_MOVER) | frozenset(COLISAO)
 
+# Tabelas com lead_id que a mesclagem NAO toca, de proposito. So entra aqui o que nao e
+# dado vivo — qualquer outra tabela fora de COBERTAS continua abortando.
+#   follow_up_jobs_incidente_20261003: foto da explosao de follow-up de 03-04/10
+#   (1.019.539 linhas, sem indice em lead_id e sem FK para leads). Mover por par era um
+#   seq scan de 1M linhas em cada transacao; a foto fica com o lead_id da epoca.
+TABELAS_IGNORADAS = frozenset({"follow_up_jobs_incidente_20261003"})
+
 
 class TabelaNaoCoberta(RuntimeError):
     pass
 
 
 def verificar_cobertura(tabelas_no_banco):
-    faltando = sorted(set(tabelas_no_banco) - TABELAS_COBERTAS)
+    faltando = sorted(set(tabelas_no_banco) - TABELAS_COBERTAS - TABELAS_IGNORADAS)
     if faltando:
         raise TabelaNaoCoberta(
             "tabela(s) com lead_id que o script nao sabe mesclar: " + ", ".join(faltando)
@@ -238,23 +276,53 @@ def _texto(valor):
 CAMPOS_COPIADOS = ("cnpj", "razao_social", "nome_fantasia", "email")
 
 
-def sql_mesclar_par(duplicado, sobrevivente, tabelas, motivo):
-    """SQL de UM par, numa transacao. `tabelas` = tabelas com lead_id que existem no banco."""
+_IDENT = re.compile(r"^[a-z_][a-z0-9_]*$")
+
+
+def _chave(tabela, chaves):
+    """Expressao (sobre o alias `x`) que identifica a linha para desfazer a mesclagem: o `id`
+    se a PK e so ele; as colunas da PK sem o lead_id se ela e composta; a linha inteira sem
+    o lead_id se a PK e so o lead_id ou se a tabela nao tem PK."""
+    pk = [c for c in (chaves or {}).get(tabela) or [] if c != "lead_id"]
+    if not pk or not all(_IDENT.match(c) for c in pk):
+        return "to_jsonb(x) - 'lead_id'"
+    if pk == ["id"]:
+        return "to_jsonb(x.id)"
+    return "jsonb_build_object(" + ", ".join(f"'{c}', x.{c}" for c in pk) + ")"
+
+
+def sql_mesclar_par(duplicado, sobrevivente, tabelas, motivo, chaves=None):
+    """SQL de UM par, numa transacao. `tabelas` = tabelas com lead_id que existem no banco;
+    `chaves` = {tabela: colunas da PK} (Q_CHAVES), para registrar o que foi movido."""
     d, s = _uuid(duplicado), _uuid(sobrevivente)
     linhas = [
         "begin;",
+        # Trava os dois leads antes de mover: um insert concorrente com lead_id = duplicado
+        # (webhook do Bling, mensagem) espera o commit em vez de cair no lead que o DELETE
+        # do fim apaga em cascata.
+        f"select 1 from public.leads where id in ('{d}', '{s}') for update;",
         "do $$ begin",
         f"  if (select count(*) from public.leads where id in ('{d}', '{s}')) <> 2 then",
         f"    raise exception 'par {d} -> {s}: um dos leads nao existe mais';",
         "  end if;",
         "end $$;",
+        # O que mudou de dono, por tabela — vai para o evento 'mesclagem' e para o
+        # backup.json; sem isto a mesclagem nao tem volta.
+        "create temp table _mesclagem_movidos (tabela text not null, chave jsonb)"
+        " on commit drop;",
     ]
     for tabela in sorted(set(tabelas) & TABELAS_COBERTAS):
         if tabela in COLISAO:
             linhas.append(
                 f"delete from public.{tabela} d using public.{tabela} s"
                 f" where d.lead_id = '{d}' and s.lead_id = '{s}' and ({COLISAO[tabela]});")
-        linhas.append(f"update public.{tabela} set lead_id = '{s}' where lead_id = '{d}';")
+        linhas.append(
+            f"with movidas as (update public.{tabela} x set lead_id = '{s}'"
+            f" where x.lead_id = '{d}' returning {_chave(tabela, chaves)} as chave)"
+            f" insert into _mesclagem_movidos select '{tabela}', chave from movidas;")
+    movidos = ("(select coalesce(jsonb_object_agg(tabela, chaves), '{}'::jsonb) from"
+               " (select tabela, jsonb_agg(chave order by chave) as chaves"
+               " from _mesclagem_movidos group by tabela) t)")
     sets = ",\n  ".join(
         f"{c} = case when coalesce(btrim(s.{c}), '') = '' then d.{c} else s.{c} end"
         for c in CAMPOS_COPIADOS)
@@ -267,10 +335,11 @@ def sql_mesclar_par(duplicado, sobrevivente, tabelas, motivo):
         " jsonb_build_object('duplicado', jsonb_build_object('id', d.id, 'phone', d.phone,"
         " 'name', d.name, 'cnpj', d.cnpj, 'razao_social', d.razao_social, 'email', d.email,"
         " 'channel', d.channel, 'created_at', d.created_at, 'metadata', d.metadata),"
-        f" 'motivo', {_texto(motivo)}),"
+        f" 'motivo', {_texto(motivo)}, 'movidos', {movidos}),"
         f" now(), 'sistema', 'mesclagem:{d}'\n"
         f"from public.leads d where d.id = '{d}'\non conflict do nothing;")
     linhas.append(f"delete from public.leads where id = '{d}';")
+    linhas.append(f"select 'movidos=' || {movidos}::text;")
     linhas.append("commit;")
     return "\n".join(linhas) + "\n"
 
@@ -296,13 +365,32 @@ class Psql:
         return json.loads(saida.strip() or "[]")
 
     def executar(self, sql):
-        self._rodar(sql)
+        return self._rodar(sql)
+
+
+def movidos_do_stdout(saida):
+    """O `movidos=<json>` que o SQL do par imprime antes do commit (None se nao veio)."""
+    for linha in (saida or "").splitlines():
+        if linha.startswith("movidos="):
+            return json.loads(linha[len("movidos="):])
+    return None
 
 
 Q_TABELAS = """
 select c.table_name from information_schema.columns c
 join information_schema.tables t using (table_schema, table_name)
 where c.table_schema = 'public' and c.column_name = 'lead_id' and t.table_type = 'BASE TABLE'
+"""
+
+Q_CHAVES = """
+select c.relname as tabela, array_agg(a.attname::text order by k.ord) as colunas
+from pg_index i
+join pg_class c on c.oid = i.indrelid
+join pg_namespace n on n.oid = c.relnamespace
+cross join unnest(i.indkey) with ordinality k(attnum, ord)
+join pg_attribute a on a.attrelid = c.oid and a.attnum = k.attnum
+where i.indisprimary and n.nspname = 'public'
+group by c.relname
 """
 
 Q_COLUNAS_P0 = """
@@ -356,12 +444,19 @@ def q_vendas(ids):
             f" where lead_id = any('{{{lista}}}'::uuid[])")
 
 
-def q_backup(ids, tabelas):
+def q_backup(ids, tabelas, chaves=None):
+    """Linha do lead, as linhas inteiras das tabelas de COLISAO (podem ser apagadas) e, em
+    `ids_por_tabela`, a chave de cada linha do duplicado em toda tabela coberta."""
     lista = ",".join(_uuid(i) for i in sorted(ids))
     extras = "".join(
         f", coalesce((select json_agg(to_jsonb(x)) from public.{t} x where x.lead_id = l.id),"
         f" '[]'::json) as {t}"
         for t in sorted(set(tabelas) & set(COLISAO)))
+    por_tabela = ", ".join(
+        f"'{t}', (select coalesce(jsonb_agg({_chave(t, chaves)} order by {_chave(t, chaves)}),"
+        f" '[]'::jsonb) from public.{t} x where x.lead_id = l.id)"
+        for t in sorted(set(tabelas) & TABELAS_COBERTAS))
+    extras += f", jsonb_build_object({por_tabela}) as ids_por_tabela"
     return (f"select to_jsonb(l) as lead{extras} from public.leads l"
             f" where l.id = any('{{{lista}}}'::uuid[])")
 
@@ -379,29 +474,75 @@ def _csv(caminho, linhas, campos):
             w.writerow({k: ("|".join(v) if isinstance(v, list) else v) for k, v in linha.items()})
 
 
-def executar(db, saida, aplicar=False, limite=None):
+def ler_pares_revisados(caminho):
+    """Pares (duplicado, sobrevivente) do CSV revisado — o `pares.csv` do dry-run, com as
+    linhas que nao devem ser aplicadas apagadas. Id que nao e uuid aborta tudo (ValueError)."""
+    with open(caminho, newline="", encoding="utf-8") as f:
+        linhas = list(csv.DictReader(f))
+    if linhas and not {"duplicado", "sobrevivente"} <= set(linhas[0]):
+        raise ValueError(f"{caminho}: o CSV precisa das colunas duplicado e sobrevivente")
+    return [{"duplicado": _uuid(lin["duplicado"]), "sobrevivente": _uuid(lin["sobrevivente"])}
+            for lin in linhas]
+
+
+def selecionar_revisados(pares, revisados):
+    """Cruza o CSV revisado com o pareamento recalculado AGORA. So passa o par que ainda
+    existe igual (mesmo duplicado -> mesmo sobrevivente); o resto volta como recusado."""
+    atuais = {p["duplicado"]: p for p in pares}
+    aplicar, recusados, vistos = [], [], set()
+    for rev in revisados:
+        if rev["duplicado"] in vistos:
+            continue
+        vistos.add(rev["duplicado"])
+        atual = atuais.get(rev["duplicado"])
+        if atual and atual["sobrevivente"] == rev["sobrevivente"]:
+            aplicar.append(atual)
+            continue
+        hoje = (f"hoje pareia com {atual['sobrevivente']}" if atual
+                else "hoje nao e par (ambiguo, orfao, excluido ou ja mesclado)")
+        recusados.append({**rev, "motivo": "", "resultado": "recusado",
+                          "erro": f"par revisado nao bate mais com o pareamento atual: {hoje}"})
+    return aplicar, recusados
+
+
+def executar(db, saida, aplicar=False, limite=None, pares_csv=None, excluir=()):
+    excluir = {_uuid(i) for i in excluir}
+    if aplicar and not pares_csv:
+        raise SystemExit("--aplicar exige --pares <csv revisado> (o pares.csv do dry-run,"
+                         " so com as linhas aprovadas)")
+    revisados = ler_pares_revisados(pares_csv) if aplicar else []
     saida = Path(saida)
     saida.mkdir(parents=True, exist_ok=True)
 
     tabelas = {r["table_name"] for r in db.linhas(Q_TABELAS)}
     verificar_cobertura(tabelas)
+    pks = {r["tabela"]: r["colunas"] for r in db.linhas(Q_CHAVES)}
 
     candidatos = db.linhas(Q_CANDIDATOS)
     chaves, docs = coletar_chaves(candidatos)
     leads = db.linhas(q_leads(chaves, docs)) if (chaves or docs) else []
     r = parear(candidatos, leads)
+    # --excluir: lead que o Rafael marcou (duplicado OU sobrevivente) sai dos pares.
+    r["excluidos"] = [{**p, "motivo": f"excluido via --excluir; {p['motivo']}"}
+                      for p in r["pares"]
+                      if p["duplicado"] in excluir or p["sobrevivente"] in excluir]
+    r["pares"] = [p for p in r["pares"]
+                  if p["duplicado"] not in excluir and p["sobrevivente"] not in excluir]
     pares = r["pares"]
 
     ids = {p["duplicado"] for p in pares} | {p["sobrevivente"] for p in pares}
     vendas = db.linhas(q_vendas(ids)) if ids else []
     gemeas = vendas_gemeas(pares, vendas)
-    backup = db.linhas(q_backup({p["duplicado"] for p in pares}, tabelas)) if pares else []
+    backup = (db.linhas(q_backup({p["duplicado"] for p in pares}, tabelas, pks))
+              if pares else [])
 
     base = ["duplicado", "duplicado_nome", "duplicado_phone"]
     _csv(saida / "pares.csv", pares,
          base + ["sobrevivente", "sobrevivente_nome", "sobrevivente_phone", "motivo"])
     _csv(saida / "ambiguos.csv", r["ambiguos"], base + ["opcoes", "motivo"])
     _csv(saida / "orfaos.csv", r["orfaos"], base)
+    _csv(saida / "excluidos.csv", r["excluidos"],
+         base + ["sobrevivente", "sobrevivente_nome", "sobrevivente_phone", "motivo"])
     _csv(saida / "gemeas.csv", gemeas,
          ["sobrevivente", "duplicado", "valor", "venda_bling", "sold_at_bling",
           "venda_outra", "origin_outra", "sold_at_outra", "diferenca_horas"])
@@ -413,24 +554,36 @@ def executar(db, saida, aplicar=False, limite=None):
         if len(db.linhas(Q_COLUNAS_P0)) != 3:
             raise SystemExit("lead_events sem occurred_at/source/dedupe_key: aplique "
                              "supabase/migrations/20261006_call_semanal_base.sql antes do --aplicar")
-        for par in pares[:limite] if limite else pares:
+        a_aplicar, recusados = selecionar_revisados(pares, revisados)
+        aplicados.extend(recusados)
+        for par in a_aplicar[:limite] if limite is not None else a_aplicar:
             try:
-                db.executar(sql_mesclar_par(par["duplicado"], par["sobrevivente"], tabelas,
-                                            par["motivo"]))
-                aplicados.append({**par, "resultado": "ok", "erro": ""})
+                saida_psql = db.executar(sql_mesclar_par(
+                    par["duplicado"], par["sobrevivente"], tabelas, par["motivo"], pks))
+                aplicados.append({**par, "resultado": "ok", "erro": "",
+                                  "movidos": movidos_do_stdout(saida_psql)})
             except RuntimeError as exc:
                 aplicados.append({**par, "resultado": "erro", "erro": str(exc)})
         _csv(saida / "aplicados.csv", aplicados,
              ["duplicado", "sobrevivente", "motivo", "resultado", "erro"])
+        # backup.json ganha, por duplicado aplicado, o que de fato mudou de dono
+        movidos = {a["duplicado"]: a["movidos"] for a in aplicados if a.get("movidos")}
+        for item in backup:
+            if item["lead"]["id"] in movidos:
+                item["movidos"] = movidos[item["lead"]["id"]]
+        (saida / "backup.json").write_text(json.dumps(backup, ensure_ascii=False, indent=1),
+                                           encoding="utf-8")
 
     duplicados = {p["duplicado"] for p in pares}
     contagens = {
         "candidatos": len(candidatos), "pares": len(pares),
         "ambiguos": len(r["ambiguos"]), "orfaos": len(r["orfaos"]),
+        "excluidos": len(r["excluidos"]),
         "gemeas": len(gemeas),
         "vendas_do_duplicado_movidas": sum(1 for v in vendas if v["lead_id"] in duplicados),
         "aplicados_ok": sum(1 for a in aplicados if a["resultado"] == "ok"),
         "aplicados_erro": sum(1 for a in aplicados if a["resultado"] == "erro"),
+        "aplicados_recusados": sum(1 for a in aplicados if a["resultado"] == "recusado"),
         "modo": "aplicar" if aplicar else "dry-run",
     }
     return {"contagens": contagens, "gemeas": gemeas, "aplicados": aplicados, **r}
@@ -442,13 +595,24 @@ def main(argv=None):
                     help="comando psql completo (ou env MESCLAR_PSQL)")
     ap.add_argument("--saida", default=None, help="pasta dos CSVs (default ./mesclagem-<data>)")
     ap.add_argument("--aplicar", action="store_true",
-                    help="EXECUTA a mesclagem (uma transacao por par). Sem isto, so le.")
+                    help="EXECUTA a mesclagem (uma transacao por par). Sem isto, so le."
+                         " Exige --pares.")
+    ap.add_argument("--pares", default=None,
+                    help="CSV revisado (formato do pares.csv do dry-run): o --aplicar aplica"
+                         " SO estes pares, recalculados — o que nao bate mais e recusado")
+    ap.add_argument("--excluir", default="",
+                    help="lead_ids separados por virgula (duplicado ou sobrevivente) que saem"
+                         " dos pares — vao para excluidos.csv")
     ap.add_argument("--limite", type=int, default=None, help="aplica so os N primeiros pares")
     args = ap.parse_args(argv)
     if not args.psql:
         ap.error("informe --psql ou a env MESCLAR_PSQL")
+    if args.aplicar and not args.pares:
+        ap.error("--aplicar exige --pares <csv revisado>")
     saida = args.saida or f"mesclagem-{datetime.now():%Y%m%d-%H%M%S}"
-    resultado = executar(Psql(args.psql), saida, aplicar=args.aplicar, limite=args.limite)
+    resultado = executar(Psql(args.psql), saida, aplicar=args.aplicar, limite=args.limite,
+                         pares_csv=args.pares,
+                         excluir=[i.strip() for i in args.excluir.split(",") if i.strip()])
     print(json.dumps(resultado["contagens"], ensure_ascii=False))
     print(f"arquivos em {Path(saida).resolve()}", file=sys.stderr)
     return 0
