@@ -12,18 +12,19 @@ import { useState, type ReactNode } from "react";
  * o corte de egress de 07/07 depende de não refazer a lista a cada foco de aba
  * (o realtime já mantém a lista viva via patches).
  */
+export function createConversasQueryClient(): QueryClient {
+  return new QueryClient({
+    defaultOptions: {
+      queries: {
+        staleTime: 30_000,
+        refetchOnWindowFocus: false,
+        retry: 1,
+      },
+    },
+  });
+}
+
 export function ConversasQueryProvider({ children }: { children: ReactNode }) {
-  const [client] = useState(
-    () =>
-      new QueryClient({
-        defaultOptions: {
-          queries: {
-            staleTime: 30_000,
-            refetchOnWindowFocus: false,
-            retry: 1,
-          },
-        },
-      }),
-  );
+  const [client] = useState(createConversasQueryClient);
   return <QueryClientProvider client={client}>{children}</QueryClientProvider>;
 }
