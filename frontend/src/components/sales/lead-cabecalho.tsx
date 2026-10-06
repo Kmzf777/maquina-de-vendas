@@ -92,12 +92,16 @@ export function LeadCabecalho({ lead, currentUserEmail, onSaveField }: LeadCabec
         onSave={(v) => onSaveField("cnpj", docDigits(v) ?? "")}
         placeholder="Digite o CNPJ ou CPF"
       />
-      <JaEraClienteToggle
-        valor={cliente?.ja_era_cliente}
-        fonte={cliente?.ja_era_cliente_fonte}
-        onEscolher={responder}
-        desabilitado={salvando}
-      />
+      {/* `undefined` = coluna inexistente (migração do P0 não aplicada) ou
+          lead ainda carregando: não há o que mostrar nem onde gravar. */}
+      {cliente && cliente.ja_era_cliente !== undefined && (
+        <JaEraClienteToggle
+          valor={cliente.ja_era_cliente}
+          fonte={cliente.ja_era_cliente_fonte}
+          onEscolher={responder}
+          desabilitado={salvando}
+        />
+      )}
       {erro && <p className="text-[11px] text-[#c41c1c]">{erro}</p>}
     </div>
   );

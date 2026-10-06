@@ -93,8 +93,7 @@ describe("LeadCabecalho", () => {
     h.maybeSingle.mockResolvedValue({ data: { id: "lead-1", ja_era_cliente: null }, error: null });
     fetchMock.mockResolvedValueOnce({ ok: false, status: 500, json: async () => ({ error: "boom" }) } as Response);
     abrir();
-    await waitFor(() => expect(h.maybeSingle).toHaveBeenCalled());
-    fireEvent.click(screen.getByRole("button", { name: "Sim" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Sim" }));
     expect(await screen.findByText("boom")).toBeTruthy();
     expect(screen.getByRole("button", { name: "Sim" }).getAttribute("aria-pressed")).toBe("false");
   });
@@ -107,5 +106,17 @@ describe("LeadCabecalho", () => {
     fireEvent.change(campo, { target: { value: "11.222.333/0001-81" } });
     fireEvent.keyDown(campo, { key: "Enter" });
     expect(onSaveField).toHaveBeenCalledWith("cnpj", "11222333000181");
+  });
+
+  it("banco sem a migração do P0 (coluna não existe): o toggle não aparece", async () => {
+    h.maybeSingle
+      .mockResolvedValueOnce({ data: null, error: { code: "42703", message: "column leads.ja_era_cliente does not exist" } })
+      .mockResolvedValueOnce({ data: { id: "lead-1", name: "Iago" }, error: null });
+    abrir();
+    await waitFor(() => expect(h.maybeSingle).toHaveBeenCalledTimes(2));
+    await new Promise((r) => setTimeout(r, 20));
+    expect(screen.queryByRole("group", { name: "Já é cliente?" })).toBeNull();
+    // O resto do cabeçalho continua.
+    expect(screen.getByText("compras@vidanatural.com")).toBeTruthy();
   });
 });
