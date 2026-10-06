@@ -5,8 +5,9 @@ import { requireAdmin } from "@/lib/admin-auth";
 /**
  * Proxy admin-only para `backend/app/button_flow/valeria_flow_router.py`.
  *
- * Este é o ÚNICO proxy do repo que repassa o `access_token` de sessão do Supabase
- * como `Authorization: Bearer` para o FastAPI. Todo outro proxy para o backend
+ * Repassa o `access_token` de sessão do Supabase como `Authorization: Bearer` para o
+ * FastAPI. Além deste router, só as rotas admin do /trafego (atribuição manual de
+ * campanha, `/api/traffic/*`) o reutilizam. Todo outro proxy para o backend
  * (`/api/campaigns/*`, `/api/quotes`, `/api/channels/[id]/templates`, ...) chama
  * routers SEM `require_role` — não há credencial para repassar porque o backend
  * não pede nenhuma. Este router é diferente por dois fatos, não por gosto:
