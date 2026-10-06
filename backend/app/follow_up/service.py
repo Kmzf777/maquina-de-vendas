@@ -1023,6 +1023,10 @@ AJUSTES_PADRAO: dict[str, int] = {
     "adiamento_estoque_dias": 30,
 }
 
+# O default de `dias_sem_prospeccao_apos_venda` (spec 2026-10-06, P6.1) — ver
+# `carregar_dias_sem_prospeccao_apos_venda`. Fora de `AJUSTES_PADRAO` de propósito.
+DIAS_SEM_PROSPECCAO_PADRAO = 30
+
 # Sentinela de LEITURA FALHA de `disparos_de_hoje`. Ver a docstring da função: o valor
 # é maior que qualquer teto que o CHECK da tabela aceite, para que tanto
 # `disparos >= teto` quanto `teto - disparos` leiam "sem saldo" sem um segundo ramo.
@@ -1476,8 +1480,109 @@ def _matricula_interrompida(jobs_da_matricula: list[dict]) -> bool:
     return not all(j.get("cancel_reason") == MOTIVO_INTERESSE for j in cancelados)
 
 
+# ── Quem comprou não recebe prospecção (spec 2026-10-06, P6.1) ─────────────────
+#
+# A call de 01/10 viu a esteira mandar "Proposta Enviada" para quem tinha acabado de
+# comprar: o motor só olhava o CARD, e venda em outro deal, venda do Bling (sem deal) ou
+# card não movido deixavam o card de prospecção vivo. A regra olha `sales` do LEAD.
+CADENCIAS_DE_PROSPECCAO: frozenset[str] = frozenset({"novo", "em_conversa", "proposta"})
+CADENCIA_KIT = "kit"
+CADENCIAS_COM_REGRA_DE_VENDA: frozenset[str] = CADENCIAS_DE_PROSPECCAO | {CADENCIA_KIT}
+MOTIVO_LEAD_COMPROU = "lead_comprou"
+
+
+def _venda_cancelada(venda: Mapping[str, Any]) -> bool:
+    return str(venda.get("status") or "").strip().lower().startswith("cancel")
+
+
+def _momento_da_venda(venda: Mapping[str, Any]) -> datetime | None:
+    return _parse_ts(venda.get("sold_at")) or _parse_ts(venda.get("created_at"))
+
+
+def _vendas_validas(vendas) -> list[Mapping[str, Any]]:
+    return [v for v in (vendas or ()) if not _venda_cancelada(v)]
+
+
+def lead_comprou(
+    vendas, *, now: datetime, deal_criado_em: datetime | None, dias: int,
+) -> bool:
+    """Venda NÃO cancelada nos últimos `dias` dias OU depois da criação do card. PURA.
+
+    Venda sem data nenhuma conta como compra: na dúvida, a esteira pula — o custo de
+    errar para o outro lado é uma mensagem de prospecção para quem acabou de comprar.
+    """
+    corte = now - timedelta(days=dias)
+    for venda in _vendas_validas(vendas):
+        quando = _momento_da_venda(venda)
+        if quando is None or quando >= corte:
+            return True
+        if deal_criado_em is not None and quando > deal_criado_em:
+            return True
+    return False
+
+
+def motivo_kit_para_matricula(vendas, *, now: datetime, gatilho_dias: int) -> str | None:
+    """A ÚLTIMA venda não cancelada é kit e tem >= `gatilho_dias` dias? PURA.
+
+    `venda["kit"]` é gravado pelo leitor (`_vendas_dos_leads`); ausente = não é kit.
+    Empate de data com uma venda que não é kit também não é "a última foi kit".
+    """
+    validas = _vendas_validas(vendas)
+    if not validas:
+        return "sem_venda"
+    momentos = [_momento_da_venda(v) for v in validas]
+    if any(m is None for m in momentos):
+        return "venda_sem_data"
+    ultimo = max(momentos)
+    ultimas = [v for v, m in zip(validas, momentos) if m == ultimo]
+    if not all(v.get("kit") is True for v in ultimas):
+        return "ultima_venda_nao_e_kit"
+    if ultimo > now - timedelta(days=gatilho_dias):
+        return "venda_kit_recente"
+    return None
+
+
+def motivo_venda_para_matricula(
+    cadencia: CadenciaResolvida, vendas, *, now: datetime,
+    deal_criado_em: datetime | None, dias_sem_prospeccao: int,
+) -> str | None:
+    """A regra de VENDA da matrícula, por cadência. PURA.
+
+    `vendas=None` é "não li". No kit isso PULA (o gatilho É uma venda). Na prospecção a
+    regra só não se aplica — é o contrato antigo da função pura; a varredura sempre lê.
+    """
+    if cadencia.codigo == CADENCIA_KIT:
+        if vendas is None:
+            return "vendas_desconhecidas"
+        return motivo_kit_para_matricula(
+            vendas, now=now, gatilho_dias=int(cadencia.gatilho_dias or 0))
+    if cadencia.codigo in CADENCIAS_DE_PROSPECCAO and vendas is not None:
+        if lead_comprou(vendas, now=now, deal_criado_em=deal_criado_em,
+                        dias=dias_sem_prospeccao):
+            return MOTIVO_LEAD_COMPROU
+    return None
+
+
+def comprou_depois_da_matricula(vendas, *, matricula_em: datetime) -> bool:
+    """Venda não cancelada vendida OU registrada depois da matrícula (envio do kit). PURA.
+
+    "Registrada" cobre o pedido do Bling que chega atrasado com data de venda anterior:
+    é informação nova sobre o lead, e na dúvida o toque do kit não sai.
+    """
+    for venda in _vendas_validas(vendas):
+        quando = _momento_da_venda(venda)
+        registrada = _parse_ts(venda.get("created_at"))
+        if quando is None or quando > matricula_em or (
+                registrada is not None and registrada > matricula_em):
+            return True
+    return False
+
+
 def motivo_para_pular_joao(
-    cadencia: CadenciaResolvida, jobs_do_card: list[dict], now: datetime,
+    cadencia: CadenciaResolvida, jobs_do_card: list[dict], now: datetime, *,
+    vendas: list[dict] | None = None,
+    deal_criado_em: datetime | None = None,
+    dias_sem_prospeccao: int = DIAS_SEM_PROSPECCAO_PADRAO,
 ) -> str | None:
     """Por que este card NÃO entra nesta cadência agora — ou None se ele entra. PURA.
 
@@ -1488,6 +1593,8 @@ def motivo_para_pular_joao(
     A ORDEM das regras é parte do contrato:
       1. cadência em andamento — um card, uma cadência por vez;
       2. a PARTIÇÃO reposicao x em_atencao;
+      2b. VENDA (06/10): prospecção pula quem comprou; kit só pega kit — ver
+          `motivo_venda_para_matricula`. `vendas`/`deal_criado_em` vêm da varredura;
       3. repetição (cadência sem fim) ou cooldown (cadência com fim).
     """
     # 1. UM CARD, UMA CADÊNCIA POR VEZ — inclusive entre cadências diferentes. Duas
@@ -1503,6 +1610,14 @@ def motivo_para_pular_joao(
         return "reposicao_nao_concluida"
     if cadencia.codigo == "reposicao" and concluiu_reposicao:
         return "reposicao_ja_concluida"
+
+    # 2b. VENDA (spec 2026-10-06, P6): prospecção pula quem comprou; o kit só pega quem
+    #     tem um kit como última compra, há pelo menos `gatilho_dias`.
+    motivo_venda = motivo_venda_para_matricula(
+        cadencia, vendas, now=now, deal_criado_em=deal_criado_em,
+        dias_sem_prospeccao=dias_sem_prospeccao)
+    if motivo_venda:
+        return motivo_venda
 
     # 3a. Cadência que SE REPETE ("Em atenção": uma mensagem a cada 3 dias até o lead
     #     dizer que não quer — ata 38:08). Não tem cooldown: ela é feita para voltar. O
