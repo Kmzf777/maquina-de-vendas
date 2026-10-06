@@ -247,9 +247,11 @@ export function ChatList({
       setSentinelVisible(false);
     };
   }, [showSentinel]);
+  // Com a lista em erro a sentinela NÃO pede sozinha: a página que falhou voltaria a
+  // falhar a cada fim de carga (~1 req/s). Só o botão manual tenta de novo.
   useEffect(() => {
-    if (sentinelVisible && showSentinel && !loadingMore) onLoadMore?.();
-  }, [sentinelVisible, showSentinel, loadingMore, onLoadMore]);
+    if (sentinelVisible && showSentinel && !loadingMore && !listError) onLoadMore?.();
+  }, [sentinelVisible, showSentinel, loadingMore, listError, onLoadMore]);
 
   // Local: o que já está em memória, com o MESMO matcher do servidor
   // (accent-insensitive, cobrindo empresa/razão social e telefone formatado).

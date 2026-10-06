@@ -114,6 +114,7 @@ export function useConversationList({
     isPlaceholderData: isRefreshing,
     refetch: refetchConversations,
     hasNextPage,
+    isFetching,
     isFetchingNextPage,
     fetchNextPage,
   } = useInfiniteQuery({
@@ -148,10 +149,57 @@ export function useConversationList({
     placeholderData: keepPreviousData,
   });
 
+  // Nunca pagina com QUALQUER busca da lista em voo: o default do fetchNextPage
+  // (`cancelRefetch: true`) cancelaria o refetch da invalidação de um INSERT e a
+  // conversa nova não apareceria. Quando o refetch termina, `isFetching` volta a
+  // false e a sentinela (ainda visível) pede de novo.
   const loadMore = useCallback(() => {
-    if (isRefreshing || !hasNextPage || isFetchingNextPage) return;
-    void fetchNextPage();
-  }, [isRefreshing, hasNextPage, isFetchingNextPage, fetchNextPage]);
+    if (isRefreshing || !hasNextPage || isFetching) return;
+    void fetchNextPage({ cancelRefetch: false });
+  }, [isRefreshing, hasNextPage, isFetching, fetchNextPage]);
+
+  // Patches feitos enquanto uma busca da lista está em voo, por query. O React Query
+  // monta o resultado do fetchNextPage (e do refetch) a partir do snapshot do INÍCIO
+  // da busca: sem reaplicar, o UPDATE do Realtime, o preview, o mark-read otimista e
+  // as inserções que chegaram no meio seriam apagados quando a página chega. Todos os
+  // patches são idempotentes, então reaplicá-los em ordem sobre o resultado é seguro.
+  const inFlightPatchesRef = useRef(new Map<string, ((d: ConversationPages) => ConversationPages)[]>());
+
+  useEffect(() => {
+    const inFlight = inFlightPatchesRef.current;
+    const unsubscribe = queryClient.getQueryCache().subscribe((event) => {
+      if (event.type !== "updated") return;
+      const query = event.query;
+      if (query.state.fetchStatus !== "idle") return; // ainda buscando (ou patch manual no meio)
+      const log = inFlight.get(query.queryHash);
+      if (!log) return;
+      inFlight.delete(query.queryHash);
+      // Só o fim BEM-SUCEDIDO de uma busca substitui os dados; erro/cancelamento
+      // mantêm os dados já com os patches.
+      if (event.action.type !== "success" || event.action.manual) return;
+      queryClient.setQueryData<ConversationPages>(query.queryKey, (old) =>
+        old ? log.reduce((data, fn) => fn(data), old) : old,
+      );
+    });
+    return () => {
+      unsubscribe();
+      inFlight.clear();
+    };
+  }, [queryClient]);
+
+  /** Atualiza um cache da lista, registrando o patch se aquela query está buscando. */
+  const updatePages = useCallback(
+    (queryKey: readonly unknown[], fn: (d: ConversationPages) => ConversationPages) => {
+      const query = queryClient.getQueryCache().find({ queryKey, exact: true });
+      if (query && query.state.fetchStatus !== "idle") {
+        const log = inFlightPatchesRef.current.get(query.queryHash) ?? [];
+        log.push(fn);
+        inFlightPatchesRef.current.set(query.queryHash, log);
+      }
+      queryClient.setQueryData<ConversationPages>(queryKey, (old) => (old ? fn(old) : old));
+    },
+    [queryClient],
+  );
 
   // Patch local em TODOS os caches da lista (um por canal + aba): a mesma conversa
   // pode estar na aba "Todos" e na de "Atacado", e a troca de aba não pode mostrar
@@ -162,12 +210,12 @@ export function useConversationList({
   const [held, setHeld] = useState<Conversation | null>(null);
   const patchList = useCallback(
     (updater: (list: Conversation[]) => Conversation[]) => {
-      queryClient.setQueriesData<ConversationPages>({ queryKey: ["conversations"] }, (old) =>
-        old ? patchPages(old, updater) : old,
-      );
+      for (const query of queryClient.getQueryCache().findAll({ queryKey: ["conversations"] })) {
+        updatePages(query.queryKey, (data) => patchPages(data, updater));
+      }
       setHeld((prev) => (prev ? (updater([prev]).find((c) => c.id === prev.id) ?? null) : prev));
     },
-    [queryClient],
+    [queryClient, updatePages],
   );
 
   const patchConversation = useCallback(
@@ -184,12 +232,9 @@ export function useConversationList({
   /** Põe `conv` no cache da aba ativa (sem mexer na cópia guardada da seleção). */
   const injectIntoActiveList = useCallback(
     (conv: Conversation) => {
-      queryClient.setQueryData<ConversationPages>(
-        conversationsQueryKey(channelId, activeTab),
-        (old) => (old ? insertIntoPages(old, conv) : old),
-      );
+      updatePages(conversationsQueryKey(channelId, activeTab), (data) => insertIntoPages(data, conv));
     },
-    [queryClient, channelId, activeTab],
+    [updatePages, channelId, activeTab],
   );
 
   /**
@@ -276,8 +321,8 @@ export function useConversationList({
         const [fresh] = applyOverrides([conv]);
         for (const query of queryClient.getQueryCache().findAll({ queryKey: ["conversations"] })) {
           if (!conversationBelongsToKey(fresh, query.queryKey)) continue;
-          queryClient.setQueryData<ConversationPages>(query.queryKey, (old) =>
-            old ? insertIntoPages(old, fresh, { respectWindow: true }) : old,
+          updatePages(query.queryKey, (data) =>
+            insertIntoPages(data, fresh, { respectWindow: true }),
           );
         }
         if (!conversationBelongsToKey(fresh, activeKey)) {
@@ -387,7 +432,7 @@ export function useConversationList({
       flushUnknown.cancel();
       supabase.removeChannel(realtimeChannel);
     };
-  }, [channelId, queryClient, supabase, patchList, applyOverrides, fetchConversationById]);
+  }, [channelId, queryClient, supabase, patchList, updatePages, applyOverrides, fetchConversationById]);
 
   return {
     conversations,

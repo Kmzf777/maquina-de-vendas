@@ -6,12 +6,13 @@
  * Realtime falso que entrega eventos quando o teste manda.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { act, cleanup, renderHook } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, renderHook, screen } from "@testing-library/react";
 import { QueryClientProvider, type QueryClient } from "@tanstack/react-query";
 import type { ReactNode } from "react";
 import type { Conversation } from "@/lib/types";
 import { conversationMatchesTab } from "@/lib/contact-search";
 import { decodeCursor, splitPage } from "@/app/api/conversations/list-params";
+import { ChatList } from "@/components/conversas/chat-list";
 import { createConversasQueryClient } from "./query-provider";
 import { useConversationList } from "./use-conversation-list";
 
@@ -133,6 +134,8 @@ function response(status: number, body: Json) {
 }
 
 const isListUrl = (url: string) => url.startsWith("/api/conversations?") || url === "/api/conversations";
+const isFirstPage = (url: string) => isListUrl(url) && !url.includes("cursor=");
+const isNextPage = (url: string) => isListUrl(url) && url.includes("cursor=");
 
 // ---------------------------------------------------------------------------
 // Realtime falso
@@ -194,7 +197,42 @@ function updateEvent(row: Partial<Conversation> & { id: string }) {
   realtime.emit("conversations", { eventType: "UPDATE", new: row, old: {} });
 }
 
+let ioCallback: ((entries: { isIntersecting: boolean }[]) => void) | null = null;
+class FakeIntersectionObserver {
+  constructor(cb: (entries: { isIntersecting: boolean }[]) => void) {
+    ioCallback = cb;
+  }
+  observe() {}
+  disconnect() {}
+  unobserve() {}
+}
+
+/** Lista de verdade (ChatList) ligada ao hook, como a página faz. */
+function ListHarness() {
+  const list = useConversationList({ supabase: realtime.client, channelId: "", activeTab: "todos" });
+  return (
+    <ChatList
+      conversations={list.conversations}
+      channels={[]}
+      activeTab="todos"
+      selectedConversationId={null}
+      selectedChannelId=""
+      onSelectConversation={() => {}}
+      onTabChange={() => {}}
+      onChannelChange={() => {}}
+      listError={list.listError}
+      isRefreshing={list.isRefreshing}
+      onRetry={() => list.refetchConversations()}
+      hasMore={list.hasNextPage && !list.isRefreshing}
+      loadingMore={list.isFetchingNextPage}
+      onLoadMore={list.loadMore}
+    />
+  );
+}
+
 beforeEach(() => {
+  ioCallback = null;
+  vi.stubGlobal("IntersectionObserver", FakeIntersectionObserver);
   vi.useFakeTimers({ shouldAdvanceTime: true });
   server = new FakeServer();
   realtime = fakeSupabase();
@@ -254,5 +292,80 @@ describe("useConversationList — tempo real", () => {
     expect(result.current.selectedConversation?.id).toBe(uid("a"));
     act(() => updateEvent({ id: uid("a"), followup_enabled: false }));
     expect(result.current.selectedConversation?.followup_enabled).toBe(false);
+  });
+});
+
+describe("useConversationList — paginação concorrente com tempo real", () => {
+  it("does not lose realtime patches that arrive while the next page is loading", async () => {
+    server.db = [conv("a", 12), conv("b", 11), conv("c", 10), conv("d", 9)];
+    const { result } = setup();
+    await vi.waitFor(() => expect(result.current.hasNextPage).toBe(true));
+
+    server.holds.push({ match: isNextPage, once: true });
+    act(() => result.current.loadMore());
+    await vi.waitFor(() => expect(server.held).toHaveLength(1));
+
+    // Durante a busca da página 2: UPDATE, preview de mensagem e mark-read otimista.
+    act(() => {
+      updateEvent({ id: uid("a"), unread_count: 7 });
+      realtime.emit("messages", {
+        eventType: "INSERT",
+        new: { conversation_id: uid("b"), role: "user", content: "chegou agora" },
+      });
+      result.current.patchConversation(uid("b"), { unread_count: 0 });
+    });
+
+    act(() => server.held[0].release());
+    await vi.waitFor(() => expect(result.current.conversations).toHaveLength(4));
+
+    const byId = new Map(result.current.conversations.map((c) => [c.id, c]));
+    expect(byId.get(uid("a"))?.unread_count).toBe(7);
+    expect(byId.get(uid("b"))?.last_message_text).toBe("chegou agora");
+    expect(byId.get(uid("b"))?.unread_count).toBe(0);
+  });
+
+  it("does not let a scroll to the end cancel the refetch that brings a new conversation", async () => {
+    server.db = [conv("a", 12), conv("b", 11), conv("c", 10)];
+    const { result } = setup();
+    await vi.waitFor(() => expect(result.current.hasNextPage).toBe(true));
+
+    server.db.push(conv("n", 14));
+    server.holds.push({ match: isFirstPage, once: true });
+    act(() => realtime.emit("conversations", { eventType: "INSERT", new: { id: uid("n"), channel_id: "c1" }, old: {} }));
+    await tick(REFETCH_WAIT);
+    await vi.waitFor(() => expect(server.held).toHaveLength(1)); // refetch em voo
+
+    act(() => result.current.loadMore()); // sentinela visível durante a invalidação
+    await tick();
+    expect(server.count(isNextPage)).toBe(0);
+
+    act(() => server.held[0].release());
+    await vi.waitFor(() => expect(result.current.conversations[0]?.id).toBe(uid("n")));
+  });
+});
+
+describe("useConversationList + ChatList — erro de página", () => {
+  it("does not retry a failing next page in a loop while the end of the list stays visible", async () => {
+    server.db = [conv("a", 12), conv("b", 11), conv("c", 10)];
+    server.failures.push({ match: isNextPage, status: 500 });
+    render(
+      <QueryClientProvider client={queryClient}>
+        <ListHarness />
+      </QueryClientProvider>,
+    );
+    await vi.waitFor(() => expect(screen.getByText("Carregar mais conversas")).toBeTruthy());
+
+    act(() => ioCallback?.([{ isIntersecting: true }]));
+    await tick(15_000);
+    const attempts = server.count(isNextPage);
+    expect(attempts).toBeGreaterThanOrEqual(1);
+    expect(attempts).toBeLessThanOrEqual(2); // a tentativa + o retry do React Query
+    await tick(15_000);
+    expect(server.count(isNextPage)).toBe(attempts);
+
+    // O botão manual continua pedindo de novo.
+    fireEvent.click(screen.getByText("Carregar mais conversas"));
+    await tick(5_000);
+    expect(server.count(isNextPage)).toBeGreaterThan(attempts);
   });
 });
