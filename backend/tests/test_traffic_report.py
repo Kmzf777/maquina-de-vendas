@@ -117,7 +117,7 @@ def test_build_metrics_clientes_pedidos_receita():
     sales_by_lead = {"a": {"count": 1, "value": 100.0}}
     out = build_campaign_report(leads, {"a"}, {"a", "b"}, sales_by_lead, mode="lead", period="30d")
     row = out["rows"][0]
-    assert row["conversas"] == 1
+    assert row["conversas"] == 2  # funil cumulativo: closer conversou (call 01/10)
     assert row["closer"] == 2
     assert row["clientes"] == 1
     assert row["pedidos"] == 1
@@ -152,14 +152,15 @@ def test_build_total_and_subtotals_have_clientes_and_pedidos():
              _lead("b", fbclid="2", utm_campaign="y")]
     sales_by_lead = {"a": {"count": 1, "value": 50.0}, "b": {"count": 2, "value": 30.0}}
     out = build_campaign_report(leads, {"a"}, {"a"}, sales_by_lead, mode="lead", period="30d")
-    assert out["total"] == {"leads": 2, "conversas": 1, "closer": 1,
+    # Funil cumulativo (call 01/10): "b" comprou, então conta como closer e conversa.
+    assert out["total"] == {"leads": 2, "conversas": 2, "closer": 2,
                             "clientes": 2, "pedidos": 3, "receita": 80.0,
                             "investimento": 0.0, "roas": None}
     assert out["channel_subtotals"]["Google Ads"] == {
         "leads": 1, "conversas": 1, "closer": 1, "clientes": 1, "pedidos": 1, "receita": 50.0,
         "investimento": 0.0, "roas": None}
     assert out["channel_subtotals"]["Meta Ads"] == {
-        "leads": 1, "conversas": 0, "closer": 0, "clientes": 1, "pedidos": 2, "receita": 30.0,
+        "leads": 1, "conversas": 1, "closer": 1, "clientes": 1, "pedidos": 2, "receita": 30.0,
         "investimento": 0.0, "roas": None}
 
 

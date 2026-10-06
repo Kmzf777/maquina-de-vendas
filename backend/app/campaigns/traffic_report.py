@@ -97,6 +97,11 @@ def _s(v: Any) -> str:
     return v.strip() if isinstance(v, str) else ""
 
 
+def _cancelada(sale: dict[str, Any]) -> bool:
+    """Venda cancelada não é venda: não conta cliente, pedido, receita nem compra."""
+    return _s(sale.get("status")).lower() == "cancelada"
+
+
 # Origens (utm_source) de anúncio pago, por plataforma. A gestora de tráfego tagueia a Meta
 # como 'metaads' e o Google como 'google'. Usadas quando NÃO há click-id — ex.: anúncio Meta
 # que leva ao WhatsApp (sem fbclid) ou Google PMAX sem gclid. NÃO incluir 'instagram'/
@@ -199,6 +204,12 @@ def build_campaign_report(
     gasto era puxado do lado do lead, então cada variante de slug cobrava o custo cheio da
     campanha de novo — o investimento do Google aparecia 2,6x maior do que foi gasto.
 
+    Funil CUMULATIVO (call de 01/10): quem comprou passou pelo closer, e quem chegou ao closer
+    conversou — cliente ⊂ closer ⊂ conversa. Antes eram conjuntos independentes, e o pedido do
+    Bling de quem já era cliente (lead criado já com venda, sem conversa nem deal) aparecia como
+    "4 closer e 10 clientes". `entraram_ja_clientes` guarda quantos clientes NÃO eram closer pelo
+    critério antigo: o que o Arthur percebeu continua visível em vez de sumir na soma.
+
     Invariante: para cada canal pago, soma(linhas.investimento) == gasto real da plataforma
     na janela. Campanha que gastou sem gerar lead entra com leads=0 em vez de sumir."""
     spend_by_channel = spend_by_channel or {}
@@ -209,6 +220,7 @@ def build_campaign_report(
     # (canal, campaign_id) -> linha, para pendurar o custo depois sem depender do rótulo.
     row_by_campaign: dict[tuple[str, str], dict[str, Any]] = {}
     resolved_cache: dict[tuple[str, str, str], str | None] = {}
+    entraram_ja_clientes = 0
 
     for lead in leads:
         lead_id = lead.get("id")
@@ -244,15 +256,19 @@ def build_campaign_report(
             if cid:
                 row_by_campaign[(channel, cid)] = row
         row["leads"] += 1
-        if lead_id in conversed_ids:
-            row["conversas"] += 1
-        if lead_id in closer_ids:
-            row["closer"] += 1
         sale = sales_by_lead.get(lead_id)
-        if sale:
+        cliente = bool(sale)
+        closer = cliente or lead_id in closer_ids
+        if closer or lead_id in conversed_ids:
+            row["conversas"] += 1
+        if closer:
+            row["closer"] += 1
+        if cliente:
             row["clientes"] += 1  # leads distintos que compraram (base da conversão)
             row["pedidos"] += int(sale.get("count", 0) or 0)  # nº de vendas (recompra: pode ser >1)
             row["receita"] += float(sale.get("value", 0.0) or 0.0)
+            if lead_id not in closer_ids:
+                entraram_ja_clientes += 1
 
     # Investimento: percorre as CAMPANHAS (não os leads), então cada custo entra uma única vez.
     # Campanha que gastou e não gerou lead ganha uma linha zerada — sumir do relatório seria
@@ -303,7 +319,7 @@ def build_campaign_report(
     total["investimento"] = round(total["investimento"], 2)
     total["roas"] = round(paid_receita / total["investimento"], 2) if total["investimento"] else None
     return {"mode": mode, "period": period, "rows": rows, "total": total,
-            "channel_subtotals": channel_subtotals}
+            "channel_subtotals": channel_subtotals, "entraram_ja_clientes": entraram_ja_clientes}
 
 
 # --- Relatório geral (bloco acima da tabela) -------------------------------------------
@@ -357,7 +373,8 @@ def build_report_summary(report: dict[str, Any], leads: list[dict[str, Any]],
     rates = _stage_rates(counts)
     candidates = [(rates["taxa_" + s], i, s) for i, s in enumerate(_FUNNEL_STAGES)
                   if rates["taxa_" + s] is not None]
-    funnel = {**counts, **rates, "gargalo": min(candidates)[2] if candidates else None}
+    funnel = {**counts, **rates, "gargalo": min(candidates)[2] if candidates else None,
+              "entraram_ja_clientes": int(report.get("entraram_ja_clientes", 0) or 0)}
 
     paid = dict.fromkeys(_COUNT_KEYS, 0)
     inv = rec = 0.0
@@ -506,13 +523,14 @@ def _fetch_leads(sb, mode: str, lo: str | None, hi: str | None) -> list[dict[str
 
     if mode == "sale":
         def _sales_q():
-            q = sb.table("sales").select("lead_id")
+            q = sb.table("sales").select("lead_id, status")
             if lo:
                 q = q.gte("sold_at", lo)
             if hi:
                 q = q.lte("sold_at", hi)
             return q
-        sale_ids = sorted({r["lead_id"] for r in _fetch_all(_sales_q) if r.get("lead_id")})
+        sale_ids = sorted({r["lead_id"] for r in _fetch_all(_sales_q)
+                           if r.get("lead_id") and not _cancelada(r)})
         leads: list[dict[str, Any]] = []
         for chunk in _chunks(sale_ids):
             leads.extend(_leads_in(chunk))
@@ -574,7 +592,7 @@ def _sales_by_lead(sb, lead_ids: list[str], lo: str | None, hi: str | None, mode
     out: dict[str, dict[str, Any]] = {}
     for chunk in _chunks(lead_ids):
         def _q(c=chunk):
-            q = sb.table("sales").select("lead_id, value, sold_at").in_("lead_id", c)
+            q = sb.table("sales").select("lead_id, value, sold_at, status").in_("lead_id", c)
             if mode == "sale" and lo:
                 q = q.gte("sold_at", lo)
             if mode == "sale" and hi:
@@ -582,7 +600,7 @@ def _sales_by_lead(sb, lead_ids: list[str], lo: str | None, hi: str | None, mode
             return q
         for r in _fetch_all(_q):
             lid = r.get("lead_id")
-            if not lid:
+            if not lid or _cancelada(r):
                 continue
             agg = out.setdefault(lid, {"count": 0, "value": 0.0, "last_sold_at": None,
                                         "first_sold_at": None})
@@ -787,13 +805,13 @@ def campaign_detail(channel: str, campaign: str, period: str = "30d", mode: str 
         sales_rows: list[dict[str, Any]] = []
         for chunk in _chunks(lead_ids):
             def _sq(c=chunk):
-                q = sb.table("sales").select("value, sold_at").in_("lead_id", c)
+                q = sb.table("sales").select("value, sold_at, status").in_("lead_id", c)
                 if mode == "sale" and lo:
                     q = q.gte("sold_at", lo)
                 if mode == "sale" and hi:
                     q = q.lte("sold_at", hi)
                 return q
-            sales_rows.extend(_fetch_all(_sq))
+            sales_rows.extend(r for r in _fetch_all(_sq) if not _cancelada(r))
         timeseries = build_campaign_timeseries(_daterange_days(lo, hi), selected, sales_rows)
         return {"summary": summary, "leads": leads, "timeseries": timeseries}
     except Exception as exc:
