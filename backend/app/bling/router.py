@@ -157,6 +157,23 @@ def _termo_seguro(q: str) -> str:
     return q.translate(str.maketrans({",": " ", "(": " ", ")": " ", '"': " "})).strip()
 
 
+# So digitos e a pontuacao de mascara de CPF/CNPJ (ponto, barra, hifen, espaco).
+_TERMO_DE_DOCUMENTO_RE = re.compile(r"[\d\s./-]+")
+
+
+def _documento_do_termo(q: str | None) -> str | None:
+    """O termo e um CPF/CNPJ inteiro (com ou sem mascara)? Devolve so os digitos.
+
+    Caso Vida Natural (call de 01/10): o vendedor colou "12.345.678/0001-90" e a busca
+    nao achou nada, porque `doc_digits` guarda so digitos e o termo ia cru para o
+    `ilike`. Termo com letra nunca e documento; 11 ou 14 digitos sim.
+    """
+    if not q or not _TERMO_DE_DOCUMENTO_RE.fullmatch(q.strip()):
+        return None
+    digitos = "".join(ch for ch in q if ch.isdigit())
+    return digitos if len(digitos) in (11, 14) else None
+
+
 def _query_products(q: str | None, limit: int, account: str):
     query = (get_supabase().table("bling_products")
              .select("id, codigo, nome, preco, unidade, saldo_virtual, imagem_url")
@@ -221,8 +238,13 @@ def _query_contacts(q: str | None, limit: int, account: str, contact_id: int | N
         # ignorado.
         query = query.eq("id", contact_id)
     elif q:
-        alvo = f"%{_termo_seguro(q)}%"
-        query = query.or_(f"nome.ilike.{alvo},fantasia.ilike.{alvo},doc_digits.ilike.{alvo}")
+        doc = _documento_do_termo(q)
+        if doc:
+            # Documento inteiro: igualdade exata, nao ilike (ver _documento_do_termo).
+            query = query.eq("doc_digits", doc)
+        else:
+            alvo = f"%{_termo_seguro(q)}%"
+            query = query.or_(f"nome.ilike.{alvo},fantasia.ilike.{alvo},doc_digits.ilike.{alvo}")
     return getattr(query.order("nome").limit(limit).execute(), "data", None) or []
 
 

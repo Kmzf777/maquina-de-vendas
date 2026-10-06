@@ -21,7 +21,13 @@ import logging
 from datetime import datetime, timezone
 
 from app.bling import config
-from app.bling.orders import cancel_from_bling, upsert_from_bling
+from app.bling.orders import (
+    _sold_at_iso,
+    cancel_from_bling,
+    garantir_reposicao_apos_venda,
+    upsert_from_bling,
+    venda_recente,
+)
 from app.bling.products import apply_product_event
 from app.db.supabase import get_supabase
 
@@ -67,6 +73,19 @@ def _sale_event_date(account: str, order_id: int) -> str | None:
     return (linhas[0] or {}).get("bling_event_date") if linhas else None
 
 
+def _venda_ja_existia(account: str, order_id: int) -> bool:
+    """Ja ha linha em `sales` para este pedido? Erro de leitura → True (nao cria card)."""
+    try:
+        res = (get_supabase().table("sales").select("id")
+               .eq("bling_account", account).eq("bling_order_id", order_id)
+               .limit(1).execute())
+        return bool(getattr(res, "data", None))
+    except Exception:
+        logger.warning("[BLING WEBHOOK] nao consegui checar se o pedido %s ja existia — "
+                       "Reposicao nao sera criada", order_id, exc_info=True)
+        return True
+
+
 async def _last_event_date(account: str, order_id: int) -> str | None:
     return await asyncio.to_thread(_sale_event_date, account, order_id)
 
@@ -104,7 +123,22 @@ async def _handle_order(evento: dict, corpo: dict) -> str:
         else:
             logger.warning("[BLING WEBHOOK] contato %s ausente do espelho", contact_id)
 
+    # Reposicao (spec P1.4): so venda NOVA e RECENTE. A checagem de existencia vem antes
+    # do upsert (depois dele a linha sempre existe). Pedido criado pelo CRM ja passou
+    # por `create_order`, que cuidou do card — por isso "ja existia" nao cria. O
+    # backfill nao passa por aqui, entao nunca abre cards em massa.
+    nova_e_recente = False
+    if lead_id and venda_recente(_sold_at_iso(pedido, event_date)):
+        nova_e_recente = not await asyncio.to_thread(_venda_ja_existia, account, order_id)
+
     await upsert_from_bling(pedido, lead_id=lead_id, event_date=event_date, account=account)
+
+    if nova_e_recente:
+        try:
+            await asyncio.to_thread(garantir_reposicao_apos_venda, lead_id, None)
+        except Exception:
+            logger.exception("[BLING WEBHOOK] Reposicao do lead %s falhou (venda mantida)",
+                             lead_id)
     return "done"
 
 

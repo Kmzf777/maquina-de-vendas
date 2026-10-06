@@ -231,6 +231,65 @@ def _link(lead_id: str, contact_id: int, account: str) -> None:
     }, on_conflict="lead_id,account").execute())
 
 
+# Campos que o vinculo devolve ao lead. So entram onde o lead esta VAZIO: o que o
+# vendedor digitou no CRM nunca e sobrescrito pelo ERP.
+def _vazio(valor) -> bool:
+    return valor is None or not str(valor).strip()
+
+
+def _preencher_lead_com_contato(lead_id: str, contato: dict) -> dict:
+    """Devolve ao lead o documento, a razao social e o e-mail do contato Bling vinculado.
+
+    Caso Vida Natural (call de 01/10): o contato foi escolhido no modal, o vinculo foi
+    gravado, mas `leads.cnpj` continuou vazio — e a resolucao automatica (`resolve`) so
+    olha `leads.cnpj`. Toda via que grava `lead_bling_contacts` chama isto.
+
+    `contato` e uma linha do espelho (`doc_digits`, `nome`, `email`) ou o que o modal
+    mandou (`numeroDocumento`). Documento invalido nao sobe (mesma regra do `resolve`).
+
+    Fail-soft: o vinculo ja foi gravado e e o que importa para a venda; uma falha aqui
+    so deixa o lead como estava. Devolve o que foi gravado (vazio se nada).
+    """
+    try:
+        doc = doc_digits(contato.get("doc_digits") or contato.get("numeroDocumento"))
+        do_contato = {
+            "cnpj": doc if is_valid_document(doc) else None,
+            "razao_social": (contato.get("nome") or "").strip() or None,
+            "email": (contato.get("email") or "").strip() or None,
+        }
+        do_contato = {k: v for k, v in do_contato.items() if v}
+        if not do_contato:
+            return {}
+        sb = get_supabase()
+        res = (sb.table("leads").select("cnpj, razao_social, email")
+               .eq("id", lead_id).limit(1).execute())
+        linhas = getattr(res, "data", None) or []
+        if not linhas:
+            return {}
+        atual = linhas[0]
+        patch = {k: v for k, v in do_contato.items() if _vazio(atual.get(k))}
+        if patch:
+            sb.table("leads").update(patch).eq("id", lead_id).execute()
+        return patch
+    except Exception:
+        logger.warning("[BLING] vinculo do lead %s gravado, mas o preenchimento a partir "
+                       "do contato falhou", lead_id, exc_info=True)
+        return {}
+
+
+def _preencher_pelo_espelho(lead_id: str, contact_id: int, account: str) -> dict:
+    """Le o contato no espelho (NESTA conta) e preenche o lead. Fail-soft."""
+    try:
+        res = (get_supabase().table("bling_contacts").select(_CONTACT_COLS)
+               .eq("id", contact_id).eq("account", account).limit(1).execute())
+        linhas = getattr(res, "data", None) or []
+    except Exception:
+        logger.warning("[BLING] espelho do contato %s (conta %s) indisponivel para "
+                       "preencher o lead %s", contact_id, account, lead_id, exc_info=True)
+        return {}
+    return _preencher_lead_com_contato(lead_id, linhas[0]) if linhas else {}
+
+
 def _e_violacao_de_unicidade(exc: Exception) -> bool:
     """A violacao veio do indice UNIQUE
     `lead_bling_contacts_account_contact_key` em (account, bling_contact_id)
@@ -287,6 +346,7 @@ async def resolve(lead: dict, account: str = config.DEFAULT_ACCOUNT) -> Resoluti
                 )
                 return Resolution("ambiguous", None, achados,
                                   reason="contato_ja_vinculado")
+            await asyncio.to_thread(_preencher_lead_com_contato, lead["id"], achados[0])
             return Resolution("linked", contact_id, reason="documento")
         if len(achados) > 1:
             # Dois contatos com o mesmo CPF/CNPJ e sujeira no ERP. Escolher um
@@ -312,8 +372,12 @@ async def link(lead_id: str, contact_id: int,
                 account: str = config.DEFAULT_ACCOUNT) -> None:
     """Confirma manualmente o vinculo NESTA conta (usado quando o vendedor
     escolhe candidato). O mesmo lead pode ter uma linha em `lead_bling_contacts`
-    por conta — vincular na conta 2 nunca apaga nem troca o vinculo da conta 1."""
+    por conta — vincular na conta 2 nunca apaga nem troca o vinculo da conta 1.
+
+    Depois de vincular, devolve ao lead o documento/razao/e-mail do contato (so nos
+    campos vazios) — ver `_preencher_lead_com_contato`."""
     await asyncio.to_thread(_link, lead_id, contact_id, account)
+    await asyncio.to_thread(_preencher_pelo_espelho, lead_id, contact_id, account)
 
 
 def _unlink(lead_id: str, account: str) -> None:
@@ -432,6 +496,9 @@ async def create_contact(client, lead: dict, dados: dict,
                 ),
                 status=409,
             ) from exc
+        await asyncio.to_thread(_preencher_lead_com_contato, lead["id"], {
+            "doc_digits": doc, "nome": dados.get("nome"), "email": dados.get("email"),
+        })
         return contact_id
 
 
@@ -574,6 +641,7 @@ async def ensure_lead(contato: dict, account: str = config.DEFAULT_ACCOUNT) -> s
                 _contato_do_lead, achado["id"], account)
             if contato_da_conta is None:
                 await asyncio.to_thread(_link, achado["id"], contact_id, account)
+                await asyncio.to_thread(_preencher_lead_com_contato, achado["id"], contato)
             return achado["id"]
 
     # SO celular como chave, nunca o fixo: um fixo de empresa e compartilhado entre
@@ -596,6 +664,9 @@ async def ensure_lead(contato: dict, account: str = config.DEFAULT_ACCOUNT) -> s
                 _contato_do_lead, achado["id"], account)
             if _pode_vincular_por_telefone(achado, doc, contato_da_conta):
                 await asyncio.to_thread(_link, achado["id"], contact_id, account)
+                # Caso Jovens/Iago: o lead achado pelo celular passa a ter o CNPJ, e a
+                # proxima venda pelo CRM resolve sozinha por documento.
+                await asyncio.to_thread(_preencher_lead_com_contato, achado["id"], contato)
             return achado["id"]
 
     endereco = contato.get("endereco") or {}
