@@ -38,6 +38,16 @@ export interface LeadCliente extends DadosDeContato {
 const COLUNAS_BASE = "id, name, phone, email, cnpj, razao_social";
 const COLUNAS_CLIENTE = `${COLUNAS_BASE}, ja_era_cliente, ja_era_cliente_fonte`;
 
+/**
+ * Coluna inexistente: `42703` vem do Postgres (select de coluna que não
+ * existe); `PGRST204` é o PostgREST sem a coluna no cache do esquema.
+ */
+const COLUNA_INEXISTENTE = new Set(["42703", "PGRST204"]);
+
+function erroDoSupabase(e: { message?: string } | null): Error {
+  return new Error(e?.message || "Não foi possível carregar o lead.");
+}
+
 export async function buscarLeadCliente(leadId: string): Promise<LeadCliente | null> {
   const sb = createClient();
   const completo = await sb
@@ -50,8 +60,13 @@ export async function buscarLeadCliente(leadId: string): Promise<LeadCliente | n
   // Sem a migração do P0 as colunas novas não existem e o select inteiro
   // falha. O cadastro continua valendo para o pré-preenchimento; só o "Já é
   // cliente?" fica indisponível (undefined) em vez de travar a venda.
+  // SÓ nesse caso: qualquer outro erro (rede, timeout, RLS) propaga — tratá-lo
+  // como "sem a coluna" deixaria a venda passar sem a pergunta obrigatória.
+  if (!COLUNA_INEXISTENTE.has(String((completo.error as { code?: string }).code ?? ""))) {
+    throw erroDoSupabase(completo.error);
+  }
   const base = await sb.from("leads").select(COLUNAS_BASE).eq("id", leadId).maybeSingle();
-  if (base.error) return null;
+  if (base.error) throw erroDoSupabase(base.error);
   return (base.data as unknown as LeadCliente | null) ?? null;
 }
 
@@ -122,18 +137,28 @@ export function precisaPerguntarJaEraCliente(
  * local (ex.: depois de gravar o "Já é cliente?") sem nova ida ao banco.
  */
 export function useLeadCliente(leadId: string | null | undefined) {
-  const [estado, setEstado] = useState<{ id: string; lead: LeadCliente | null } | null>(
-    null,
-  );
+  const [estado, setEstado] = useState<{
+    id: string;
+    lead: LeadCliente | null;
+    erro: string | null;
+  } | null>(null);
 
   useEffect(() => {
     if (!leadId) return;
     let vivo = true;
-    buscarLeadCliente(leadId)
-      .catch(() => null)
-      .then((lead) => {
-        if (vivo) setEstado({ id: leadId, lead });
-      });
+    buscarLeadCliente(leadId).then(
+      (lead) => {
+        if (vivo) setEstado({ id: leadId, lead, erro: null });
+      },
+      (e: unknown) => {
+        if (vivo)
+          setEstado({
+            id: leadId,
+            lead: null,
+            erro: e instanceof Error ? e.message : "Não foi possível carregar o lead.",
+          });
+      },
+    );
     return () => {
       vivo = false;
     };
@@ -145,7 +170,9 @@ export function useLeadCliente(leadId: string | null | undefined) {
     );
   }, []);
 
-  const lead = leadId && estado?.id === leadId ? estado.lead : null;
+  const doLead = leadId && estado?.id === leadId ? estado : null;
+  const lead = doLead?.lead ?? null;
+  const erro = doLead?.erro ?? null;
   const carregando = !!leadId && estado?.id !== leadId;
-  return { lead, carregando, atualizar };
+  return { lead, carregando, erro, atualizar };
 }

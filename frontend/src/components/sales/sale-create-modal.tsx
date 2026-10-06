@@ -246,9 +246,15 @@ export function SaleCreateModal({
   // modal era aberto pela conversa, e o vendedor redigitava tudo no cadastro
   // do Bling (call de 01/10).
   const resolvedLeadId = selectedLeadId || leadId || "";
-  const { lead: leadCliente, atualizar: atualizarLeadCliente } = useLeadCliente(
-    isEditing ? null : resolvedLeadId,
-  );
+  const {
+    lead: leadCliente,
+    carregando: carregandoLead,
+    erro: erroLead,
+    atualizar: atualizarLeadCliente,
+  } = useLeadCliente(isEditing ? null : resolvedLeadId);
+  // Sem o lead carregado não se sabe se "Já é cliente?" é obrigatório: salvar
+  // antes disso registraria a venda sem a pergunta.
+  const leadPendente = !isEditing && !!resolvedLeadId && (carregandoLead || !!erroLead);
   // Obrigatório só quando o banco não sabe (decisão de 06/10: automático
   // quando há evidência, o vendedor responde só na dúvida). Edição não pergunta.
   const perguntarCliente = !isEditing && precisaPerguntarJaEraCliente(leadCliente);
@@ -997,6 +1003,13 @@ export function SaleCreateModal({
               </p>
             )}
 
+            {erroLead && !isEditing && (
+              <p className="text-[12px] text-red-600">
+                Não foi possível carregar o lead ({erroLead}). Feche o painel e
+                abra de novo.
+              </p>
+            )}
+
             {faltaRespostaCliente && !error && (
               <p className="text-[11px] text-[#7b7b78]">
                 Responda “Já é cliente?” para registrar a venda.
@@ -1022,7 +1035,8 @@ export function SaleCreateModal({
                   saving ||
                   !gate.canSubmit ||
                   (blingMode && !orderResult?.valid) ||
-                  faltaRespostaCliente
+                  faltaRespostaCliente ||
+                  leadPendente
                 }
                 className="flex-1 py-2 text-[13px] font-medium text-white rounded-[4px] transition-colors bg-[#1f9d57] hover:bg-[#1b8a4c] disabled:bg-[#7b7b78]"
               >

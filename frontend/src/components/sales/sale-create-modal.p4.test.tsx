@@ -182,7 +182,7 @@ describe("SaleCreateModal — 'Já é cliente?' obrigatório (P4.4)", () => {
 
   it("banco sem a coluna (P0 não aplicado): não trava a venda", async () => {
     h.maybeSingle
-      .mockResolvedValueOnce({ data: null, error: { message: "column does not exist" } })
+      .mockResolvedValueOnce({ data: null, error: { code: "42703", message: "column does not exist" } })
       .mockResolvedValueOnce({ data: { id: "lead-1", name: "Iago" }, error: null });
     abrir({ blingEnabled: false });
     await waitFor(() => expect(h.maybeSingle).toHaveBeenCalledTimes(2));
@@ -256,5 +256,25 @@ describe("SaleCreateModal — lead e conversa congelados na abertura (revisão P
     h.maybeSingle.mockResolvedValue({ data: LEAD_VIDA, error: null });
     abrir({ blingEnabled: false });
     expect(await screen.findByText("Registrar venda — Iago")).toBeTruthy();
+  });
+});
+
+describe("SaleCreateModal — Salvar espera o lead (revisão P4)", () => {
+  it("bloqueia Salvar enquanto o lead carrega: a pergunta pode ainda aparecer", async () => {
+    let entregar: (v: unknown) => void = () => {};
+    h.maybeSingle.mockReturnValue(new Promise((r) => { entregar = r; }));
+    abrir({ blingEnabled: false });
+    const salvar = (await screen.findByRole("button", { name: "Registrar Venda" })) as HTMLButtonElement;
+    expect(salvar.disabled).toBe(true);
+    entregar({ data: LEAD_VIDA, error: null });
+    await waitFor(() => expect(salvar.disabled).toBe(false));
+  });
+
+  it("erro ao carregar o lead bloqueia Salvar e avisa", async () => {
+    h.maybeSingle.mockResolvedValue({ data: null, error: { code: "57014", message: "statement timeout" } });
+    abrir({ blingEnabled: false });
+    expect(await screen.findByText(/Não foi possível carregar o lead/)).toBeTruthy();
+    const salvar = screen.getByRole("button", { name: "Registrar Venda" }) as HTMLButtonElement;
+    expect(salvar.disabled).toBe(true);
   });
 });
