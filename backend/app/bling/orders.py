@@ -338,6 +338,65 @@ def _move_deal_to_won(deal_id: str) -> bool:
     return True
 
 
+# Venda do webhook so cria card de Reposicao se for recente: o backfill historico e um
+# order.created atrasado nao podem abrir cards em massa para vendas de meses atras.
+JANELA_REPOSICAO_WEBHOOK = timedelta(days=7)
+
+
+def venda_recente(sold_at_iso: str | None, agora: datetime | None = None) -> bool:
+    """`sold_at` (ISO) esta dentro da janela de 7 dias? Data ilegivel → False (fail-closed)."""
+    if not sold_at_iso:
+        return False
+    try:
+        quando = datetime.fromisoformat(str(sold_at_iso).replace("Z", "+00:00"))
+    except ValueError:
+        return False
+    if quando.tzinfo is None:
+        quando = quando.replace(tzinfo=timezone.utc)
+    agora = agora or datetime.now(timezone.utc)
+    return quando >= agora - JANELA_REPOSICAO_WEBHOOK
+
+
+def _deal_de_origem_do_lead(lead_id: str) -> str | None:
+    """Deal mais recente do lead num funil que TEM reposicao mapeada (Atacado/Private Label).
+
+    Venda do Bling entra sem deal (D7) e `ensure_reposicao_deal` e fail-closed sem deal:
+    o destino da Reposicao depende do funil de ORIGEM. Sem nenhum deal mapeado → None, e
+    nada e criado (criar no funil errado ja extraviou 19 cards em 09/2026).
+    Ordena em Python para nao depender de `.order` (lead tem poucos deals).
+    """
+    from app.leads.reposicao import reposicao_pipeline_para
+    res = (get_supabase().table("deals").select("id, pipeline_id, created_at")
+           .eq("lead_id", lead_id).limit(200).execute())
+    linhas = getattr(res, "data", None) or []
+    linhas = sorted(linhas, key=lambda d: str(d.get("created_at") or ""), reverse=True)
+    for deal in linhas:
+        if reposicao_pipeline_para(deal.get("pipeline_id")):
+            return deal.get("id")
+    return None
+
+
+def garantir_reposicao_apos_venda(lead_id: str | None, deal_id: str | None = None) -> None:
+    """Chama `ensure_reposicao_deal` para a venda (spec P1.4). Nunca levanta.
+
+    `deal_id` e o card que a venda fechou; sem ele, usa o deal de origem do lead. Falha
+    aqui e logada e NAO desfaz a venda: o pedido ja existe no ERP.
+    """
+    if not lead_id:
+        return
+    try:
+        from app.leads import reposicao
+        origem = deal_id or _deal_de_origem_do_lead(lead_id)
+        if not origem:
+            logger.info("[BLING] venda do lead %s sem deal de funil mapeado — "
+                        "Reposicao nao criada (fail-closed)", lead_id)
+            return
+        reposicao.ensure_reposicao_deal(lead_id, deal_id=origem)
+    except Exception:
+        logger.exception("[BLING] falha ao garantir a Reposicao do lead %s (venda mantida)",
+                         lead_id)
+
+
 async def _find_order_by_key(client, idempotency_key: str) -> dict | None:
     """Procura no Bling um pedido ja criado com este `numeroLoja`.
 
@@ -481,9 +540,10 @@ async def create_order(client, *, lead_id: str, deal_id: str | None, contact_id:
     # Fecha o deal, como faz o POST /api/sales. Fica AQUI e nao no router para
     # que o caminho da fila (jobs.py retentando) tambem mova o card — senao a
     # venda que passou pelo 202 deixaria o deal parado no funil para sempre.
+    movido = False
     if deal_id:
         try:
-            await asyncio.to_thread(_move_deal_to_won, deal_id)
+            movido = bool(await asyncio.to_thread(_move_deal_to_won, deal_id))
         except Exception:
             # Mesma regra do resto do bloco: depois do POST aceito nada levanta.
             # Um deal no stage errado e cosmetico e corrigivel na mao; propagar
@@ -491,6 +551,13 @@ async def create_order(client, *, lead_id: str, deal_id: str | None, contact_id:
             # a fila retentar, duplicando o pedido.
             logger.exception("[BLING] pedido %s criado, mas falhou ao mover o "
                              "deal %s para Fechado Ganho", order_id, deal_id)
+
+    # Reposicao (spec P1.4): o POST /api/sales cria o card via `sale_created`; este
+    # caminho nao emite o evento, entao chama direto. Deal informado so conta se foi
+    # MOVIDO para ganho; sem deal, vale o deal de origem do lead. Nunca levanta.
+    if movido or not deal_id:
+        await asyncio.to_thread(garantir_reposicao_apos_venda, lead_id,
+                                deal_id if movido else None)
 
     logger.info("[BLING] pedido %s (numero %s) criado para o lead %s",
                 order_id, numero, lead_id)
