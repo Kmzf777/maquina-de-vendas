@@ -136,6 +136,7 @@ function response(status: number, body: Json) {
 const isListUrl = (url: string) => url.startsWith("/api/conversations?") || url === "/api/conversations";
 const isFirstPage = (url: string) => isListUrl(url) && !url.includes("cursor=");
 const isNextPage = (url: string) => isListUrl(url) && url.includes("cursor=");
+const isCounts = (url: string) => url.startsWith("/api/conversations/counts");
 
 // ---------------------------------------------------------------------------
 // Realtime falso
@@ -443,5 +444,30 @@ describe("useConversationList — conversa aberta de fora da janela carregada", 
     await vi.waitFor(() => expect(result.current.conversations).toHaveLength(5));
     expect(ids(result.current.conversations)).toEqual(["a", "b", "c", "d", "e"].map(uid));
     expect(result.current.selectedConversation?.id).toBe(uid("e"));
+  });
+});
+
+describe("useConversationList — badge durante fluxo contínuo", () => {
+  it("refreshes the counters during a continuous burst (throttle), not only after it stops", async () => {
+    server.db = [conv("a", 12), conv("b", 11)];
+    const { result } = setup();
+    await vi.waitFor(() => expect(result.current.counts).toBeTruthy());
+    const before = server.count(isCounts);
+
+    act(() => updateEvent({ id: uid("a"), unread_count: 1 }));
+    await tick();
+    expect(server.count(isCounts)).toBe(before + 1); // borda de subida: na hora
+
+    for (let i = 0; i < 9; i++) {
+      act(() => updateEvent({ id: uid("a"), unread_count: i + 2 }));
+      await tick(1_000);
+    }
+    // ~1 evento/s por 9s: ao menos uma atualização a cada 3s durante o fluxo.
+    expect(server.count(isCounts)).toBeGreaterThanOrEqual(before + 3);
+    expect(server.count(isCounts)).toBeLessThanOrEqual(before + 5);
+
+    const duringBurst = server.count(isCounts);
+    await tick(10_000);
+    expect(server.count(isCounts)).toBeLessThanOrEqual(duringBurst + 1); // trailing único
   });
 });

@@ -54,6 +54,34 @@ export const IGNORE_OUTSIDE_TAB_MS = 60_000;
 
 type SupabaseBrowserClient = ReturnType<typeof createClient>;
 
+/**
+ * Throttle com borda de subida e de descida: dispara na hora, no máximo uma vez a
+ * cada `waitMs` enquanto as chamadas continuam, e uma última vez depois da rajada.
+ */
+function throttle(fn: () => void, waitMs: number): (() => void) & { cancel: () => void } {
+  let lastRun = -Infinity;
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  const run = () => {
+    timer = null;
+    lastRun = Date.now();
+    fn();
+  };
+  const wrapped = () => {
+    const remaining = waitMs - (Date.now() - lastRun);
+    if (remaining <= 0) {
+      if (timer) clearTimeout(timer);
+      run();
+    } else if (!timer) {
+      timer = setTimeout(run, remaining);
+    }
+  };
+  wrapped.cancel = () => {
+    if (timer) clearTimeout(timer);
+    timer = null;
+  };
+  return wrapped;
+}
+
 export function useConversationList({
   supabase,
   channelId,
@@ -302,8 +330,10 @@ export function useConversationList({
   useEffect(() => {
     const invalidateAll = () => queryClient.invalidateQueries({ queryKey: ["conversations"] });
     const debouncedInvalidate = debounce(invalidateAll, REFETCH_DEBOUNCE_MS);
-    const debouncedCounts = debounce(
-      () => queryClient.invalidateQueries({ queryKey: ["conversation-counts"] }),
+    // Throttle (não debounce) nos contadores: num disparo em massa os eventos não
+    // param, e um debounce de 3s só atualizaria o badge quando o fluxo acabasse.
+    const throttledCounts = throttle(
+      () => void queryClient.invalidateQueries({ queryKey: ["conversation-counts"] }),
       REFETCH_DEBOUNCE_MS,
     );
 
@@ -378,7 +408,7 @@ export function useConversationList({
         "postgres_changes",
         { event: "*", schema: "public", table: "conversations" },
         (payload) => {
-          debouncedCounts(); // não lidas/total podem ter mudado
+          throttledCounts(); // não lidas/total podem ter mudado
           if (payload.eventType === "DELETE") {
             const oldId = (payload.old as { id?: string } | null)?.id;
             if (!oldId) return;
@@ -455,7 +485,7 @@ export function useConversationList({
 
     return () => {
       debouncedInvalidate.cancel();
-      debouncedCounts.cancel();
+      throttledCounts.cancel();
       flushUnknown.cancel();
       supabase.removeChannel(realtimeChannel);
     };
