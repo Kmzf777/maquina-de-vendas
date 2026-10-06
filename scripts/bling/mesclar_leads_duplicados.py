@@ -14,8 +14,9 @@ REGRAS:
     digitos de `leads.cnpj`. Sobrevivente = o lead NAO-Bling. Mais de um possivel → ambiguo,
     nao mescla. Nenhum → orfao.
   - Move todas as linhas com `lead_id` (lista conferida contra information_schema — tabela
-    nao coberta ABORTA), copia cnpj/razao_social/nome_fantasia/email so onde o sobrevivente
-    esta vazio, grava `lead_events` 'mesclagem' e apaga o duplicado.
+    nao coberta ABORTA; a foto do incidente de 03/10 e ignorada de proposito), copia
+    cnpj/razao_social/nome_fantasia/email so onde o sobrevivente esta vazio, grava
+    `lead_events` 'mesclagem' e apaga o duplicado.
   - Sobrevivente que receberia mais de 2 duplicados (celular compartilhado, contatos de
     teste) vai INTEIRO para os ambiguos.
   - Vendas gemeas (mesmo valor, sold_at a <= 1 dia, uma bling e outra manual/crm): so relata.
@@ -212,7 +213,7 @@ def vendas_gemeas(pares, vendas):
 SO_MOVER = (
     "sales", "deals", "quotes", "lead_notes", "lead_events", "conversations", "messages",
     "messages_archive", "conversion_events", "campaign_execution_log", "lp_email_jobs",
-    "token_usage", "follow_up_jobs_incidente_20261003",
+    "token_usage",
 )
 
 # Com unicidade: a linha do duplicado que colidiria com uma do sobrevivente e APAGADA (o
@@ -238,13 +239,20 @@ COLISAO = {
 
 TABELAS_COBERTAS = frozenset(SO_MOVER) | frozenset(COLISAO)
 
+# Tabelas com lead_id que a mesclagem NAO toca, de proposito. So entra aqui o que nao e
+# dado vivo — qualquer outra tabela fora de COBERTAS continua abortando.
+#   follow_up_jobs_incidente_20261003: foto da explosao de follow-up de 03-04/10
+#   (1.019.539 linhas, sem indice em lead_id e sem FK para leads). Mover por par era um
+#   seq scan de 1M linhas em cada transacao; a foto fica com o lead_id da epoca.
+TABELAS_IGNORADAS = frozenset({"follow_up_jobs_incidente_20261003"})
+
 
 class TabelaNaoCoberta(RuntimeError):
     pass
 
 
 def verificar_cobertura(tabelas_no_banco):
-    faltando = sorted(set(tabelas_no_banco) - TABELAS_COBERTAS)
+    faltando = sorted(set(tabelas_no_banco) - TABELAS_COBERTAS - TABELAS_IGNORADAS)
     if faltando:
         raise TabelaNaoCoberta(
             "tabela(s) com lead_id que o script nao sabe mesclar: " + ", ".join(faltando)

@@ -149,7 +149,21 @@ def test_cobertura_bate_com_as_21_tabelas_de_producao():
         "lead_qualification_scores", "lead_seller_feelings", "lead_tags", "lp_email_jobs",
         "messages", "messages_archive", "quotes", "sales", "token_usage",
     }
-    assert m.TABELAS_COBERTAS == producao
+    assert m.TABELAS_COBERTAS | m.TABELAS_IGNORADAS == producao
+    assert not m.TABELAS_COBERTAS & m.TABELAS_IGNORADAS
+
+
+def test_snapshot_do_incidente_e_ignorado_e_nao_entra_no_sql():
+    """follow_up_jobs_incidente_20261003: 1.019.539 linhas sem indice em lead_id, varrida
+    por par. E foto do incidente de 03/10 (sem FK para leads), nao dado vivo."""
+    snapshot = "follow_up_jobs_incidente_20261003"
+    assert snapshot in m.TABELAS_IGNORADAS
+    m.verificar_cobertura(m.TABELAS_COBERTAS | {snapshot})
+    with pytest.raises(m.TabelaNaoCoberta):
+        m.verificar_cobertura(m.TABELAS_COBERTAS | {snapshot, "outra_nova"})
+    sql = m.sql_mesclar_par(DUP, HIAGO, {"sales", snapshot}, "m")
+    assert snapshot not in sql
+    assert snapshot not in m.q_backup({DUP}, {"sales", snapshot})
 
 
 def test_sql_do_par_move_tudo_e_apaga_o_duplicado():
