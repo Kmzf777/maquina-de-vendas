@@ -1087,6 +1087,41 @@ def carregar_ajustes_joao() -> dict[str, int]:
     return ajustes
 
 
+# ── O N da regra "quem comprou não recebe prospecção" (spec 2026-10-06, P6.1) ─────
+# Mesma tabela dos ajustes globais, chave própria. FORA de `AJUSTES_PADRAO` de
+# propósito: aquele dict é o contrato da TELA de ajustes (GET/PUT, fixado pela suíte),
+# e este número ainda não tem campo lá — é editado por SQL. Mesma disciplina
+# fail-closed para o default: tabela inexistente, erro ou valor ruim valem 30.
+AJUSTE_DIAS_SEM_PROSPECCAO = "dias_sem_prospeccao_apos_venda"
+_dias_sem_prospeccao_aviso_dado = False
+
+
+def carregar_dias_sem_prospeccao_apos_venda(sb=None) -> int:
+    """`followup_joao_ajustes[dias_sem_prospeccao_apos_venda]`, ou 30. Nunca levanta."""
+    global _dias_sem_prospeccao_aviso_dado
+    try:
+        linhas = (sb or get_supabase()).table("followup_joao_ajustes").select(
+            "chave, valor"
+        ).eq("chave", AJUSTE_DIAS_SEM_PROSPECCAO).execute().data or []
+    except Exception as exc:
+        if not _dias_sem_prospeccao_aviso_dado:
+            logger.warning(
+                "[JOAO_CADENCIA] %s não lido (%s) — vale o default %d",
+                AJUSTE_DIAS_SEM_PROSPECCAO, exc, DIAS_SEM_PROSPECCAO_PADRAO)
+            _dias_sem_prospeccao_aviso_dado = True
+        return DIAS_SEM_PROSPECCAO_PADRAO
+    for row in linhas if isinstance(linhas, list) else []:
+        if row.get("chave") != AJUSTE_DIAS_SEM_PROSPECCAO:
+            continue
+        try:
+            valor = int(row.get("valor"))
+        except (TypeError, ValueError):
+            continue
+        if valor >= 1:
+            return valor
+    return DIAS_SEM_PROSPECCAO_PADRAO
+
+
 def _dia_em_sao_paulo(now: datetime) -> tuple[str, str]:
     """`[início, fim)` do dia corrente em America/Sao_Paulo, em ISO UTC.
 
