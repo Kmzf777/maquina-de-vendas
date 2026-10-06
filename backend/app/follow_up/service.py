@@ -1458,6 +1458,63 @@ def _jobs_do_card(jobs: list[dict], lead_id: str, deal_id: str | None) -> list[d
     return do_card
 
 
+def _lotes(ids: list[str]):
+    for i in range(0, len(ids), _LOTE_DE_LEADS):
+        yield ids[i:i + _LOTE_DE_LEADS]
+
+
+def _vendas_dos_leads(
+    sb, lead_ids: list[str], *, com_kit: bool,
+) -> dict[str, list[dict]] | None:
+    """`{lead_id: [vendas]}` dos candidatos, paginando (teto de 1.000 do PostgREST).
+
+    Com `com_kit`, cada venda não cancelada ganha `kit: bool` lido de `sale_items`.
+    Lead sem venda simplesmente não aparece (`.get(lead, [])` = "li, e não há").
+    FAIL-CLOSED: qualquer erro devolve None e a passagem não matricula ninguém — sem
+    saber se o lead comprou, não se manda prospecção (nem kit). Metade das vendas é tão
+    perigoso quanto nenhuma, pelo mesmo motivo de `_jobs_joao_dos_leads`.
+    """
+    from app.follow_up.kit import venda_e_kit
+
+    vendas: dict[str, list[dict]] = {}
+    try:
+        for lote in _lotes(lead_ids):
+            for linha in _ler_todas_as_paginas(lambda lote=lote: sb.table("sales").select(
+                    "id, lead_id, sold_at, created_at, status"
+            ).in_("lead_id", lote).order("id")):
+                vendas.setdefault(linha.get("lead_id"), []).append(dict(linha))
+        if com_kit:
+            por_id = {v["id"]: v for vs in vendas.values() for v in vs
+                      if v.get("id") and not _venda_cancelada(v)}
+            itens: dict[str, list[dict]] = {}
+            for lote in _lotes(sorted(por_id)):
+                for item in _ler_todas_as_paginas(
+                        lambda lote=lote: sb.table("sale_items").select(
+                            "id, sale_id, bling_product_id, descricao"
+                        ).in_("sale_id", lote).order("id")):
+                    itens.setdefault(item.get("sale_id"), []).append(item)
+            for sale_id, venda in por_id.items():
+                venda["kit"] = venda_e_kit(itens.get(sale_id))
+    except Exception as exc:
+        logger.error("[JOAO_CADENCIA] falha ao ler as vendas dos candidatos: %s", exc)
+        return None
+    return vendas
+
+
+def _deals_criados_em(sb, deal_ids: list[str]) -> dict[str, datetime | None] | None:
+    """`{deal_id: created_at}` dos cards candidatos, paginando. None = erro (fail-closed)."""
+    criados: dict[str, datetime | None] = {}
+    try:
+        for lote in _lotes(deal_ids):
+            for linha in _ler_todas_as_paginas(lambda lote=lote: sb.table("deals").select(
+                    "id, created_at").in_("id", lote).order("id")):
+                criados[str(linha.get("id"))] = _parse_ts(linha.get("created_at"))
+    except Exception as exc:
+        logger.error("[JOAO_CADENCIA] falha ao ler a criação dos cards: %s", exc)
+        return None
+    return criados
+
+
 # `job_type` só depende do código da cadência, não do funil (cadence_joao.Cadencia.job_type)
 # — "reposicao_atacado" é só o funil que serve de ponto de entrada para pegar o objeto;
 # "reposicao_private_label" devolveria o mesmo `job_type`.
@@ -1934,6 +1991,25 @@ def _varrer_cadencia_joao(
     if jobs is None:
         return 0, 0
 
+    # REGRA DE VENDA (spec 2026-10-06, P6). Lida em LOTE, uma vez por passagem, e
+    # fail-closed: sem saber se o lead comprou, ninguém entra nesta passagem.
+    vendas_por_lead: dict[str, list[dict]] | None = None
+    criado_em_por_deal: dict[str, datetime | None] = {}
+    dias_sem_prospeccao = DIAS_SEM_PROSPECCAO_PADRAO
+    if cadencia.codigo in CADENCIAS_COM_REGRA_DE_VENDA:
+        lead_ids = sorted({l["lead_id"] for l in linhas if l.get("lead_id")})
+        vendas_por_lead = _vendas_dos_leads(
+            sb, lead_ids, com_kit=cadencia.codigo == CADENCIA_KIT)
+        if vendas_por_lead is None:
+            return 0, 0
+        if cadencia.codigo in CADENCIAS_DE_PROSPECCAO:
+            deal_ids = sorted({str(l["deal_id"]) for l in linhas if l.get("deal_id")})
+            criados = _deals_criados_em(sb, deal_ids)
+            if criados is None:
+                return 0, 0
+            criado_em_por_deal = criados
+            dias_sem_prospeccao = carregar_dias_sem_prospeccao_apos_venda(sb)
+
     from app.leads.service import is_lead_blacklisted
 
     rows: list[dict] = []
@@ -1958,7 +2034,13 @@ def _varrer_cadencia_joao(
         if not lead_id:
             continue
         do_card = _jobs_do_card(jobs, lead_id, deal_id)
-        motivo = motivo_para_pular_joao(cadencia, do_card, now)
+        motivo = motivo_para_pular_joao(
+            cadencia, do_card, now,
+            vendas=(None if vendas_por_lead is None
+                    else vendas_por_lead.get(lead_id, [])),
+            deal_criado_em=criado_em_por_deal.get(str(deal_id)),
+            dias_sem_prospeccao=dias_sem_prospeccao,
+        )
         if motivo:
             logger.debug(
                 "[JOAO_CADENCIA] %s/%s pula card %s: %s",
@@ -2038,7 +2120,9 @@ def agendar_cadencias_joao(now: datetime | None = None, teto: int | None = None)
         if esgotou_o_dia:
             break
         overrides_do_funil = overrides.get(f.codigo) or {}
-        for cadencia_do_codigo in f.cadencias:
+        # `cadencias_do_funil` e não `f.cadencias`: inclui as complementares (o `kit` da
+        # Reposição, spec 2026-10-06), que não estão na tela mas são do funil.
+        for cadencia_do_codigo in cadencias_do_funil(f.codigo):
             ov = overrides_do_funil.get(cadencia_do_codigo.codigo) or {}
             cadencia = resolver_para_agendar(f.codigo, cadencia_do_codigo.codigo, ov)
             if not cadencia.ativa:
