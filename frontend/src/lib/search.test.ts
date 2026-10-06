@@ -5,6 +5,8 @@ import {
   dealMatchesSearch,
   buildAccentInsensitivePattern,
   buildLeadSearchOrFilter,
+  searchTokens,
+  buildDigitsPattern,
 } from "./search";
 
 describe("foldText", () => {
@@ -141,11 +143,108 @@ describe("buildLeadSearchOrFilter", () => {
   });
 
   it("adds a phone term only when the query carries digits", () => {
-    expect(buildLeadSearchOrFilter("(34) 99999-8888")).toContain("phone.ilike.*34999998888*");
-    expect(buildLeadSearchOrFilter("aisl")).not.toContain("phone.ilike");
+    expect(buildLeadSearchOrFilter("(34) 99999-8888")).toContain(
+      `phone.imatch.${buildDigitsPattern("34999998888")}`,
+    );
+    expect(buildLeadSearchOrFilter("aisl")).not.toContain("phone.");
   });
 
   it("returns null for an unsearchable query", () => {
     expect(buildLeadSearchOrFilter("  ")).toBeNull();
+  });
+});
+
+describe("leadMatchesSearch — tokens, e-mail e CNPJ (P5)", () => {
+  const hiago = {
+    name: "Hiago Angelucci",
+    phone: "5534999998888",
+    email: "compras@vidanatural.com.br",
+    cnpj: "25139264000151",
+    company: "Vida Natural",
+  };
+
+  it("matches all terms in any order", () => {
+    expect(leadMatchesSearch("angelucci hiago", hiago)).toBe(true);
+    expect(leadMatchesSearch("Hiago   ANGELUCCI", hiago)).toBe(true);
+  });
+
+  it("requires every term", () => {
+    expect(leadMatchesSearch("hiago souza", hiago)).toBe(false);
+  });
+
+  it("lets terms hit different fields", () => {
+    expect(leadMatchesSearch("hiago natural", hiago)).toBe(true);
+    expect(leadMatchesSearch("hiago 99999", hiago)).toBe(true);
+  });
+
+  it("matches by e-mail", () => {
+    expect(leadMatchesSearch("compras@vidanatural", hiago)).toBe(true);
+    expect(leadMatchesSearch("vidanatural.com", hiago)).toBe(true);
+  });
+
+  it("finds a CNPJ typed with mask by its digits", () => {
+    expect(leadMatchesSearch("25.139.264/0001-51", hiago)).toBe(true);
+    expect(leadMatchesSearch("25139264", hiago)).toBe(true);
+  });
+
+  it("finds a CNPJ stored with mask by the digits typed", () => {
+    const masked = { name: "Loja", cnpj: "25.139.264/0001-51" };
+    expect(leadMatchesSearch("25139264000151", masked)).toBe(true);
+    expect(leadMatchesSearch("25.139.264/0001-51", masked)).toBe(true);
+  });
+
+  it("keeps matching a contiguous phrase (superset of the old behavior)", () => {
+    expect(leadMatchesSearch("hiago ang", hiago)).toBe(true);
+  });
+
+  it("matches nothing for a query made only of punctuation", () => {
+    expect(leadMatchesSearch("...", hiago)).toBe(false);
+  });
+});
+
+describe("searchTokens", () => {
+  it("folds, splits on anything that is not a letter or digit, drops empties", () => {
+    expect(searchTokens("  Angelucci,  HIÁGO ")).toEqual(["angelucci", "hiago"]);
+    expect(searchTokens("compras@vida.com")).toEqual(["compras", "vida", "com"]);
+    expect(searchTokens("...")).toEqual([]);
+  });
+});
+
+describe("buildDigitsPattern", () => {
+  it("tolerates up to two separators between digits", () => {
+    const re = new RegExp(buildDigitsPattern("25139264000151"));
+    expect(re.test("25.139.264/0001-51")).toBe(true);
+    expect(re.test("25139264000151")).toBe(true);
+    expect(new RegExp(buildDigitsPattern("34988887777")).test("(34) 98888-7777")).toBe(true);
+  });
+
+  it("never emits characters that break the PostgREST or=() parser", () => {
+    expect(buildDigitsPattern("123")).not.toMatch(/[.,()*\\"]/);
+  });
+});
+
+describe("buildLeadSearchOrFilter — tokens (P5)", () => {
+  it("ANDs one OR-group per term when there are several terms", () => {
+    const filter = buildLeadSearchOrFilter("angelucci hiago") ?? "";
+    expect(filter.startsWith("and(or(")).toBe(true);
+    expect(filter).toContain("name.imatch.[aàáâãäå][nñ]g");
+    expect(filter).toContain("name.imatch.h[iìíîï][aàáâãäå]g[oòóôõö]");
+  });
+
+  it("looks at e-mail", () => {
+    expect(buildLeadSearchOrFilter("compras")).toContain("email.imatch.");
+  });
+
+  it("matches the whole digit string on phone and cnpj, with or without mask", () => {
+    const filter = buildLeadSearchOrFilter("25.139.264/0001-51") ?? "";
+    const d = buildDigitsPattern("25139264000151");
+    expect(filter).toContain(`phone.imatch.${d}`);
+    expect(filter).toContain(`cnpj.imatch.${d}`);
+  });
+
+  it("keeps a single-term query flat (no and())", () => {
+    const filter = buildLeadSearchOrFilter("cafe") ?? "";
+    expect(filter).not.toContain("and(");
+    expect(filter).not.toContain("phone.");
   });
 });

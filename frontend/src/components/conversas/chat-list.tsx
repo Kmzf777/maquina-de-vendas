@@ -31,6 +31,14 @@ interface ChatListProps {
   isRefreshing?: boolean;
   onRetry?: () => void;
   onSelectMessageResult?: (conversationId: string, messageId: string) => void;
+  /** Total de conversas não lidas contado no servidor (todas as páginas). Sem ele, conta a página carregada. */
+  unreadTotal?: number;
+  /** Há mais páginas no servidor depois da última carregada. */
+  hasMore?: boolean;
+  /** Uma próxima página está sendo buscada. */
+  loadingMore?: boolean;
+  /** Pede a próxima página (rolagem infinita). */
+  onLoadMore?: () => void;
 }
 
 function getStageColor(stage: string | undefined): string {
@@ -112,6 +120,10 @@ export function ChatList({
   isRefreshing,
   onRetry,
   onSelectMessageResult,
+  unreadTotal: unreadTotalProp,
+  hasMore = false,
+  loadingMore = false,
+  onLoadMore,
 }: ChatListProps) {
   const [search, setSearch] = useState("");
   const [msgResults, setMsgResults] = useState<MessageSearchResult[]>([]);
@@ -122,8 +134,9 @@ export function ChatList({
 
   // Busca server-side (>= 2 chars), debounced, latest-wins — em duas frentes no
   // mesmo ciclo: CONTATOS e MENSAGENS. A de contatos existe porque a lista
-  // carregada para no teto de 1.000 linhas do PostgREST: filtrar só o que está
-  // em memória jurava "Nenhum contato encontrado" com a conversa viva no banco.
+  // carregada é paginada (200 por página; antes, cortada em 1.000 linhas pelo
+  // PostgREST): filtrar só o que está em memória jurava "Nenhum contato
+  // encontrado" com a conversa viva no banco.
   useEffect(() => {
     const q = search.trim();
     if (q.length < CONTACT_SEARCH_MIN_LEN) {
@@ -180,7 +193,9 @@ export function ChatList({
     return () => clearInterval(id);
   }, []);
 
-  const unreadTotal = conversations.filter((c) => (c.unread_count ?? 0) > 0).length;
+  // Contador do servidor (todas as páginas); a contagem local é só fallback.
+  const unreadTotal =
+    unreadTotalProp ?? conversations.filter((c) => (c.unread_count ?? 0) > 0).length;
 
   const tabsScrollRef = useRef<HTMLDivElement>(null);
   const [canScrollLeft, setCanScrollLeft] = useState(false);
@@ -213,13 +228,36 @@ export function ChatList({
   const searchQuery = search.trim();
   const isServerSearching = searchQuery.length >= CONTACT_SEARCH_MIN_LEN;
 
+  // Rolagem infinita: quando o fim da lista entra na tela, pede a próxima página.
+  // Enquanto a sentinela continuar visível (a aba esconde itens da página nova), o
+  // efeito pede de novo assim que a página anterior termina de carregar.
+  const sentinelRef = useRef<HTMLDivElement>(null);
+  const [sentinelVisible, setSentinelVisible] = useState(false);
+  const showSentinel = hasMore && !isServerSearching;
+  useEffect(() => {
+    const el = sentinelRef.current;
+    if (!showSentinel || !el || typeof IntersectionObserver === "undefined") return;
+    const io = new IntersectionObserver(
+      (entries) => setSentinelVisible(entries.some((e) => e.isIntersecting)),
+      { rootMargin: "400px 0px" },
+    );
+    io.observe(el);
+    return () => {
+      io.disconnect();
+      setSentinelVisible(false);
+    };
+  }, [showSentinel]);
+  useEffect(() => {
+    if (sentinelVisible && showSentinel && !loadingMore) onLoadMore?.();
+  }, [sentinelVisible, showSentinel, loadingMore, onLoadMore]);
+
   // Local: o que já está em memória, com o MESMO matcher do servidor
   // (accent-insensitive, cobrindo empresa/razão social e telefone formatado).
   const localMatches = conversations
     .filter((conv) => conversationMatchesTab(conv, activeTab))
     .filter((conv) => (searchQuery ? leadMatchesSearch(searchQuery, conv.leads ?? {}) : true));
 
-  // Remoto: o que só existe além do teto da lista. A aba filtra os dois lados.
+  // Remoto: o que ainda não foi carregado (páginas seguintes). A aba filtra os dois lados.
   const filteredConversations = isServerSearching
     ? mergeContactResults(
         localMatches,
@@ -511,12 +549,30 @@ export function ChatList({
           </>
         ) : (
           <>
-            {filteredConversations.length === 0 && (
+            {filteredConversations.length === 0 && !hasMore && (
               <p className="text-[#7b7b78] text-sm text-center py-8">
                 Nenhuma conversa encontrada.
               </p>
             )}
             {filteredConversations.map((conv) => renderConversationRow(conv))}
+            {showSentinel && (
+              <div ref={sentinelRef} className="px-3 py-3 flex justify-center">
+                {loadingMore ? (
+                  <span className="flex items-center gap-2 text-[11px] text-[#7b7b78]">
+                    <span className="w-3 h-3 border-2 border-[#dedbd6] border-t-[#111111] rounded-full animate-spin flex-shrink-0" />
+                    Carregando mais conversas...
+                  </span>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => onLoadMore?.()}
+                    className="text-[12px] text-[#7b7b78] underline underline-offset-2 hover:text-[#111111]"
+                  >
+                    Carregar mais conversas
+                  </button>
+                )}
+              </div>
+            )}
           </>
         )}
       </div>

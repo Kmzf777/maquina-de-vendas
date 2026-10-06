@@ -6,6 +6,13 @@ import {
   enrichConversations,
   type EnrichableConversation,
 } from "@/lib/supabase/conversation-enrichment";
+import {
+  CONVERSATIONS_PAGE_SIZE,
+  cursorOrFilter,
+  decodeCursor,
+  parseTabFilter,
+  splitPage,
+} from "./list-params";
 
 interface EvolutionChat {
   id?: string;
@@ -136,13 +143,21 @@ export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url);
   const channelId = searchParams.get("channel_id");
   const status = searchParams.get("status");
-  // Filtro por lead: usado pelo deep-link `/conversas?lead_id=...`, que precisa
-  // abrir a conversa mesmo quando ela está fora do teto de linhas da listagem.
+  // Filtro por lead: usado pelo deep-link `/conversas?lead_id=...` e pelas conversas
+  // irmãs (mesmo lead em outro canal).
   const leadId = searchParams.get("lead_id");
+  // Aba da lista como filtro de SERVIDOR: filtrar no cliente só enxergava a página
+  // carregada (e antes, o teto de 1.000 linhas do PostgREST).
+  const tabFilter = parseTabFilter(searchParams.get("tab"));
+  const rawCursor = searchParams.get("cursor");
+  const cursor = decodeCursor(rawCursor);
+  if (rawCursor && !cursor) {
+    return NextResponse.json({ error: "invalid cursor" }, { status: 400 });
+  }
 
   // Determina quais channel_ids o usuário logado pode ver.
   // Falha de auth lança ChannelAccessError → respondemos 401, NUNCA [] silencioso
-  // (um [] em erro é indistinguível de "zero conversas" e apaga a lista na UI).
+  // (uma lista vazia em erro é indistinguível de "zero conversas" e apaga a lista na UI).
   let allowedChannelIds: string[] | null;
   try {
     allowedChannelIds = await getAllowedChannelIds(supabase);
@@ -153,8 +168,16 @@ export async function GET(request: NextRequest) {
     throw err;
   }
 
-  // 1. Get DB conversations
-  let dbQuery = supabase.from("conversations").select(conversationSelect());
+  if (allowedChannelIds !== null && allowedChannelIds.length === 0) {
+    // Usuário não tem nenhum canal — página vazia imediatamente
+    return NextResponse.json({ conversations: [], next_cursor: null });
+  }
+
+  // 1. Página de conversas do banco. A aba por estágio filtra pelo lead embutido, o
+  // que exige INNER JOIN (com o LEFT o filtro só esvaziaria `leads`).
+  let dbQuery = supabase
+    .from("conversations")
+    .select(conversationSelect({ innerLead: tabFilter.kind === "stage" }));
 
   if (channelId) dbQuery = dbQuery.eq("channel_id", channelId);
   if (status) dbQuery = dbQuery.eq("status", status);
@@ -165,26 +188,45 @@ export async function GET(request: NextRequest) {
   // sistema — continua acessível pelo funil Blacklist e pela tela de leads.
   dbQuery = dbQuery.neq("status", "blocked");
   // Restringe ao conjunto de canais permitidos para o usuário logado
-  if (allowedChannelIds !== null) {
-    if (allowedChannelIds.length === 0) {
-      // Usuário não tem nenhum canal — retorna lista vazia imediatamente
-      return NextResponse.json([]);
-    }
-    dbQuery = dbQuery.in("channel_id", allowedChannelIds);
+  if (allowedChannelIds !== null) dbQuery = dbQuery.in("channel_id", allowedChannelIds);
+
+  if (tabFilter.kind === "unread") dbQuery = dbQuery.gt("unread_count", 0);
+  else if (tabFilter.kind === "no_lead") dbQuery = dbQuery.is("lead_id", null);
+  else if (tabFilter.kind === "stage") dbQuery = dbQuery.eq("leads.stage", tabFilter.stage);
+
+  // Keyset: só linhas DEPOIS da última entregue. Na cauda (last_msg_at nulo) a
+  // ordem é só pelo id.
+  if (cursor) {
+    dbQuery = cursor.t
+      ? dbQuery.or(cursorOrFilter(cursor.t, cursor.id))
+      : dbQuery.is("last_msg_at", null).lt("id", cursor.id);
   }
 
   const { data: dbRows, error: dbError } = await dbQuery
-    .order("last_msg_at", { ascending: false, nullsFirst: false });
-  // Não devolver [] silencioso em erro de query: a UI não distingue erro de
+    .order("last_msg_at", { ascending: false, nullsFirst: false })
+    .order("id", { ascending: false })
+    .limit(CONVERSATIONS_PAGE_SIZE + 1);
+  // Não devolver lista vazia silenciosa em erro de query: a UI não distingue erro de
   // "zero conversas" e apagaria a lista. Responder 500 mantém o estado anterior.
   if (dbError) {
     return NextResponse.json({ error: dbError.message }, { status: 500 });
   }
   // O select é montado em runtime, então o supabase-js não infere a forma da
   // linha — o contrato real está em EnrichableConversation.
-  const dbConversations = (dbRows ?? []) as unknown as EnrichableConversation[];
+  const { rows: dbConversations, next_cursor } = splitPage(
+    (dbRows ?? []) as unknown as EnrichableConversation[],
+    CONVERSATIONS_PAGE_SIZE,
+  );
 
-  // 2. Get Evolution channels and fetch their chats
+  // Add last_message_text + deal info to DB conversations
+  const dbWithLastMsg = await enrichConversations(supabase, dbConversations);
+
+  // 2. Evolution (legado, CLAUDE.md §6): só na primeira página da aba "todos", como
+  // antes — as conversas Evolution não têm cursor nem estágio/não lidas.
+  if (cursor || tabFilter.kind !== "all" || leadId) {
+    return NextResponse.json({ conversations: dbWithLastMsg, next_cursor });
+  }
+
   let channelsQuery = supabase
     .from("channels")
     .select("id, name, phone, provider, provider_config, mode")
@@ -217,20 +259,17 @@ export async function GET(request: NextRequest) {
   const evoConversations = evoResults.flatMap((r) =>
     r.status === "fulfilled" ? r.value : []
   );
+  if (evoConversations.length === 0) {
+    return NextResponse.json({ conversations: dbWithLastMsg, next_cursor });
+  }
 
   // 3. Merge: DB conversations take priority (they have real IDs)
-  // Build a set of phones that already have DB conversations per channel
   const dbPhoneKeys = new Set(
     dbConversations.map((c) => {
       const lead = c.leads as { phone?: string } | null;
       return `${c.channel_id}_${lead?.phone || ""}`;
     })
   );
-
-  // Add last_message_text + deal info to DB conversations
-  const dbWithLastMsg = await enrichConversations(supabase, dbConversations);
-
-  // Add Evolution conversations that don't already exist in DB
   const merged: EnrichableConversation[] = [...dbWithLastMsg];
   for (const evoConv of evoConversations) {
     if (!evoConv) continue;
@@ -248,5 +287,5 @@ export async function GET(request: NextRequest) {
   };
   merged.sort((a, b) => sortTs(b) - sortTs(a));
 
-  return NextResponse.json(merged);
+  return NextResponse.json({ conversations: merged, next_cursor });
 }

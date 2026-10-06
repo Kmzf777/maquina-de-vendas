@@ -16,10 +16,11 @@ const MAX_RESULTS = 30;
 /**
  * Busca de CONTATOS no servidor.
  *
- * A lista de `/api/conversations` não pagina e o PostgREST corta em 1.000 linhas:
- * com 3.4k conversas, filtrar no cliente só enxergava as mais recentes e jurava
- * "Nenhum contato encontrado" para todo o resto. Aqui o filtro roda no banco,
- * sobre a base inteira, sempre dentro do escopo de canais do usuário.
+ * A lista de `/api/conversations` é paginada (200 por página) e, antes, era cortada
+ * em 1.000 linhas pelo PostgREST: filtrar só no cliente jurava "Nenhum contato
+ * encontrado" com a conversa viva no banco. Aqui o filtro roda no banco, sobre a
+ * base inteira, sempre dentro do escopo de canais do usuário — por TODOS os termos
+ * em qualquer ordem, e-mail e CNPJ/telefone por dígitos (`buildLeadSearchOrFilter`).
  */
 export async function GET(request: NextRequest) {
   const supabase = await getServiceSupabase();
