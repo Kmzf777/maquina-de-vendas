@@ -19,6 +19,10 @@ from app.follow_up.service import (
     carregar_ajustes_joao,
     disparos_de_hoje,
     templates_do_joao_hoje,
+    # Quem comprou não recebe prospecção (spec 2026-10-06, P6) — a MESMA regra da
+    # matrícula, relida na hora do envio.
+    CADENCIAS_COM_REGRA_DE_VENDA,
+    motivo_venda_no_envio,
     _ENV_TAG,
 )
 # Import de topo, sem risco de ciclo: `cadence_joao` é config-as-code pura (zero I/O,
@@ -108,6 +112,9 @@ JOAO_JOB_TYPE_PREFIX = "joao_"
 JOAO_JOB_TYPES: frozenset[str] = frozenset({
     JOAO_JOB_TYPE, "joao_novo", "joao_em_conversa", "joao_proposta", "joao_reposicao",
     "joao_em_atencao",
+    # Cadência complementar da Reposição (spec 2026-10-06, P6) — ver
+    # `cadence_joao.CADENCIAS_COMPLEMENTARES`.
+    "joao_kit",
 })
 
 # A MARCA do job que MOVE o card em vez de mandar mensagem (spec 2026-09-23 §3), gravada
@@ -2304,6 +2311,33 @@ async def _process_joao_touch(job: dict, now: datetime) -> None:
             metadata.get("cadencia"), metadata.get("toque"), job["id"],
         )
         return
+
+    # ── Quem comprou não recebe prospecção (spec 2026-10-06, P6.1) ───────────────
+    # A matrícula já pula quem comprou, mas agenda todos os toques de uma vez: a venda
+    # que acontece no meio da cadência — em outro deal, pelo Bling, sem mover o card —
+    # só é vista AQUI. Mesmo tratamento da guarda de etapa acima: erro de leitura não
+    # envia e não encerra (transitório). No kit, a pergunta é "comprou de novo depois
+    # da matrícula?".
+    if cadencia.codigo in CADENCIAS_COM_REGRA_DE_VENDA:
+        try:
+            motivo_venda = motivo_venda_no_envio(
+                get_supabase(), cadencia.codigo, lead_id=job.get("lead_id"),
+                deal_id=deal_id,
+                matricula_em=metadata.get("matricula_em") or job.get("created_at"),
+                now=now,
+            )
+        except Exception as exc:
+            logger.error(
+                "[JOAO_TOUCH] falha ao conferir as vendas do lead %s: %s — toque ADIADO "
+                "para o próximo tick", job.get("lead_id"), exc, exc_info=True)
+            return  # transitório → nada de estado terminal
+        if motivo_venda:
+            _cancel_job(job["id"], motivo_venda)
+            logger.info(
+                "[JOAO_TOUCH] lead %s comprou — esteira %s/%s encerrada no toque %s "
+                "(job %s, motivo %s)", job.get("lead_id"), funil, cadencia.codigo,
+                metadata.get("toque"), job["id"], motivo_venda)
+            return
 
     template_name = _joao_template_name(metadata, funil)
     if not template_name:

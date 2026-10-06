@@ -15,7 +15,8 @@ from app.follow_up.cadence_joao import (
     ADIAMENTO_ESTOQUE,
     ADIAMENTO_RESPOSTA,
     FUNIS,
-    JOB_TYPES as JOAO_JOB_TYPES,
+    # TODOS: as 5 da tela + as complementares (o `kit`). Ver `cadence_joao.JOB_TYPES_TODOS`.
+    JOB_TYPES_TODOS as JOAO_JOB_TYPES,
     RESPOSTA_ADIAR,
     RESPOSTA_INTERESSE,
     RESPOSTA_OPTOUT,
@@ -23,6 +24,7 @@ from app.follow_up.cadence_joao import (
     Touch,
     adiar_toques,
     cadencia_do_funil,
+    cadencias_do_funil,
     classificar_resposta,
     resolver,
 )
@@ -1021,6 +1023,10 @@ AJUSTES_PADRAO: dict[str, int] = {
     "adiamento_estoque_dias": 30,
 }
 
+# O default de `dias_sem_prospeccao_apos_venda` (spec 2026-10-06, P6.1) — ver
+# `carregar_dias_sem_prospeccao_apos_venda`. Fora de `AJUSTES_PADRAO` de propósito.
+DIAS_SEM_PROSPECCAO_PADRAO = 30
+
 # Sentinela de LEITURA FALHA de `disparos_de_hoje`. Ver a docstring da função: o valor
 # é maior que qualquer teto que o CHECK da tabela aceite, para que tanto
 # `disparos >= teto` quanto `teto - disparos` leiam "sem saldo" sem um segundo ramo.
@@ -1079,6 +1085,80 @@ def carregar_ajustes_joao() -> dict[str, int]:
             continue
         ajustes[chave] = valor
     return ajustes
+
+
+# ── O N da regra "quem comprou não recebe prospecção" (spec 2026-10-06, P6.1) ─────
+# Mesma tabela dos ajustes globais, chave própria. FORA de `AJUSTES_PADRAO` de
+# propósito: aquele dict é o contrato da TELA de ajustes (GET/PUT, fixado pela suíte),
+# e este número ainda não tem campo lá — é editado por SQL. Mesma disciplina
+# fail-closed para o default: tabela inexistente, erro ou valor ruim valem 30.
+AJUSTE_DIAS_SEM_PROSPECCAO = "dias_sem_prospeccao_apos_venda"
+_dias_sem_prospeccao_aviso_dado = False
+
+
+def carregar_dias_sem_prospeccao_apos_venda(sb=None) -> int:
+    """`followup_joao_ajustes[dias_sem_prospeccao_apos_venda]`, ou 30. Nunca levanta."""
+    global _dias_sem_prospeccao_aviso_dado
+    try:
+        linhas = (sb or get_supabase()).table("followup_joao_ajustes").select(
+            "chave, valor"
+        ).eq("chave", AJUSTE_DIAS_SEM_PROSPECCAO).execute().data or []
+    except Exception as exc:
+        if not _dias_sem_prospeccao_aviso_dado:
+            logger.warning(
+                "[JOAO_CADENCIA] %s não lido (%s) — vale o default %d",
+                AJUSTE_DIAS_SEM_PROSPECCAO, exc, DIAS_SEM_PROSPECCAO_PADRAO)
+            _dias_sem_prospeccao_aviso_dado = True
+        return DIAS_SEM_PROSPECCAO_PADRAO
+    for row in linhas if isinstance(linhas, list) else []:
+        if row.get("chave") != AJUSTE_DIAS_SEM_PROSPECCAO:
+            continue
+        try:
+            valor = int(row.get("valor"))
+        except (TypeError, ValueError):
+            continue
+        if valor >= 1:
+            return valor
+    return DIAS_SEM_PROSPECCAO_PADRAO
+
+
+def motivo_venda_no_envio(
+    sb, codigo: str, *, lead_id: str | None, deal_id: str | None,
+    matricula_em: Any, now: datetime,
+) -> str | None:
+    """A regra de venda na HORA DO ENVIO (spec 2026-10-06, P6.1). None = pode enviar.
+
+    Uma leitura por lead e não paginada — mesmo raciocínio de `templates_do_joao_hoje`:
+    as vendas de UM lead são poucas. Erro PROPAGA: quem chama não envia sem a resposta.
+
+      prospecção -> `lead_comprou` (mesma regra da matrícula, com o N do ajuste)
+      kit        -> `lead_comprou` se houve venda nova depois da matrícula
+    """
+    if codigo not in CADENCIAS_COM_REGRA_DE_VENDA:
+        return None
+    if not lead_id:
+        return "sem_lead_para_verificar"
+    res = sb.table("sales").select(
+        "id, lead_id, sold_at, created_at, status").eq("lead_id", lead_id).execute()
+    vendas = res.data if isinstance(res.data, list) else []
+
+    if codigo == CADENCIA_KIT:
+        referencia = _parse_ts(matricula_em)
+        if referencia is None:
+            return "kit_sem_matricula"
+        return (MOTIVO_LEAD_COMPROU
+                if comprou_depois_da_matricula(vendas, matricula_em=referencia) else None)
+
+    deal_criado_em = None
+    if deal_id:
+        res_deal = sb.table("deals").select("id, created_at").eq(
+            "id", deal_id).limit(1).execute()
+        linhas = res_deal.data if isinstance(res_deal.data, list) else []
+        deal_criado_em = _parse_ts(linhas[0].get("created_at")) if linhas else None
+    dias = carregar_dias_sem_prospeccao_apos_venda(sb)
+    if lead_comprou(vendas, now=now, deal_criado_em=deal_criado_em, dias=dias):
+        return MOTIVO_LEAD_COMPROU
+    return None
 
 
 def _dia_em_sao_paulo(now: datetime) -> tuple[str, str]:
@@ -1417,6 +1497,63 @@ def _jobs_do_card(jobs: list[dict], lead_id: str, deal_id: str | None) -> list[d
     return do_card
 
 
+def _lotes(ids: list[str]):
+    for i in range(0, len(ids), _LOTE_DE_LEADS):
+        yield ids[i:i + _LOTE_DE_LEADS]
+
+
+def _vendas_dos_leads(
+    sb, lead_ids: list[str], *, com_kit: bool,
+) -> dict[str, list[dict]] | None:
+    """`{lead_id: [vendas]}` dos candidatos, paginando (teto de 1.000 do PostgREST).
+
+    Com `com_kit`, cada venda não cancelada ganha `kit: bool` lido de `sale_items`.
+    Lead sem venda simplesmente não aparece (`.get(lead, [])` = "li, e não há").
+    FAIL-CLOSED: qualquer erro devolve None e a passagem não matricula ninguém — sem
+    saber se o lead comprou, não se manda prospecção (nem kit). Metade das vendas é tão
+    perigoso quanto nenhuma, pelo mesmo motivo de `_jobs_joao_dos_leads`.
+    """
+    from app.follow_up.kit import venda_e_kit
+
+    vendas: dict[str, list[dict]] = {}
+    try:
+        for lote in _lotes(lead_ids):
+            for linha in _ler_todas_as_paginas(lambda lote=lote: sb.table("sales").select(
+                    "id, lead_id, sold_at, created_at, status"
+            ).in_("lead_id", lote).order("id")):
+                vendas.setdefault(linha.get("lead_id"), []).append(dict(linha))
+        if com_kit:
+            por_id = {v["id"]: v for vs in vendas.values() for v in vs
+                      if v.get("id") and not _venda_cancelada(v)}
+            itens: dict[str, list[dict]] = {}
+            for lote in _lotes(sorted(por_id)):
+                for item in _ler_todas_as_paginas(
+                        lambda lote=lote: sb.table("sale_items").select(
+                            "id, sale_id, bling_product_id, descricao"
+                        ).in_("sale_id", lote).order("id")):
+                    itens.setdefault(item.get("sale_id"), []).append(item)
+            for sale_id, venda in por_id.items():
+                venda["kit"] = venda_e_kit(itens.get(sale_id))
+    except Exception as exc:
+        logger.error("[JOAO_CADENCIA] falha ao ler as vendas dos candidatos: %s", exc)
+        return None
+    return vendas
+
+
+def _deals_criados_em(sb, deal_ids: list[str]) -> dict[str, datetime | None] | None:
+    """`{deal_id: created_at}` dos cards candidatos, paginando. None = erro (fail-closed)."""
+    criados: dict[str, datetime | None] = {}
+    try:
+        for lote in _lotes(deal_ids):
+            for linha in _ler_todas_as_paginas(lambda lote=lote: sb.table("deals").select(
+                    "id, created_at").in_("id", lote).order("id")):
+                criados[str(linha.get("id"))] = _parse_ts(linha.get("created_at"))
+    except Exception as exc:
+        logger.error("[JOAO_CADENCIA] falha ao ler a criação dos cards: %s", exc)
+        return None
+    return criados
+
+
 # `job_type` só depende do código da cadência, não do funil (cadence_joao.Cadencia.job_type)
 # — "reposicao_atacado" é só o funil que serve de ponto de entrada para pegar o objeto;
 # "reposicao_private_label" devolveria o mesmo `job_type`.
@@ -1474,8 +1611,109 @@ def _matricula_interrompida(jobs_da_matricula: list[dict]) -> bool:
     return not all(j.get("cancel_reason") == MOTIVO_INTERESSE for j in cancelados)
 
 
+# ── Quem comprou não recebe prospecção (spec 2026-10-06, P6.1) ─────────────────
+#
+# A call de 01/10 viu a esteira mandar "Proposta Enviada" para quem tinha acabado de
+# comprar: o motor só olhava o CARD, e venda em outro deal, venda do Bling (sem deal) ou
+# card não movido deixavam o card de prospecção vivo. A regra olha `sales` do LEAD.
+CADENCIAS_DE_PROSPECCAO: frozenset[str] = frozenset({"novo", "em_conversa", "proposta"})
+CADENCIA_KIT = "kit"
+CADENCIAS_COM_REGRA_DE_VENDA: frozenset[str] = CADENCIAS_DE_PROSPECCAO | {CADENCIA_KIT}
+MOTIVO_LEAD_COMPROU = "lead_comprou"
+
+
+def _venda_cancelada(venda: Mapping[str, Any]) -> bool:
+    return str(venda.get("status") or "").strip().lower().startswith("cancel")
+
+
+def _momento_da_venda(venda: Mapping[str, Any]) -> datetime | None:
+    return _parse_ts(venda.get("sold_at")) or _parse_ts(venda.get("created_at"))
+
+
+def _vendas_validas(vendas) -> list[Mapping[str, Any]]:
+    return [v for v in (vendas or ()) if not _venda_cancelada(v)]
+
+
+def lead_comprou(
+    vendas, *, now: datetime, deal_criado_em: datetime | None, dias: int,
+) -> bool:
+    """Venda NÃO cancelada nos últimos `dias` dias OU depois da criação do card. PURA.
+
+    Venda sem data nenhuma conta como compra: na dúvida, a esteira pula — o custo de
+    errar para o outro lado é uma mensagem de prospecção para quem acabou de comprar.
+    """
+    corte = now - timedelta(days=dias)
+    for venda in _vendas_validas(vendas):
+        quando = _momento_da_venda(venda)
+        if quando is None or quando >= corte:
+            return True
+        if deal_criado_em is not None and quando > deal_criado_em:
+            return True
+    return False
+
+
+def motivo_kit_para_matricula(vendas, *, now: datetime, gatilho_dias: int) -> str | None:
+    """A ÚLTIMA venda não cancelada é kit e tem >= `gatilho_dias` dias? PURA.
+
+    `venda["kit"]` é gravado pelo leitor (`_vendas_dos_leads`); ausente = não é kit.
+    Empate de data com uma venda que não é kit também não é "a última foi kit".
+    """
+    validas = _vendas_validas(vendas)
+    if not validas:
+        return "sem_venda"
+    momentos = [_momento_da_venda(v) for v in validas]
+    if any(m is None for m in momentos):
+        return "venda_sem_data"
+    ultimo = max(momentos)
+    ultimas = [v for v, m in zip(validas, momentos) if m == ultimo]
+    if not all(v.get("kit") is True for v in ultimas):
+        return "ultima_venda_nao_e_kit"
+    if ultimo > now - timedelta(days=gatilho_dias):
+        return "venda_kit_recente"
+    return None
+
+
+def motivo_venda_para_matricula(
+    cadencia: CadenciaResolvida, vendas, *, now: datetime,
+    deal_criado_em: datetime | None, dias_sem_prospeccao: int,
+) -> str | None:
+    """A regra de VENDA da matrícula, por cadência. PURA.
+
+    `vendas=None` é "não li". No kit isso PULA (o gatilho É uma venda). Na prospecção a
+    regra só não se aplica — é o contrato antigo da função pura; a varredura sempre lê.
+    """
+    if cadencia.codigo == CADENCIA_KIT:
+        if vendas is None:
+            return "vendas_desconhecidas"
+        return motivo_kit_para_matricula(
+            vendas, now=now, gatilho_dias=int(cadencia.gatilho_dias or 0))
+    if cadencia.codigo in CADENCIAS_DE_PROSPECCAO and vendas is not None:
+        if lead_comprou(vendas, now=now, deal_criado_em=deal_criado_em,
+                        dias=dias_sem_prospeccao):
+            return MOTIVO_LEAD_COMPROU
+    return None
+
+
+def comprou_depois_da_matricula(vendas, *, matricula_em: datetime) -> bool:
+    """Venda não cancelada vendida OU registrada depois da matrícula (envio do kit). PURA.
+
+    "Registrada" cobre o pedido do Bling que chega atrasado com data de venda anterior:
+    é informação nova sobre o lead, e na dúvida o toque do kit não sai.
+    """
+    for venda in _vendas_validas(vendas):
+        quando = _momento_da_venda(venda)
+        registrada = _parse_ts(venda.get("created_at"))
+        if quando is None or quando > matricula_em or (
+                registrada is not None and registrada > matricula_em):
+            return True
+    return False
+
+
 def motivo_para_pular_joao(
-    cadencia: CadenciaResolvida, jobs_do_card: list[dict], now: datetime,
+    cadencia: CadenciaResolvida, jobs_do_card: list[dict], now: datetime, *,
+    vendas: list[dict] | None = None,
+    deal_criado_em: datetime | None = None,
+    dias_sem_prospeccao: int = DIAS_SEM_PROSPECCAO_PADRAO,
 ) -> str | None:
     """Por que este card NÃO entra nesta cadência agora — ou None se ele entra. PURA.
 
@@ -1486,6 +1724,8 @@ def motivo_para_pular_joao(
     A ORDEM das regras é parte do contrato:
       1. cadência em andamento — um card, uma cadência por vez;
       2. a PARTIÇÃO reposicao x em_atencao;
+      2b. VENDA (06/10): prospecção pula quem comprou; kit só pega kit — ver
+          `motivo_venda_para_matricula`. `vendas`/`deal_criado_em` vêm da varredura;
       3. repetição (cadência sem fim) ou cooldown (cadência com fim).
     """
     # 1. UM CARD, UMA CADÊNCIA POR VEZ — inclusive entre cadências diferentes. Duas
@@ -1501,6 +1741,14 @@ def motivo_para_pular_joao(
         return "reposicao_nao_concluida"
     if cadencia.codigo == "reposicao" and concluiu_reposicao:
         return "reposicao_ja_concluida"
+
+    # 2b. VENDA (spec 2026-10-06, P6): prospecção pula quem comprou; o kit só pega quem
+    #     tem um kit como última compra, há pelo menos `gatilho_dias`.
+    motivo_venda = motivo_venda_para_matricula(
+        cadencia, vendas, now=now, deal_criado_em=deal_criado_em,
+        dias_sem_prospeccao=dias_sem_prospeccao)
+    if motivo_venda:
+        return motivo_venda
 
     # 3a. Cadência que SE REPETE ("Em atenção": uma mensagem a cada 3 dias até o lead
     #     dizer que não quer — ata 38:08). Não tem cooldown: ela é feita para voltar. O
@@ -1782,6 +2030,25 @@ def _varrer_cadencia_joao(
     if jobs is None:
         return 0, 0
 
+    # REGRA DE VENDA (spec 2026-10-06, P6). Lida em LOTE, uma vez por passagem, e
+    # fail-closed: sem saber se o lead comprou, ninguém entra nesta passagem.
+    vendas_por_lead: dict[str, list[dict]] | None = None
+    criado_em_por_deal: dict[str, datetime | None] = {}
+    dias_sem_prospeccao = DIAS_SEM_PROSPECCAO_PADRAO
+    if cadencia.codigo in CADENCIAS_COM_REGRA_DE_VENDA:
+        lead_ids = sorted({l["lead_id"] for l in linhas if l.get("lead_id")})
+        vendas_por_lead = _vendas_dos_leads(
+            sb, lead_ids, com_kit=cadencia.codigo == CADENCIA_KIT)
+        if vendas_por_lead is None:
+            return 0, 0
+        if cadencia.codigo in CADENCIAS_DE_PROSPECCAO:
+            deal_ids = sorted({str(l["deal_id"]) for l in linhas if l.get("deal_id")})
+            criados = _deals_criados_em(sb, deal_ids)
+            if criados is None:
+                return 0, 0
+            criado_em_por_deal = criados
+            dias_sem_prospeccao = carregar_dias_sem_prospeccao_apos_venda(sb)
+
     from app.leads.service import is_lead_blacklisted
 
     rows: list[dict] = []
@@ -1806,7 +2073,13 @@ def _varrer_cadencia_joao(
         if not lead_id:
             continue
         do_card = _jobs_do_card(jobs, lead_id, deal_id)
-        motivo = motivo_para_pular_joao(cadencia, do_card, now)
+        motivo = motivo_para_pular_joao(
+            cadencia, do_card, now,
+            vendas=(None if vendas_por_lead is None
+                    else vendas_por_lead.get(lead_id, [])),
+            deal_criado_em=criado_em_por_deal.get(str(deal_id)),
+            dias_sem_prospeccao=dias_sem_prospeccao,
+        )
         if motivo:
             logger.debug(
                 "[JOAO_CADENCIA] %s/%s pula card %s: %s",
@@ -1886,7 +2159,9 @@ def agendar_cadencias_joao(now: datetime | None = None, teto: int | None = None)
         if esgotou_o_dia:
             break
         overrides_do_funil = overrides.get(f.codigo) or {}
-        for cadencia_do_codigo in f.cadencias:
+        # `cadencias_do_funil` e não `f.cadencias`: inclui as complementares (o `kit` da
+        # Reposição, spec 2026-10-06), que não estão na tela mas são do funil.
+        for cadencia_do_codigo in cadencias_do_funil(f.codigo):
             ov = overrides_do_funil.get(cadencia_do_codigo.codigo) or {}
             cadencia = resolver_para_agendar(f.codigo, cadencia_do_codigo.codigo, ov)
             if not cadencia.ativa:
