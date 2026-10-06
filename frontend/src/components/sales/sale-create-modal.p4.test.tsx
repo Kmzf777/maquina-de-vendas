@@ -207,3 +207,21 @@ describe("SaleCreateModal — 'Já é cliente?' obrigatório (P4.4)", () => {
     expect(chamadas.some((c) => c.url === "/api/sales")).toBe(false);
   });
 });
+
+describe("SaleCreateModal — seletor de lead (P4.6)", () => {
+  it("modo pickLead não carrega a lista inteira de leads", async () => {
+    h.maybeSingle.mockResolvedValue({ data: null, error: null });
+    render(
+      <SaleCreateModal
+        pickLead
+        blingEnabled={false}
+        currentUserEmail="joao@cafecanastra.com"
+        onClose={vi.fn()}
+        onSaved={vi.fn()}
+      />,
+    );
+    expect(await screen.findByRole("button", { name: /Selecione o lead/ })).toBeTruthy();
+    await waitFor(() => expect(chamadas.some((c) => c.url === "/api/users")).toBe(true));
+    expect(chamadas.some((c) => c.url === "/api/leads")).toBe(false);
+  });
+});

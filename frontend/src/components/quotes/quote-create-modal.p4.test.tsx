@@ -128,3 +128,20 @@ describe("QuoteCreateModal — pré-preenchimento (P4.1)", () => {
     expect(chamadas.some((c) => c.url === "/api/leads")).toBe(false);
   });
 });
+
+describe("QuoteCreateModal — seletor de lead (P4.6)", () => {
+  it("modo pickLead não carrega a lista inteira de leads", async () => {
+    h.maybeSingle.mockResolvedValue({ data: null, error: null });
+    render(
+      <QuoteCreateModal
+        pickLead
+        currentUserEmail="joao@cafecanastra.com"
+        onClose={vi.fn()}
+        onSaved={vi.fn()}
+      />,
+    );
+    expect(await screen.findByRole("button", { name: /Selecione o lead/ })).toBeTruthy();
+    await new Promise((r) => setTimeout(r, 50));
+    expect(chamadas.some((c) => c.url === "/api/leads")).toBe(false);
+  });
+});

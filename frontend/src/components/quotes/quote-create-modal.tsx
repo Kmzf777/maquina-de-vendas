@@ -23,10 +23,9 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { CheckIcon, ChevronDownIcon, DownloadIcon } from "lucide-react";
+import { CheckIcon, DownloadIcon } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import {
   Select,
   SelectContent,
@@ -44,7 +43,7 @@ import { blingGate } from "@/lib/bling-gate";
 import { CONTA_PADRAO } from "@/lib/bling-accounts";
 import { defaultsDoContato, useLeadCliente } from "@/components/sales/lead-cliente";
 import { PainelLateral } from "@/components/sales/painel-lateral";
-import { leadMatchesSearch } from "@/lib/search";
+import { LeadPicker, type LeadEscolhido } from "@/components/sales/lead-picker";
 import type { OrderPayloadResult } from "@/lib/bling-order-state";
 import { buildQuotePayload, linesFromQuoteItems } from "@/lib/quote-state";
 import {
@@ -96,12 +95,6 @@ interface LeadDeal {
   id: string;
   title: string;
   pipeline_stages?: { is_protected: boolean } | null;
-}
-
-interface LeadOption {
-  id: string;
-  name: string | null;
-  phone: string;
 }
 
 interface QuoteCreateModalProps {
@@ -220,9 +213,9 @@ export function QuoteCreateModal({
     editingQuote?.internal_notes ?? "",
   );
 
-  const [leads, setLeads] = useState<LeadOption[]>([]);
-  const [leadPickerOpen, setLeadPickerOpen] = useState(false);
-  const [leadQuery, setLeadQuery] = useState("");
+  // Lead escolhido no seletor (modo `pickLead`): rótulo do gatilho e reserva
+  // do pré-preenchimento do contato.
+  const [leadEscolhido, setLeadEscolhido] = useState<LeadEscolhido | null>(null);
   const [deals, setDeals] = useState<LeadDeal[]>([]);
 
   const [orderResult, setOrderResult] = useState<OrderPayloadResult | null>(null);
@@ -238,14 +231,6 @@ export function QuoteCreateModal({
   const enviadoRef = useRef<Record<string, unknown> | null>(null);
 
   // ── dados auxiliares ─────────────────────────────────────────────────────
-  useEffect(() => {
-    if (!pickLead || isEditing) return;
-    fetch("/api/leads")
-      .then((r) => r.json())
-      .then((d) => setLeads(Array.isArray(d) ? d : (d?.data ?? [])))
-      .catch(() => undefined);
-  }, [pickLead, isEditing]);
-
   useEffect(() => {
     if (lockedDealId || !resolvedLeadId) return;
     fetch(`/api/leads/${resolvedLeadId}/deals`)
@@ -416,7 +401,6 @@ export function QuoteCreateModal({
   // `pickLead` nunca é carregada. Busca também na edição: o PUT pode devolver
   // o mesmo 409 de contato.
   const { lead: leadCliente } = useLeadCliente(resolvedLeadId || null);
-  const leadSelecionado = leads.find((l) => l.id === resolvedLeadId);
   const escondeFormulario = !!resolution || !!sucesso || convertido;
 
   return (
@@ -451,60 +435,14 @@ export function QuoteCreateModal({
                 {pickLead && !isEditing && (
                   <div>
                     <label className={label}>Lead *</label>
-                    <Popover open={leadPickerOpen} onOpenChange={setLeadPickerOpen}>
-                      <PopoverTrigger asChild>
-                        <button
-                          type="button"
-                          className="flex w-full h-[37px] items-center justify-between bg-white border border-[#dedbd6] rounded-[4px] px-3 text-[14px] text-[#111111] focus:border-[#111111] focus:outline-none"
-                        >
-                          <span className={resolvedLeadId ? "truncate" : "text-[#8a8a8a]"}>
-                            {resolvedLeadId
-                              ? (leadSelecionado?.name ??
-                                 leadSelecionado?.phone ??
-                                 "Lead selecionado")
-                              : "Selecione o lead"}
-                          </span>
-                          <ChevronDownIcon className="size-4 shrink-0 text-[#8a8a8a]" />
-                        </button>
-                      </PopoverTrigger>
-                      <PopoverContent className="p-0" portal={false}>
-                        <div className="p-2 border-b border-[#eee]">
-                          <Input
-                            autoFocus
-                            value={leadQuery}
-                            onChange={(e) => setLeadQuery(e.target.value)}
-                            placeholder="Buscar lead por nome ou telefone..."
-                            className="h-8 text-[14px]"
-                          />
-                        </div>
-                        <div className="max-h-64 overflow-y-auto p-1">
-                          {leads.filter((l) => leadMatchesSearch(leadQuery, l)).length === 0 && (
-                            <div className="px-2 py-3 text-[13px] text-[#8a8a8a]">
-                              Nenhum lead encontrado.
-                            </div>
-                          )}
-                          {leads
-                            .filter((l) => leadMatchesSearch(leadQuery, l))
-                            .slice(0, 100)
-                            .map((l) => (
-                              <button
-                                key={l.id}
-                                type="button"
-                                onClick={() => {
-                                  setSelectedLeadId(l.id);
-                                  setDealId("");
-                                  setLeadPickerOpen(false);
-                                  setLeadQuery("");
-                                }}
-                                className="flex w-full items-center justify-between gap-2 rounded-md px-2 py-1.5 text-left text-[14px] hover:bg-[#f4f2ee]"
-                              >
-                                <span className="truncate">{l.name ?? l.phone}</span>
-                                {resolvedLeadId === l.id && <CheckIcon className="size-4 shrink-0" />}
-                              </button>
-                            ))}
-                        </div>
-                      </PopoverContent>
-                    </Popover>
+                    <LeadPicker
+                      selecionado={leadEscolhido}
+                      onEscolher={(l) => {
+                        setSelectedLeadId(l.id);
+                        setLeadEscolhido(l);
+                        setDealId("");
+                      }}
+                    />
                   </div>
                 )}
 
@@ -797,7 +735,7 @@ export function QuoteCreateModal({
               status={resolution.status}
               reason={resolution.reason}
               candidates={resolution.candidates}
-              defaults={defaultsDoContato(leadCliente)}
+              defaults={defaultsDoContato(leadCliente ?? leadEscolhido)}
               conta={conta ?? CONTA_PADRAO}
               onResolved={retryAfterContact}
               onCancel={() => setResolution(null)}
