@@ -408,6 +408,244 @@ def test_trigger_com_erro_nao_derruba_a_escrita():
         assert f"{fn}:" in r.stderr, fn  # o erro vira WARNING, não exceção
 
 
+
+# Revisão (item 1): quem grava no CRM é muitas vezes `authenticated` (ex.:
+# components/quick-add-lead.tsx). Em produção ele tem os grants da ACL padrão em lead_events,
+# mas a tabela tem RLS SEM policy: rodando como quem grava, o insert do trigger viola o RLS e
+# vira WARNING em silêncio. E uma role sem grant algum em lead_events (como no teste da P0)
+# leva 'permission denied'. As duas têm que gerar os eventos.
+_GRAVA_TUDO = """
+insert into public.leads (id, phone, ctwa_clid) values ('__L__', '__FONE__', 'clid-sp');
+update public.leads set meta_ad_id = 'ad-sp' where id = '__L__';
+insert into public.deals (id, lead_id, title, pipeline_id, stage_id) values
+  ('__D__', '__L__', 'Card', 'acacacac-0000-0000-0000-000000000001', 'acacacac-0000-0000-0000-0000000000a1');
+update public.deals set stage_id = 'acacacac-0000-0000-0000-0000000000a2' where id = '__D__';
+insert into public.sales (id, lead_id, value, product, origin) values ('__S__', '__L__', 60, 'Kit', 'crm');
+insert into public.sale_items (sale_id, descricao, quantidade, valor_unitario, total)
+values ('__S__', 'Kit Degustação', 1, 60, 60);
+update public.sales set status = 'cancelada' where id = '__S__';
+insert into public.broadcast_leads (id, broadcast_id, lead_id) values
+  ('__B__', 'acacacac-0000-0000-0000-0000000000b1', '__L__');
+update public.broadcast_leads set sent_at = now() where id = '__B__';
+"""
+
+_CONFERE_TUDO = """
+do $$
+declare n int;
+begin
+  select count(*) into n from public.lead_events where lead_id = '__L__';
+  assert n = 6, format('__QUEM__: esperava 6 eventos (entrada, 2 etapas, venda, cancelada, disparo), achou %s', n);
+  assert (select metadata->>'meta_ad_id' from public.lead_events
+           where lead_id = '__L__' and event_type = 'entrada') = 'ad-sp', '__QUEM__: entrada enriquecida';
+  assert (select metadata->>'kit' from public.lead_events where dedupe_key = 'venda:__S__') = 'true',
+    '__QUEM__: kit marcado';
+end $$;
+"""
+
+
+def _cenario_role(quem: str, n: int) -> str:
+    ids = {
+        "__L__": f"acacacac-0000-0000-0000-00000000{n:04d}",
+        "__FONE__": f"551190009{n:04d}",
+        "__D__": f"acacacac-0000-0000-0000-0000000d{n:04d}",
+        "__S__": f"acacacac-0000-0000-0000-0000000e{n:04d}",
+        "__B__": f"acacacac-0000-0000-0000-0000000f{n:04d}",
+        "__QUEM__": quem,
+    }
+    sql = _GRAVA_TUDO + "reset role;\n" + _CONFERE_TUDO
+    for k, v in ids.items():
+        sql = sql.replace(k, v)
+    return sql
+
+
+CENARIO_SEM_PRIVILEGIO = (
+    """
+begin;
+insert into public.meta_ad_campaigns (ad_id, campaign_id, campaign_name)
+values ('ad-sp', 'camp-sp', 'Camp SP') on conflict (ad_id) do nothing;
+insert into public.pipelines (id, name) values ('acacacac-0000-0000-0000-000000000001', 'Funil SP');
+insert into public.pipeline_stages (id, pipeline_id, label, key, order_index) values
+  ('acacacac-0000-0000-0000-0000000000a1', 'acacacac-0000-0000-0000-000000000001', 'Novo', 'novo', 0),
+  ('acacacac-0000-0000-0000-0000000000a2', 'acacacac-0000-0000-0000-000000000001', 'Quente', 'quente', 1);
+insert into public.broadcasts (id, name, template_name)
+values ('acacacac-0000-0000-0000-0000000000b1', 'Disparo SP', 'tpl');
+
+-- 1) authenticated como em produção: grants da ACL padrão + policies; lead_events com RLS sem policy
+grant select, insert, update, delete on public.leads, public.deals, public.sales, public.sale_items,
+  public.broadcast_leads, public.lead_events to authenticated;
+create policy fxp3_deals on public.deals for all to authenticated using (true) with check (true);
+create policy fxp3_itens on public.sale_items for all to authenticated using (true) with check (true);
+create policy fxp3_bl on public.broadcast_leads for all to authenticated using (true) with check (true);
+set local role authenticated;
+"""
+    + _cenario_role("authenticated", 1)
+    + """
+-- 2) role sem grant algum em lead_events/pipelines/broadcasts (como o teste da P0)
+create role fxp3_t1 bypassrls;
+grant select, insert, update on public.leads, public.deals, public.sales, public.sale_items,
+  public.broadcast_leads to fxp3_t1;
+set local role fxp3_t1;
+"""
+    + _cenario_role("sem privilegio", 2)
+    + """
+do $$
+declare f text;
+begin
+  foreach f in array array['fn_lead_events_leads_entrada', 'fn_lead_events_deals_etapa',
+      'fn_lead_events_sales_venda', 'fn_lead_events_sale_items_kit', 'fn_lead_events_broadcast_disparo'] loop
+    assert not has_function_privilege('anon', 'public.' || f || '()', 'execute'), f || ' executavel por anon';
+    assert not has_function_privilege('authenticated', 'public.' || f || '()', 'execute'),
+      f || ' executavel por authenticated';
+  end loop;
+end $$;
+rollback;
+"""
+)
+
+
+@_precisa_pg
+def test_role_sem_privilegio_grava_os_eventos():
+    r = _rodar(CENARIO_SEM_PRIVILEGIO)
+    assert "WARNING" not in r.stderr, r.stderr
+
+
+
+# Revisão (item 2): a venda é editável (vendedor, valor, produto, data, origem). O evento
+# acompanha a edição; a exclusão da venda apaga os eventos dela.
+CENARIO_VENDA_EDITADA = """
+begin;
+insert into public.leads (id, phone) values ('cdcdcdcd-0000-0000-0000-0000000000c1', '5511900000061');
+insert into public.sales (id, lead_id, value, product, origin, sold_by, sold_at) values
+  ('cdcdcdcd-0000-0000-0000-0000000000e1', 'cdcdcdcd-0000-0000-0000-0000000000c1', 60, 'Kit',
+   'crm', 'joao@x.com', '2026-09-01 12:00+00');
+update public.sales set status = 'cancelada' where id = 'cdcdcdcd-0000-0000-0000-0000000000e1';
+update public.lead_events set occurred_at = '2026-09-02 12:00+00'
+ where dedupe_key = 'venda_cancelada:cdcdcdcd-0000-0000-0000-0000000000e1';
+update public.sales set sold_by = 'ana@x.com', value = 80, product = 'Clássico',
+       sold_at = '2026-09-05 12:00+00', origin = 'bling'
+ where id = 'cdcdcdcd-0000-0000-0000-0000000000e1';
+do $$
+declare v public.lead_events; c public.lead_events;
+begin
+  select * into v from public.lead_events where dedupe_key = 'venda:cdcdcdcd-0000-0000-0000-0000000000e1';
+  assert v.metadata->>'sold_by' = 'ana@x.com' and (v.metadata->>'valor')::numeric = 80
+     and v.metadata->>'produto' = 'Clássico' and v.metadata->>'origin' = 'bling'
+     and v.metadata->>'status' = 'cancelada', v.metadata::text;
+  assert v.new_value = '80.00' and v.source = 'bling', v.new_value || ' ' || v.source;
+  assert v.occurred_at = '2026-09-05 12:00+00', 'venda vai para a nova data: ' || v.occurred_at;
+  select * into c from public.lead_events where dedupe_key = 'venda_cancelada:cdcdcdcd-0000-0000-0000-0000000000e1';
+  assert c.metadata->>'sold_by' = 'ana@x.com' and c.new_value = '80.00', c.metadata::text;
+  assert c.occurred_at = '2026-09-02 12:00+00', 'cancelamento mantem a data dele: ' || c.occurred_at;
+end $$;
+-- exclusão da venda (como authenticated, que em produção pode apagar venda)
+grant select, delete on public.sales to authenticated;
+set local role authenticated;
+delete from public.sales where id = 'cdcdcdcd-0000-0000-0000-0000000000e1';
+reset role;
+do $$ begin
+  assert not exists (select 1 from public.lead_events where lead_id = 'cdcdcdcd-0000-0000-0000-0000000000c1'),
+    'venda apagada leva venda e venda_cancelada junto';
+end $$;
+rollback;
+"""
+
+
+@_precisa_pg
+def test_venda_editada_e_apagada():
+    r = _rodar(CENARIO_VENDA_EDITADA)
+    assert "WARNING" not in r.stderr, r.stderr
+
+
+
+# Revisão (item 3): o worker volta sent_at para NULL quando a Meta retém a mensagem pelo cap
+# de marketing (131049). O disparo sai da timeline; o reenvio grava a data nova.
+CENARIO_DISPARO_CAP = """
+begin;
+insert into public.broadcasts (id, name, template_name)
+values ('dededede-0000-0000-0000-0000000000b1', 'Disparo Cap', 'tpl');
+insert into public.leads (id, phone) values ('dededede-0000-0000-0000-0000000000c1', '5511900000071');
+insert into public.broadcast_leads (id, broadcast_id, lead_id, sent_at) values
+  ('dededede-0000-0000-0000-0000000000f1', 'dededede-0000-0000-0000-0000000000b1',
+   'dededede-0000-0000-0000-0000000000c1', '2026-09-01 12:00+00');
+update public.broadcast_leads set sent_at = null, wamid = null where id = 'dededede-0000-0000-0000-0000000000f1';
+do $$ begin
+  assert not exists (select 1 from public.lead_events where dedupe_key = 'disparo:dededede-0000-0000-0000-0000000000f1'),
+    'disparo retido pelo cap sai da timeline';
+end $$;
+update public.broadcast_leads set sent_at = '2026-09-02 12:00+00' where id = 'dededede-0000-0000-0000-0000000000f1';
+do $$ begin
+  assert (select occurred_at from public.lead_events where dedupe_key = 'disparo:dededede-0000-0000-0000-0000000000f1')
+    = '2026-09-02 12:00+00', 'reenvio grava a data nova';
+end $$;
+-- evento que sobrou (ex.: gravado pelo backfill com o trigger desligado): o reenvio atualiza
+set session_replication_role = replica;
+update public.broadcast_leads set sent_at = null where id = 'dededede-0000-0000-0000-0000000000f1';
+update public.broadcasts set name = 'Disparo Cap v2' where id = 'dededede-0000-0000-0000-0000000000b1';
+set session_replication_role = origin;
+update public.broadcast_leads set sent_at = '2026-09-03 12:00+00' where id = 'dededede-0000-0000-0000-0000000000f1';
+do $$
+declare e public.lead_events;
+begin
+  select * into e from public.lead_events where dedupe_key = 'disparo:dededede-0000-0000-0000-0000000000f1';
+  assert e.occurred_at = '2026-09-03 12:00+00', 'on conflict atualiza a data: ' || e.occurred_at;
+  assert e.metadata->>'broadcast_nome' = 'Disparo Cap v2', e.metadata::text;
+  assert (select count(*) from public.lead_events where lead_id = 'dededede-0000-0000-0000-0000000000c1') = 1,
+    'um evento so';
+end $$;
+rollback;
+"""
+
+
+@_precisa_pg
+def test_disparo_retido_pelo_cap_e_reenvio():
+    r = _rodar(CENARIO_DISPARO_CAP)
+    assert "WARNING" not in r.stderr, r.stderr
+
+
+
+# Revisão (item 5): o Bling regrava a venda a cada webhook. Evento que já mostra o estado
+# atual não é reescrito (ctid igual = nenhuma versão nova da linha).
+CENARIO_VENDA_SEM_REESCRITA = """
+begin;
+insert into public.leads (id, phone) values ('cececece-0000-0000-0000-0000000000c1', '5511900000081');
+insert into public.sales (id, lead_id, value, product, origin, sold_by, status) values
+  ('cececece-0000-0000-0000-0000000000e1', 'cececece-0000-0000-0000-0000000000c1', 60, 'Kit',
+   'bling', null, 'registrada');
+create temp table antes as
+  select ctid::text as versao from public.lead_events where dedupe_key = 'venda:cececece-0000-0000-0000-0000000000e1';
+-- regravação idêntica do webhook
+update public.sales set status = 'registrada', value = 60, product = 'Kit', origin = 'bling', sold_by = null
+ where id = 'cececece-0000-0000-0000-0000000000e1';
+do $$ begin
+  assert (select ctid::text from public.lead_events where dedupe_key = 'venda:cececece-0000-0000-0000-0000000000e1')
+    = (select versao from antes), 'regravacao identica nao reescreve o evento';
+end $$;
+-- o evento já mostra o status novo (ex.: gravado pelo backfill): nada a reescrever
+update public.lead_events set metadata = metadata || '{"status": "entregue"}'
+ where dedupe_key = 'venda:cececece-0000-0000-0000-0000000000e1';
+update antes set versao = (select ctid::text from public.lead_events
+                          where dedupe_key = 'venda:cececece-0000-0000-0000-0000000000e1');
+update public.sales set status = 'entregue' where id = 'cececece-0000-0000-0000-0000000000e1';
+do $$ begin
+  assert (select ctid::text from public.lead_events where dedupe_key = 'venda:cececece-0000-0000-0000-0000000000e1')
+    = (select versao from antes), 'evento ja atualizado nao e reescrito';
+end $$;
+-- mudança de verdade continua chegando
+update public.sales set status = 'faturada' where id = 'cececece-0000-0000-0000-0000000000e1';
+do $$ begin
+  assert (select metadata->>'status' from public.lead_events
+           where dedupe_key = 'venda:cececece-0000-0000-0000-0000000000e1') = 'faturada', 'status novo chega';
+end $$;
+rollback;
+"""
+
+
+@_precisa_pg
+def test_venda_nao_reescreve_evento_igual():
+    r = _rodar(CENARIO_VENDA_SEM_REESCRITA)
+    assert "WARNING" not in r.stderr, r.stderr
+
+
 # ── Backfill: semente SEM triggers (o backfill é quem cria os eventos) ─────────────────
 # L1 CTWA novo: referral na criação (+ repetido 5 min depois)  → 1 entrada (referral)
 # L2 importado em 08/01, clicou em 09/10 (referral de número SEM o 9) → 1 entrada (referral)
@@ -528,6 +766,11 @@ def test_backfill_idempotente():
         _psql(CONFERE_BACKFILL)
         assert primeira["referrals"]["ambiguos"] >= 1 and primeira["referrals"]["colapsados"] >= 1
 
+        # Revisão (item 6): a coluna legada `stage` muda sem mudar stage_id; o BEFORE trigger
+        # recarimba entered_stage_at e o trigger de etapa (update of stage_id) não dispara.
+        # A chave da etapa atual muda — o re-run não pode inventar uma etapa fantasma.
+        _psql("update public.deals set stage = 'legado-bf' "
+              "where id = 'f0f0f0f0-0000-0000-0000-0000000000d2';")
         segunda = _backfill("--aplicar")
         assert segunda["inseridos"] == {}, segunda["inseridos"]
         assert json.loads(_psql(CONTA_BACKFILL).strip()) == ESPERADO_BACKFILL

@@ -10,16 +10,25 @@
 --                    (limitacao aceita). Update so de meta_ad_id NAO e entrada: enriquece a
 --                    entrada mais recente com o mesmo ctwa_clid.
 --   etapa            deals: insert e update de stage_id.
---   venda            sales: insert. metadata.kit vem de sale_items (descricao ~ 'kit degust'),
---                    recalculado pelo trigger de sale_items porque os itens chegam DEPOIS.
+--   venda            sales: insert; acompanha a edicao da venda; delete da venda apaga.
+--                    metadata.kit vem de sale_items (descricao ~ 'kit degust'), recalculado
+--                    pelo trigger de sale_items porque os itens chegam DEPOIS.
 --   venda_cancelada  sales: status passa a 'cancelada'.
---   disparo          broadcast_leads: sent_at passa a ter valor.
+--   disparo          broadcast_leads: sent_at passa a ter valor; volta a NULL (cap da
+--                    Meta) apaga; o reenvio grava a data nova.
 -- mesclagem e atribuicao_manual sao gravados pelo codigo do P1/P2.
 --
 -- dedupe_key deterministica: scripts/timeline/backfill_lead_events.py gera AS MESMAS chaves,
 -- entao o backfill nao duplica o que o trigger ja gravou (e vice-versa).
 -- Nenhum trigger derruba a escrita original: corpo em begin ... exception when others then
 -- raise warning ... end.
+-- Funcoes de trigger SECURITY DEFINER com search_path fixo (padrao da P0): rodam como o dono.
+-- lead_events tem RLS sem policy e quem grava e muitas vezes `authenticated` (ex.:
+-- components/quick-add-lead.tsx) — rodando como quem grava, o insert virava WARNING em
+-- silencio. Por isso mesmo nao podem ser RPC: EXECUTE revogado de public/anon/authenticated
+-- (EXECUTE de funcao de trigger so e checado no CREATE TRIGGER; o trigger dispara assim mesmo).
+
+begin;
 
 -- ── 0. CANAL — espelho de backend/app/campaigns/traffic_report.py:derive_channel ──────
 -- As tres listas abaixo sao testadas contra as constantes do Python
@@ -143,27 +152,27 @@ $$;
 -- (meta_router._register_lead). Update de rastreio a menos de 30 min da ultima entrada
 -- FUNDE o snapshot nela em vez de criar outra.
 create or replace function public.fn_lead_events_leads_entrada()
-returns trigger language plpgsql as $$
+returns trigger language plpgsql security definer set search_path = public, pg_temp as $$
 declare
   v_meta jsonb;
   v_ultimo uuid;
 begin
-  begin
-    if not public.fn_lead_tem_rastreio(new.gclid, new.fbclid, new.ctwa_clid, new.meta_ad_id,
-                                       new.utm_source, new.utm_campaign) then
+  -- Guardas baratas FORA do bloco com exception: ele abre subtransacao por linha.
+  if not public.fn_lead_tem_rastreio(new.gclid, new.fbclid, new.ctwa_clid, new.meta_ad_id,
+                                     new.utm_source, new.utm_campaign) then
+    return new;
+  end if;
+  if tg_op = 'UPDATE' then
+    if new.ctwa_clid is not distinct from old.ctwa_clid
+       and new.gclid is not distinct from old.gclid
+       and new.fbclid is not distinct from old.fbclid
+       and new.meta_ad_id is not distinct from old.meta_ad_id
+       and new.utm_source is not distinct from old.utm_source
+       and new.utm_campaign is not distinct from old.utm_campaign then
       return new;
     end if;
-    if tg_op = 'UPDATE' then
-      if new.ctwa_clid is not distinct from old.ctwa_clid
-         and new.gclid is not distinct from old.gclid
-         and new.fbclid is not distinct from old.fbclid
-         and new.meta_ad_id is not distinct from old.meta_ad_id
-         and new.utm_source is not distinct from old.utm_source
-         and new.utm_campaign is not distinct from old.utm_campaign then
-        return new;
-      end if;
-    end if;
-
+  end if;
+  begin
     v_meta := public.fn_lead_entrada_metadata(new.gclid, new.fbclid, new.ctwa_clid, new.meta_ad_id,
                                               new.utm_source, new.utm_medium, new.utm_campaign,
                                               new.traffic_type);
@@ -227,6 +236,8 @@ begin
   return new;
 end $$;
 
+revoke execute on function public.fn_lead_events_leads_entrada() from public, anon, authenticated;
+
 drop trigger if exists trg_lead_events_leads_entrada on public.leads;
 create trigger trg_lead_events_leads_entrada
   after insert or update of ctwa_clid, gclid, fbclid, meta_ad_id, utm_source, utm_campaign
@@ -237,23 +248,23 @@ create trigger trg_lead_events_leads_entrada
 -- O BEFORE trigger update_deal_entered_stage_at ja carimbou entered_stage_at = now() na
 -- mudanca: a chave usa esse instante, e o backfill acha a mesma para a etapa atual.
 create or replace function public.fn_lead_events_deals_etapa()
-returns trigger language plpgsql as $$
+returns trigger language plpgsql security definer set search_path = public, pg_temp as $$
 declare
   v_de uuid;
   v_meta jsonb;
   v_quando timestamptz;
 begin
-  begin
-    if new.lead_id is null or new.stage_id is null then
+  -- Guardas baratas FORA do bloco com exception: ele abre subtransacao por linha.
+  if new.lead_id is null or new.stage_id is null then
+    return new;
+  end if;
+  if tg_op = 'UPDATE' then
+    if new.stage_id is not distinct from old.stage_id then
       return new;
     end if;
-    if tg_op = 'UPDATE' then
-      if new.stage_id is not distinct from old.stage_id then
-        return new;
-      end if;
-      v_de := old.stage_id;
-    end if;
-
+    v_de := old.stage_id;
+  end if;
+  begin
     v_meta := public.fn_lead_events_etapa_metadata(new.id, new.pipeline_id, v_de, new.stage_id);
 
     if tg_op = 'INSERT' then
@@ -276,6 +287,8 @@ begin
   return new;
 end $$;
 
+revoke execute on function public.fn_lead_events_deals_etapa() from public, anon, authenticated;
+
 drop trigger if exists trg_lead_events_deals_etapa on public.deals;
 create trigger trg_lead_events_deals_etapa
   after insert or update of stage_id
@@ -283,16 +296,38 @@ create trigger trg_lead_events_deals_etapa
   for each row execute function public.fn_lead_events_deals_etapa();
 
 -- ── 4. VENDA / VENDA_CANCELADA (sales) ─────────────────────────────────────────────────
+-- A venda e editavel (vendedor, valor, produto, data, origem): o evento acompanha a edicao —
+-- o sold_by do metadata decide o escopo do vendedor na rota. venda vai para a nova sold_at;
+-- venda_cancelada mantem a data do cancelamento. Venda apagada leva os eventos junto.
 create or replace function public.fn_lead_events_sales_venda()
-returns trigger language plpgsql as $$
+returns trigger language plpgsql security definer set search_path = public, pg_temp as $$
 declare
   v_meta jsonb;
   v_source text;
   v_cancelou boolean;
 begin
-  begin
+  -- Guardas baratas FORA do bloco com exception: ele abre subtransacao por linha.
+  if tg_op <> 'DELETE' then
     if new.lead_id is null then
       return new;
+    end if;
+    -- o Bling regrava a venda inteira a cada webhook: sem mudanca nos campos do evento, nada
+    if tg_op = 'UPDATE' then
+      if new.status is not distinct from old.status
+         and new.sold_by is not distinct from old.sold_by
+         and new.value is not distinct from old.value
+         and new.product is not distinct from old.product
+         and new.sold_at is not distinct from old.sold_at
+         and new.origin is not distinct from old.origin then
+        return new;
+      end if;
+    end if;
+  end if;
+  begin
+    if tg_op = 'DELETE' then
+      delete from public.lead_events
+       where dedupe_key in ('venda:' || old.id, 'venda_cancelada:' || old.id);
+      return old;
     end if;
     v_meta := public.fn_lead_events_venda_metadata(new);
     v_source := case when new.origin = 'bling' then 'bling' else 'crm' end;
@@ -304,9 +339,19 @@ begin
       on conflict (dedupe_key) where dedupe_key is not null do nothing;
       v_cancelou := new.status = 'cancelada';
     else
-      update public.lead_events
-         set metadata = coalesce(metadata, '{}'::jsonb) || jsonb_build_object('status', new.status)
-       where dedupe_key = 'venda:' || new.id;
+      update public.lead_events e
+         set metadata = coalesce(e.metadata, '{}'::jsonb) || v_meta,
+             new_value = new.value::text,
+             source = v_source,
+             occurred_at = case when e.event_type = 'venda' then coalesce(new.sold_at, e.occurred_at)
+                                else e.occurred_at end
+       where e.dedupe_key in ('venda:' || new.id, 'venda_cancelada:' || new.id)
+         -- so reescreve se o evento nao mostra o estado atual (status e campos editaveis)
+         and (e.metadata is distinct from coalesce(e.metadata, '{}'::jsonb) || v_meta
+              or e.new_value is distinct from new.value::text
+              or e.source is distinct from v_source
+              or (e.event_type = 'venda' and new.sold_at is not null
+                  and e.occurred_at is distinct from new.sold_at));
       v_cancelou := new.status = 'cancelada' and old.status is distinct from 'cancelada';
     end if;
 
@@ -323,26 +368,37 @@ begin
   return new;
 end $$;
 
+revoke execute on function public.fn_lead_events_sales_venda() from public, anon, authenticated;
+
 drop trigger if exists trg_lead_events_sales_venda on public.sales;
 create trigger trg_lead_events_sales_venda
-  after insert or update of status
+  after insert or update of status, sold_by, value, product, sold_at, origin or delete
   on public.sales
   for each row execute function public.fn_lead_events_sales_venda();
 
 -- Os itens chegam depois da venda (orders.py grava sales e depois sale_items; no update do
 -- Bling apaga e regrava). Recalcula metadata.kit dos eventos da venda.
 create or replace function public.fn_lead_events_sale_items_kit()
-returns trigger language plpgsql as $$
+returns trigger language plpgsql security definer set search_path = public, pg_temp as $$
 declare
   v_sale uuid;
   v_kit boolean;
 begin
-  begin
-    if tg_op = 'DELETE' then
-      v_sale := old.sale_id;
-    else
-      v_sale := new.sale_id;
+  -- Guardas baratas FORA do bloco com exception: ele abre subtransacao por linha.
+  if tg_op = 'UPDATE' then
+    if new.descricao is not distinct from old.descricao and new.sale_id is not distinct from old.sale_id then
+      return null;
     end if;
+  end if;
+  if tg_op = 'DELETE' then
+    v_sale := old.sale_id;
+  else
+    v_sale := new.sale_id;
+  end if;
+  if v_sale is null then
+    return null;
+  end if;
+  begin
     v_kit := exists (select 1 from public.sale_items i
                       where i.sale_id = v_sale and i.descricao ilike '%kit degust%');
     update public.lead_events e
@@ -355,6 +411,8 @@ begin
   return null;
 end $$;
 
+revoke execute on function public.fn_lead_events_sale_items_kit() from public, anon, authenticated;
+
 drop trigger if exists trg_lead_events_sale_items_kit on public.sale_items;
 create trigger trg_lead_events_sale_items_kit
   after insert or delete or update of descricao
@@ -363,32 +421,52 @@ create trigger trg_lead_events_sale_items_kit
 
 -- ── 5. DISPARO (broadcast_leads) ───────────────────────────────────────────────────────
 create or replace function public.fn_lead_events_broadcast_disparo()
-returns trigger language plpgsql as $$
+returns trigger language plpgsql security definer set search_path = public, pg_temp as $$
 declare
   v_meta jsonb;
 begin
-  begin
-    if new.lead_id is null or new.sent_at is null then
+  -- Guardas baratas FORA do bloco com exception: ele abre subtransacao por linha.
+  if new.lead_id is null then
+    return new;
+  end if;
+  if tg_op = 'INSERT' then
+    if new.sent_at is null then
+      return new;  -- pendente
+    end if;
+  else
+    if old.sent_at is null and new.sent_at is null then
       return new;
     end if;
-    if tg_op = 'UPDATE' then
-      if old.sent_at is not null then
-        return new;
-      end if;
+    if old.sent_at is not null and new.sent_at is not null then
+      return new;  -- ja contado
+    end if;
+  end if;
+  begin
+    if new.sent_at is null then
+      -- envio desfeito (cap da Meta, 131049: broadcast/worker.py limpa sent_at): ninguem
+      -- recebeu, entao o disparo sai da timeline. O reenvio grava de novo.
+      delete from public.lead_events where dedupe_key = 'disparo:' || new.id;
+      return new;
     end if;
     v_meta := public.fn_lead_events_disparo_metadata(new);
     insert into public.lead_events (lead_id, event_type, new_value, metadata, occurred_at, source, dedupe_key)
     values (new.lead_id, 'disparo', v_meta->>'broadcast_nome', v_meta, new.sent_at, 'disparo',
             'disparo:' || new.id)
-    on conflict (dedupe_key) where dedupe_key is not null do nothing;
+    on conflict (dedupe_key) where dedupe_key is not null do update
+      set occurred_at = excluded.occurred_at, metadata = excluded.metadata,
+          new_value = excluded.new_value;
   exception when others then
     raise warning 'fn_lead_events_broadcast_disparo: %', sqlerrm;
   end;
   return new;
 end $$;
 
+revoke execute on function public.fn_lead_events_broadcast_disparo() from public, anon, authenticated;
+
 drop trigger if exists trg_lead_events_broadcast_disparo on public.broadcast_leads;
 create trigger trg_lead_events_broadcast_disparo
   after insert or update of sent_at
   on public.broadcast_leads
   for each row execute function public.fn_lead_events_broadcast_disparo();
+
+commit;

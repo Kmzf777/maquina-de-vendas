@@ -41,10 +41,12 @@ function fakeSupabase(tables: Record<string, Result | Result[]>) {
   };
 }
 
-const call = (id = "lead-1") =>
+const LEAD_ID = "6f1c2e7a-0000-4000-8000-000000000001";
+
+const call = (id = LEAD_ID) =>
   GET(new Request(`http://localhost/api/leads/${id}/timeline`) as never, { params: Promise.resolve({ id }) });
 
-const LEAD: Result = { data: { id: "lead-1" }, error: null };
+const LEAD: Result = { data: { id: LEAD_ID }, error: null };
 
 const ev = (p: Record<string, unknown>) => ({
   id: "e",
@@ -72,6 +74,15 @@ describe("GET /api/leads/[id]/timeline", () => {
   it("401 sem sessão", async () => {
     vi.mocked(getCurrentUser).mockRejectedValueOnce(new Error("no session"));
     expect((await call()).status).toBe(401);
+  });
+
+  it("404 para id que não é UUID, sem consultar o banco", async () => {
+    const sb = fakeSupabase({ leads: { data: null, error: { message: 'invalid input syntax for type uuid: "x"' } } });
+    vi.mocked(getServiceSupabase).mockResolvedValue(sb as never);
+    const res = await call("nao-e-uuid");
+    expect(res.status).toBe(404);
+    expect(await res.json()).toEqual({ error: "lead_not_found" });
+    expect(sb.calls).toHaveLength(0);
   });
 
   it("404 lead inexistente", async () => {
@@ -143,10 +154,18 @@ describe("GET /api/leads/[id]/timeline", () => {
         leads: LEAD,
         lead_events: {
           data: [
-            ev({ id: "v-joao", event_type: "venda", metadata: { sold_by: "joao@x.com", origin: "crm" } }),
-            ev({ id: "v-ana", event_type: "venda", metadata: { sold_by: "Ana@x.com", origin: "crm" } }),
-            ev({ id: "v-bling", event_type: "venda_cancelada", metadata: { sold_by: null, origin: "bling" } }),
+            ev({ id: "v-joao", event_type: "venda", metadata: { sale_id: "s-j", sold_by: "joao@x.com", origin: "crm" } }),
+            ev({ id: "v-ana", event_type: "venda", metadata: { sale_id: "s-a", sold_by: "Ana@x.com", origin: "crm" } }),
+            ev({ id: "v-bling", event_type: "venda_cancelada", metadata: { sale_id: "s-b", sold_by: null, origin: "bling" } }),
             ev({ id: "ent", event_type: "entrada" }),
+          ],
+          error: null,
+        },
+        sales: {
+          data: [
+            { id: "s-j", sold_by: "joao@x.com", origin: "crm" },
+            { id: "s-a", sold_by: "Ana@x.com", origin: "crm" },
+            { id: "s-b", sold_by: null, origin: "bling" },
           ],
           error: null,
         },
@@ -157,19 +176,72 @@ describe("GET /api/leads/[id]/timeline", () => {
     expect(items.map((i) => i.id).sort()).toEqual(["ent", "v-ana", "v-bling"]);
   });
 
-  it("admin vê todas as vendas", async () => {
+  it("escopo do vendedor usa o sold_by ATUAL de sales, não a foto do evento", async () => {
+    vi.mocked(getCurrentUser).mockResolvedValue({ userId: "u2", role: "vendedor", email: "ana@x.com" } as never);
+    const sb = fakeSupabase({
+      leads: LEAD,
+      lead_events: {
+        data: [
+          // a foto diz Ana, mas a venda foi reatribuída ao João
+          ev({ id: "era-ana", event_type: "venda", metadata: { sale_id: "s1", sold_by: "ana@x.com", origin: "crm" } }),
+          // a foto diz João, mas a venda agora é da Ana
+          ev({ id: "virou-ana", event_type: "venda", metadata: { sale_id: "s2", sold_by: "joao@x.com", origin: "crm" } }),
+          // venda que não existe mais em sales: some
+          ev({ id: "apagada", event_type: "venda_cancelada", metadata: { sale_id: "s3", sold_by: "ana@x.com", origin: "crm" } }),
+        ],
+        error: null,
+      },
+      sales: {
+        data: [
+          { id: "s1", sold_by: "joao@x.com", origin: "crm" },
+          { id: "s2", sold_by: "Ana@x.com", origin: "crm" },
+        ],
+        error: null,
+      },
+      messages: [msgs()],
+    });
+    vi.mocked(getServiceSupabase).mockResolvedValue(sb as never);
+    const { items, partial } = await body(await call());
+    expect(items.map((i) => i.id)).toEqual(["virou-ana"]);
+    expect(partial).toEqual([]);
+    const salesCall = sb.calls.find((c) => c.table === "sales")!;
+    expect(salesCall.ops).toContainEqual(["in", ["id", ["s1", "s2", "s3"]]]);
+  });
+
+  it("falha ao ler sales esconde as vendas do vendedor (na dúvida, esconde)", async () => {
+    vi.mocked(getCurrentUser).mockResolvedValue({ userId: "u2", role: "vendedor", email: "ana@x.com" } as never);
     vi.mocked(getServiceSupabase).mockResolvedValue(
       fakeSupabase({
         leads: LEAD,
         lead_events: {
-          data: [ev({ id: "v-joao", event_type: "venda", metadata: { sold_by: "joao@x.com", origin: "crm" } })],
+          data: [
+            ev({ id: "v", event_type: "venda", metadata: { sale_id: "s1", sold_by: "ana@x.com", origin: "crm" } }),
+            ev({ id: "ent", event_type: "entrada" }),
+          ],
           error: null,
         },
+        sales: { data: null, error: { message: "boom" } },
         messages: [msgs()],
       }) as never,
     );
+    const { items, partial } = await body(await call());
+    expect(items.map((i) => i.id)).toEqual(["ent"]);
+    expect(partial).toEqual(["vendas"]);
+  });
+
+  it("admin vê todas as vendas", async () => {
+    const sb = fakeSupabase({
+      leads: LEAD,
+      lead_events: {
+        data: [ev({ id: "v-joao", event_type: "venda", metadata: { sold_by: "joao@x.com", origin: "crm" } })],
+        error: null,
+      },
+      messages: [msgs()],
+    });
+    vi.mocked(getServiceSupabase).mockResolvedValue(sb as never);
     const { items } = await body(await call());
     expect(items.map((i) => i.id)).toEqual(["v-joao"]);
+    expect(sb.calls.some((c) => c.table === "sales")).toBe(false); // sem escopo, não busca
   });
 
   it("falha em lead_events vira partial 'eventos' sem derrubar os marcadores", async () => {

@@ -75,10 +75,22 @@ def test_kit_pela_descricao():
     assert "descricao ilike '%kit degust%'" in SQL
 
 
-def test_todo_insert_tem_on_conflict_do_nothing():
+def test_todo_insert_tem_on_conflict():
     inserts = SQL.count("insert into public.lead_events")
     assert inserts == 6  # entrada, etapa (criado/mudança), venda, venda_cancelada, disparo
-    assert SQL.count("on conflict (dedupe_key) where dedupe_key is not null do nothing") == inserts
+    # o disparo é o único que atualiza no conflito (reenvio depois do cap da Meta)
+    assert SQL.count("on conflict (dedupe_key) where dedupe_key is not null do nothing") == inserts - 1
+    assert SQL.count("on conflict (dedupe_key) where dedupe_key is not null do update") == 1
+
+
+def test_disparo_retido_pelo_cap_sai_da_timeline_e_reenvio_atualiza():
+    """Revisão: broadcast/worker.py volta sent_at para NULL no erro 131049 (cap da Meta).
+    O disparo que ninguém recebeu não pode ficar na timeline; o reenvio leva a data nova."""
+    corpo = _corpo("fn_lead_events_broadcast_disparo")
+    assert "delete from public.lead_events" in corpo
+    assert "'disparo:' || new.id" in corpo
+    assert ("on conflict (dedupe_key) where dedupe_key is not null do update\n"
+            "      set occurred_at = excluded.occurred_at, metadata = excluded.metadata") in corpo
 
 
 def test_janela_de_30_min_funde_os_updates_do_webhook():
@@ -98,3 +110,73 @@ def test_so_meta_ad_id_enriquece_a_entrada_do_mesmo_ctwa_clid():
     assert "e.metadata->>'ctwa_clid' = new.ctwa_clid" in corpo
     trecho = corpo.split("so meta_ad_id mudou")[1].split("return new;")[0]
     assert "insert into" not in trecho
+
+
+FUNCOES_TRIGGER = re.findall(r"function public\.(\w+)\(\)\s+returns trigger", SQL)
+
+
+def test_funcoes_de_trigger_rodam_como_dono_e_nao_sao_rpc():
+    """Revisão: lead_events tem RLS sem policy. Rodando como quem grava (authenticated, ex.:
+    components/quick-add-lead.tsx), o insert no lead_events falhava e virava WARNING em
+    silêncio. SECURITY DEFINER com search_path fixo; EXECUTE fora de anon/authenticated."""
+    assert set(TRIGGERS) <= set(FUNCOES_TRIGGER)
+    for fn in FUNCOES_TRIGGER:
+        assert re.search(
+            rf"function public\.{fn}\(\)\s+returns trigger language plpgsql "
+            r"security definer set search_path = public, pg_temp as \$\$",
+            SQL,
+        ), fn
+        assert f"revoke execute on function public.{fn}() from public, anon, authenticated;" in SQL, fn
+
+
+def test_migracao_numa_transacao_so():
+    codigo = [ln for ln in SQL.splitlines() if ln.strip() and not ln.lstrip().startswith("--")]
+    assert codigo[0] == "begin;"
+    assert codigo[-1] == "commit;"
+
+
+def test_venda_acompanha_edicao_e_exclusao_da_sale():
+    """Revisão: sold_by/value/product/sold_at/origin são editáveis. O evento era uma foto que
+    nunca atualizava (e o sold_by velho decidia o escopo do vendedor na rota)."""
+    m = re.search(r"after insert or update of ([a-z_, ]+?) or delete\s+on public\.sales\s", SQL)
+    assert m
+    assert {c.strip() for c in m.group(1).split(",")} == {
+        "status", "sold_by", "value", "product", "sold_at", "origin"}
+    corpo = _corpo("fn_lead_events_sales_venda")
+    assert "tg_op = 'DELETE'" in corpo
+    assert "delete from public.lead_events" in corpo
+
+
+GUARDAS = {
+    "fn_lead_events_leads_entrada": ["fn_lead_tem_rastreio(", "new.utm_campaign is not distinct from old.utm_campaign"],
+    "fn_lead_events_deals_etapa": ["new.lead_id is null", "new.stage_id is not distinct from old.stage_id"],
+    "fn_lead_events_sales_venda": ["new.lead_id is null", "new.sold_by is not distinct from old.sold_by",
+                                   "new.status is not distinct from old.status"],
+    "fn_lead_events_sale_items_kit": ["new.descricao is not distinct from old.descricao"],
+    "fn_lead_events_broadcast_disparo": ["new.lead_id is null", "old.sent_at is not null",
+                                         "old.sent_at is null"],
+}
+
+
+@pytest.mark.parametrize("fn, guardas", GUARDAS.items())
+def test_guardas_baratas_ficam_fora_da_subtransacao(fn, guardas):
+    """Revisão: um bloco begin/exception abre subtransação a cada linha; o caminho que não faz
+    nada não deve pagar isso (UPDATE em massa estoura o cache de subxid)."""
+    corpo = _corpo(fn)
+    externo = corpo.index("\nbegin\n") + len("\nbegin\n")
+    antes = corpo[externo:corpo.index("begin\n", externo)]
+    assert "exception when" not in antes
+    for g in guardas:
+        assert g in antes, (fn, g)
+    assert "return" in antes
+    # uma subtransação só por função
+    assert corpo.count("exception when others then") == 1, fn
+
+
+def test_venda_so_reescreve_o_evento_quando_algo_muda():
+    """Revisão: o Bling regrava a venda a cada webhook; o evento que já mostra o estado atual
+    não é reescrito (metadata, new_value, source e data comparados antes do update)."""
+    corpo = _corpo("fn_lead_events_sales_venda")
+    trecho = corpo.split("update public.lead_events e")[1].split(";")[0]
+    assert "e.metadata is distinct from coalesce(e.metadata, '{}'::jsonb) || v_meta" in trecho
+    assert "e.new_value is distinct from new.value::text" in trecho

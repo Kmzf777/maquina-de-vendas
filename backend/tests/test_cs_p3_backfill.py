@@ -114,3 +114,13 @@ def test_main_dry_run_imprime_contagens(capsys):
 
 def test_ultimo_json_ignora_linhas_vazias():
     assert bf.ultimo_json('\n\n{"a": 1}\n\n') == {"a": 1}
+
+
+def test_etapa_atual_ja_registrada_nao_vira_etapa_fantasma():
+    """Revisão: se entered_stage_at muda sem mudar a etapa (coluna legada `stage`), a chave da
+    etapa atual muda e o re-run inseriria a mesma etapa de novo. Evento `etapa` do card com
+    para_stage_id = etapa atual já cobre o candidato."""
+    sql = bf.montar_sql(COMPLETO, aplicar=True)
+    assert "e.metadata->>'para_stage_id' = c.metadata->>'para_stage_id'" in sql
+    assert "from marcado where not existe" in sql
+    assert "para_stage_id" not in bf.montar_sql(PROD_HOJE, aplicar=False)
