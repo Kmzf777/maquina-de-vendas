@@ -10,10 +10,13 @@
  * `Sheet` com `modal={false}`: o Radix não renderiza o overlay nesse modo, não
  * trava o foco nem o `pointer-events` do body. Clicar fora fecharia o painel
  * por padrão — e "fora" é justamente o chat —, por isso `onInteractOutside`
- * cancela o fechamento. Fecha pelo X, por "Cancelar" ou pelo Esc.
+ * cancela o fechamento. Fecha pelo X, por "Cancelar" ou pelo Esc — este só
+ * com o foco DENTRO do painel: o Esc do Radix escuta o documento inteiro, e
+ * um Esc dado no chat (fechar emoji, sair da busca) descartava o pedido.
  *
  * `components/ui/dialog.tsx` não é tocado: é compartilhado pelo CRM inteiro.
  */
+import { useRef } from "react";
 import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
 
 const LARGURA = {
@@ -44,6 +47,7 @@ export function PainelLateral({
   onFechar,
   children,
 }: PainelLateralProps) {
+  const conteudo = useRef<HTMLDivElement>(null);
   return (
     <Sheet
       open
@@ -56,7 +60,12 @@ export function PainelLateral({
         side="right"
         showCloseButton={false}
         aria-describedby={undefined}
+        ref={conteudo}
         onInteractOutside={(e) => e.preventDefault()}
+        onEscapeKeyDown={(e) => {
+          const foco = document.activeElement;
+          if (!foco || !conteudo.current?.contains(foco)) e.preventDefault();
+        }}
         className={`bg-white border-l border-[#dedbd6] p-0 gap-0 flex flex-col data-[side=right]:w-full ${LARGURA[largura]}`}
       >
         <div className="shrink-0 flex items-center justify-between px-5 py-4 border-b border-[#dedbd6]">
