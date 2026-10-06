@@ -3,6 +3,7 @@ import { useState, type ReactNode } from "react";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Input } from "@/components/ui/input";
 import { CampaignLeadPanel } from "@/components/trafego/campaign-lead-panel";
+import type { AtribuicaoManual } from "@/components/trafego/campaign-attribution";
 import { stageLabel } from "@/lib/lead-overview";
 
 export type PrimeiraOrigem = {
@@ -82,11 +83,16 @@ function OriginBadge({ trafficType }: { trafficType: string | null }) {
 export function CampaignLeadsTable({ leads }: { leads: CampaignLead[] }) {
   const [q, setQ] = useState("");
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  // Atribuição feita no painel aparece na hora (selo manual); os totais recalculam ao recarregar.
+  const [overrides, setOverrides] = useState<Record<string, Partial<CampaignLead>>>({});
+  const rows = leads.map(l => (overrides[l.lead_id] ? { ...l, ...overrides[l.lead_id] } : l));
   const norm = (s: string) => s.toLowerCase();
   const filtered = q
-    ? leads.filter(l => norm(`${l.name ?? ""} ${l.phone ?? ""}`).includes(norm(q)))
-    : leads;
-  const selected = leads.find(l => l.lead_id === selectedId) ?? null;
+    ? rows.filter(l => norm(`${l.name ?? ""} ${l.phone ?? ""}`).includes(norm(q)))
+    : rows;
+  const selected = rows.find(l => l.lead_id === selectedId) ?? null;
+  const onAttributionChange = (leadId: string, a: AtribuicaoManual) =>
+    setOverrides(prev => ({ ...prev, [leadId]: { ...prev[leadId], ...a } }));
 
   return (
     <div className="bg-white border border-[#dedbd6] rounded-[8px] overflow-hidden">
@@ -187,7 +193,11 @@ export function CampaignLeadsTable({ leads }: { leads: CampaignLead[] }) {
         </Table>
       </div>
 
-      <CampaignLeadPanel target={selected} onClose={() => setSelectedId(null)} />
+      <CampaignLeadPanel
+        target={selected}
+        onClose={() => setSelectedId(null)}
+        onAttributionChange={onAttributionChange}
+      />
     </div>
   );
 }
