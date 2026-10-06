@@ -91,3 +91,10 @@ def test_idempotente():
     assert "create table public." not in SQL
     assert "create function" not in SQL  # sempre create or replace
     assert SQL.count("drop trigger if exists") == SQL.count("create trigger") == 5
+
+
+def test_so_meta_ad_id_enriquece_a_entrada_do_mesmo_ctwa_clid():
+    corpo = _corpo("fn_lead_events_leads_entrada")
+    assert "e.metadata->>'ctwa_clid' = new.ctwa_clid" in corpo
+    trecho = corpo.split("so meta_ad_id mudou")[1].split("return new;")[0]
+    assert "insert into" not in trecho

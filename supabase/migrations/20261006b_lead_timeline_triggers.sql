@@ -6,8 +6,9 @@
 -- Linha do tempo do lead (spec docs/superpowers/specs/2026-10-06-call-semanal-0110-design.md,
 -- pacote P3). Captura por trigger, num lugar so, o que hoje esta espalhado:
 --   entrada          leads: insert com rastreio, ou update que MUDA ctwa_clid/gclid/fbclid/
---                    meta_ad_id/utm_source/utm_campaign. Reentrada com rastreio identico nao
---                    gera evento (limitacao aceita).
+--                    utm_source/utm_campaign. Reentrada com rastreio identico nao gera evento
+--                    (limitacao aceita). Update so de meta_ad_id NAO e entrada: enriquece a
+--                    entrada mais recente com o mesmo ctwa_clid.
 --   etapa            deals: insert e update de stage_id.
 --   venda            sales: insert. metadata.kit vem de sale_items (descricao ~ 'kit degust'),
 --                    recalculado pelo trigger de sale_items porque os itens chegam DEPOIS.
@@ -166,6 +167,34 @@ begin
     v_meta := public.fn_lead_entrada_metadata(new.gclid, new.fbclid, new.ctwa_clid, new.meta_ad_id,
                                               new.utm_source, new.utm_medium, new.utm_campaign,
                                               new.traffic_type);
+
+    -- so meta_ad_id mudou (ctwa_clid e o resto iguais): e ENRIQUECIMENTO da mesma entrada,
+    -- nunca entrada nova. Acontece no webhook (meta_ad_id chega depois do ctwa_clid) e no
+    -- scripts/trafego/recuperar_meta_ad_id.py do P2 (~687 leads antigos), que sem esta regra
+    -- ganhariam entradas falsas datadas do dia do script. Atualiza a entrada mais recente com
+    -- o MESMO ctwa_clid; nao havendo, nao faz nada.
+    if tg_op = 'UPDATE'
+       and new.ctwa_clid is not distinct from old.ctwa_clid
+       and new.gclid is not distinct from old.gclid
+       and new.fbclid is not distinct from old.fbclid
+       and new.utm_source is not distinct from old.utm_source
+       and new.utm_campaign is not distinct from old.utm_campaign then
+      if public.fn_lead_txt(new.ctwa_clid) <> '' then
+        update public.lead_events alvo
+           set metadata = coalesce(alvo.metadata, '{}'::jsonb)
+                          || jsonb_build_object('meta_ad_id', new.meta_ad_id)
+                          || case when v_meta->>'campanha_id' is not null
+                                  then jsonb_build_object('campanha_id', v_meta->'campanha_id',
+                                                          'campanha_nome', v_meta->'campanha_nome')
+                                  else '{}'::jsonb end
+         where alvo.id = (select e.id from public.lead_events e
+                           where e.lead_id = new.id and e.event_type = 'entrada'
+                             and e.metadata->>'ctwa_clid' = new.ctwa_clid
+                           order by e.occurred_at desc, e.created_at desc
+                           limit 1);
+      end if;
+      return new;
+    end if;
 
     if tg_op = 'UPDATE' then
       select e.id into v_ultimo

@@ -321,6 +321,64 @@ rollback;
 """
 
 
+# Só meta_ad_id mudou (ctwa_clid igual) = enriquecimento da MESMA entrada, nunca entrada nova.
+# Casos reais: o webhook grava meta_ad_id depois do ctwa_clid, e o recuperar_meta_ad_id.py do P2
+# preenche meta_ad_id em ~687 leads antigos — sem esta regra nasceriam entradas falsas "de hoje".
+CENARIO_META_AD_ID = """
+begin;
+insert into public.meta_ad_campaigns (ad_id, campaign_id, campaign_name)
+values ('ad-p3m', 'camp-p3m', 'CTWA Recuperada') on conflict (ad_id) do nothing;
+insert into public.leads (id, phone, ctwa_clid)
+values ('abababab-0000-0000-0000-000000000001', '5511900000051', 'clid-m1');
+-- fora da janela de 30 min (lead antigo)
+update public.lead_events set occurred_at = now() - interval '40 days'
+ where lead_id = 'abababab-0000-0000-0000-000000000001';
+update public.leads set meta_ad_id = 'ad-p3m' where id = 'abababab-0000-0000-0000-000000000001';
+do $$
+declare e public.lead_events;
+begin
+  assert (select count(*) from public.lead_events where lead_id = 'abababab-0000-0000-0000-000000000001') = 1,
+    'so meta_ad_id mudou: nenhuma entrada nova';
+  select * into e from public.lead_events where lead_id = 'abababab-0000-0000-0000-000000000001';
+  assert e.metadata->>'meta_ad_id' = 'ad-p3m' and e.metadata->>'campanha_id' = 'camp-p3m'
+     and e.metadata->>'campanha_nome' = 'CTWA Recuperada', e.metadata::text;
+  assert e.occurred_at < now() - interval '39 days', 'a data da entrada nao muda';
+end $$;
+-- lead antigo SEM evento algum (anterior a migracao): o update de meta_ad_id nao cria nada
+set session_replication_role = replica;
+insert into public.leads (id, phone, ctwa_clid)
+values ('abababab-0000-0000-0000-000000000002', '5511900000052', 'clid-m2');
+set session_replication_role = origin;
+update public.leads set meta_ad_id = 'ad-p3m' where id = 'abababab-0000-0000-0000-000000000002';
+do $$ begin
+  assert (select count(*) from public.lead_events where lead_id = 'abababab-0000-0000-0000-000000000002') = 0,
+    'sem entrada com o mesmo ctwa_clid: nao faz nada';
+end $$;
+-- a entrada mais recente tem OUTRO ctwa_clid: nao enriquece
+update public.lead_events set metadata = metadata || '{"ctwa_clid": "clid-velho"}'
+ where lead_id = 'abababab-0000-0000-0000-000000000001';
+update public.leads set meta_ad_id = 'ad-outro' where id = 'abababab-0000-0000-0000-000000000001';
+do $$ begin
+  assert (select metadata->>'meta_ad_id' from public.lead_events
+           where lead_id = 'abababab-0000-0000-0000-000000000001') = 'ad-p3m', 'clid diferente nao e enriquecido';
+  assert (select count(*) from public.lead_events where lead_id = 'abababab-0000-0000-0000-000000000001') = 1,
+    'e continua sem entrada nova';
+end $$;
+-- mudanca de ctwa_clid continua sendo entrada nova
+update public.leads set ctwa_clid = 'clid-m3' where id = 'abababab-0000-0000-0000-000000000002';
+do $$ begin
+  assert (select count(*) from public.lead_events where lead_id = 'abababab-0000-0000-0000-000000000002'
+           and event_type = 'entrada') = 1, 'ctwa_clid novo gera 1 entrada';
+end $$;
+rollback;
+"""
+
+
+@_precisa_pg
+def test_so_meta_ad_id_enriquece_sem_criar_entrada():
+    _psql(CENARIO_META_AD_ID)
+
+
 @_precisa_pg
 def test_entrada():
     _psql(CENARIO_ENTRADA)

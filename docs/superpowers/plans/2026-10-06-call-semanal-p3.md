@@ -2533,3 +2533,18 @@ git commit -m "feat(timeline): P3 — componente LeadTimeline e aba no modal do 
   `LeadTimelineProps = { leadId: string }`.
 - Overview (`api/leads/[id]/overview/route.ts:133`) lê `id, event_type, old_value, new_value,
   created_at` — todos continuam preenchidos (`new_value` = canal/etapa/valor/nome do disparo).
+
+---
+
+## Ajuste pedido na integração (P2 × P3, 06/10)
+
+Update em que **só `meta_ad_id`** muda (ctwa_clid, gclid, fbclid, utm_source, utm_campaign
+iguais) **não é entrada nova**: o trigger atualiza `metadata.meta_ad_id` (e `campanha_id`/
+`campanha_nome` quando o anúncio resolve em `meta_ad_campaigns`) da `entrada` mais recente do
+lead com o **mesmo `ctwa_clid`**; sem essa entrada (ou lead sem ctwa_clid), não faz nada.
+Motivo: o webhook grava meta_ad_id depois do ctwa_clid e o `recuperar_meta_ad_id.py` do P2
+preenche ~687 leads antigos — sem a regra nasceriam entradas falsas datadas do dia do script.
+Coberto por `test_cs_p3_timeline_pg.py::test_so_meta_ad_id_enriquece_sem_criar_entrada` (update
+só de meta_ad_id → 0 eventos novos + metadata enriquecida; clid diferente → intocado; lead sem
+evento → nada; ctwa_clid novo → 1 entrada) e por
+`test_cs_p3_timeline_migration.py::test_so_meta_ad_id_enriquece_a_entrada_do_mesmo_ctwa_clid`.
