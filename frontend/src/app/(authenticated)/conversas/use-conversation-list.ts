@@ -331,6 +331,30 @@ export function useConversationList({
       }
     }, REFETCH_DEBOUNCE_MS);
 
+    // Caches das OUTRAS abas (canal + aba) só recebem patch do que já conhecem. Uma
+    // conversa que passa a pertencer a uma delas (ficou não lida, conversa nova) não
+    // entra — e com staleTime de 30s a aba mostraria a lista sem ela enquanto o badge
+    // (servidor) a conta. Marca esses caches como velhos SEM refazer agora
+    // (`refetchType: "none"`): refazem quando a aba for ativada.
+    const markOtherTabsStale = (row: ConversationRow, isInsert: boolean) => {
+      const activeTab = activeTabRef.current;
+      void queryClient.invalidateQueries({
+        queryKey: ["conversations"],
+        refetchType: "none",
+        predicate: (query) => {
+          const [, keyChannel, keyTab] = query.queryKey as readonly [string, string, string];
+          if (keyChannel === channelId && keyTab === activeTab) return false; // a ativa tem seu fluxo
+          if (keyChannel && row.channel_id && keyChannel !== row.channel_id) return false;
+          if (isInsert) return true;
+          const data = query.state.data as ConversationPages | undefined;
+          if (!data) return false;
+          if (flattenPages(data).some((c) => c.id === row.id)) return false; // o patch cobre
+          if (!isWithinLoadedWindow(data, row.last_msg_at)) return false; // a próxima página a traz
+          return shouldFetchUnknownRow(row, keyTab);
+        },
+      });
+    };
+
     const applyRowPatch = (row: ConversationRow) => {
       const overrides = {
         forceUnreadZero: recentlyMarkedRef.current.has(row.id),
@@ -366,6 +390,7 @@ export function useConversationList({
           // Filtro de canal ativo: eventos de outros canais não pertencem à lista.
           if (channelId && row.channel_id !== channelId) return;
           if (payload.eventType === "INSERT") {
+            markOtherTabsStale(row, true);
             debouncedInvalidate(); // linha crua não tem lead/channel — precisa da API
             return;
           }
@@ -373,6 +398,7 @@ export function useConversationList({
           // remove a linha sem precisar dos joins da API).
           applyRowPatch(row);
           if (isBlockedConversationRow(row)) return;
+          markOtherTabsStale(row, false);
 
           const tab = activeTabRef.current;
           const cached = queryClient.getQueryData<ConversationPages>(

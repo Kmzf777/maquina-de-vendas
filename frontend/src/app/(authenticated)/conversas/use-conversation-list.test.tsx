@@ -369,3 +369,53 @@ describe("useConversationList + ChatList — erro de página", () => {
     expect(server.count(isNextPage)).toBeGreaterThan(attempts);
   });
 });
+
+describe("useConversationList — caches das outras abas", () => {
+  async function visitUnreadTabAndBack(rerender: (p: { tab: string }) => void) {
+    rerender({ tab: "nao_lidas" });
+    await vi.waitFor(() => expect(server.count((u) => u.includes("tab=nao_lidas"))).toBe(1));
+    await tick();
+    rerender({ tab: "todos" });
+    await tick();
+  }
+
+  it("refetches the 'Não lidas' cache on activation when a conversation became unread", async () => {
+    server.db = [conv("a", 12), conv("b", 11)];
+    const { result, rerender } = setup();
+    await vi.waitFor(() => expect(result.current.conversations).toHaveLength(2));
+    await visitUnreadTabAndBack(rerender);
+    const listCalls = server.count(isListUrl);
+
+    server.db[1] = { ...server.db[1], unread_count: 2 };
+    act(() => updateEvent({ id: uid("b"), unread_count: 2 }));
+    await tick();
+    expect(server.count(isListUrl)).toBe(listCalls); // nada refeito em segundo plano
+
+    rerender({ tab: "nao_lidas" }); // ainda dentro do staleTime de 30s
+    await vi.waitFor(() => expect(ids(result.current.conversations)).toEqual([uid("b")]));
+  });
+
+  it("refetches other tabs on activation after an INSERT, even before the debounce fires", async () => {
+    server.db = [conv("a", 12, { unread_count: 1 })];
+    const { result, rerender } = setup();
+    await vi.waitFor(() => expect(result.current.conversations).toHaveLength(1));
+    await visitUnreadTabAndBack(rerender);
+
+    server.db.push(conv("n", 14, { unread_count: 1 }));
+    act(() => realtime.emit("conversations", { eventType: "INSERT", new: { id: uid("n"), channel_id: "c1" }, old: {} }));
+    rerender({ tab: "nao_lidas" });
+    await vi.waitFor(() => expect(ids(result.current.conversations)).toContain(uid("n")));
+  });
+
+  it("leaves other tabs alone when the update cannot change them", async () => {
+    server.db = [conv("a", 12), conv("b", 11)];
+    const { result, rerender } = setup();
+    await vi.waitFor(() => expect(result.current.conversations).toHaveLength(2));
+    await visitUnreadTabAndBack(rerender);
+
+    act(() => updateEvent({ id: uid("b"), followup_enabled: false, unread_count: 0 }));
+    rerender({ tab: "nao_lidas" });
+    await tick();
+    expect(server.count((u) => u.includes("tab=nao_lidas"))).toBe(1);
+  });
+});
