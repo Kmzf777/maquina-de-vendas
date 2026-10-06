@@ -97,6 +97,11 @@ def _s(v: Any) -> str:
     return v.strip() if isinstance(v, str) else ""
 
 
+def _cancelada(sale: dict[str, Any]) -> bool:
+    """Venda cancelada não é venda: não conta cliente, pedido, receita nem compra."""
+    return _s(sale.get("status")).lower() == "cancelada"
+
+
 # Origens (utm_source) de anúncio pago, por plataforma. A gestora de tráfego tagueia a Meta
 # como 'metaads' e o Google como 'google'. Usadas quando NÃO há click-id — ex.: anúncio Meta
 # que leva ao WhatsApp (sem fbclid) ou Google PMAX sem gclid. NÃO incluir 'instagram'/
@@ -139,6 +144,26 @@ def derive_channel(lead: dict[str, Any]) -> str:
     if _s(lead.get("traffic_type")).lower() == "organic" or source:
         return "Orgânico"
     return "Sem rastreio"
+
+
+# Atribuição manual (P0: leads.campanha_manual_*). Um admin diz no /trafego de qual campanha o
+# lead veio quando o rastreio não diz — e essa resposta vence meta_ad_id, UTMs e tokens.
+_MANUAL_CHANNEL = {"meta": "Meta Ads", "google": "Google Ads"}
+
+
+def manual_attribution(lead: dict[str, Any]) -> tuple[str, str, str] | None:
+    """(canal do relatório, campaign_id, nome) da atribuição manual, ou None."""
+    channel = _MANUAL_CHANNEL.get(_s(lead.get("campanha_manual_canal")).lower())
+    cid = _s(lead.get("campanha_manual_id"))
+    if not channel or not cid:
+        return None
+    return channel, cid, _s(lead.get("campanha_manual_nome")) or cid
+
+
+def lead_channel(lead: dict[str, Any]) -> str:
+    """Canal do lead no relatório: a atribuição manual vence o rastreio (derive_channel)."""
+    manual = manual_attribution(lead)
+    return manual[0] if manual else derive_channel(lead)
 
 
 _UNATTRIBUTED = "(não atribuído)"
@@ -199,6 +224,12 @@ def build_campaign_report(
     gasto era puxado do lado do lead, então cada variante de slug cobrava o custo cheio da
     campanha de novo — o investimento do Google aparecia 2,6x maior do que foi gasto.
 
+    Funil CUMULATIVO (call de 01/10): quem comprou passou pelo closer, e quem chegou ao closer
+    conversou — cliente ⊂ closer ⊂ conversa. Antes eram conjuntos independentes, e o pedido do
+    Bling de quem já era cliente (lead criado já com venda, sem conversa nem deal) aparecia como
+    "4 closer e 10 clientes". `entraram_ja_clientes` guarda quantos clientes NÃO eram closer pelo
+    critério antigo: o que o Arthur percebeu continua visível em vez de sumir na soma.
+
     Invariante: para cada canal pago, soma(linhas.investimento) == gasto real da plataforma
     na janela. Campanha que gastou sem gerar lead entra com leads=0 em vez de sumir."""
     spend_by_channel = spend_by_channel or {}
@@ -209,14 +240,22 @@ def build_campaign_report(
     # (canal, campaign_id) -> linha, para pendurar o custo depois sem depender do rótulo.
     row_by_campaign: dict[tuple[str, str], dict[str, Any]] = {}
     resolved_cache: dict[tuple[str, str, str], str | None] = {}
+    entraram_ja_clientes = 0
 
     for lead in leads:
         lead_id = lead.get("id")
-        channel = derive_channel(lead)
+        manual = manual_attribution(lead)
+        channel = manual[0] if manual else derive_channel(lead)
         raw_campaign = _s(lead.get("utm_campaign"))
         campaigns = campaigns_by_channel.get(channel)
         cid = None
-        if campaigns:
+        label = None
+        if manual:
+            # A resposta do admin vence anúncio e UTM. Campanha sem gasto na janela vira linha
+            # própria com o nome gravado (investimento 0), sem se misturar com o "não atribuído".
+            cid = manual[1]
+            label = campaigns[cid]["name"] if campaigns and cid in campaigns else manual[2]
+        elif campaigns:
             platform_cid = campaign_id_by_lead.get(lead_id)
             if platform_cid and platform_cid in campaigns:
                 cid = platform_cid
@@ -228,7 +267,8 @@ def build_campaign_report(
                 cid = resolved_cache[ck]
         if cid:
             key = (channel, "id:" + cid)
-            label = campaigns[cid]["name"]
+            if label is None:
+                label = campaigns[cid]["name"]
         elif campaigns:
             # Canal pago sem campanha resolvida: não se mistura com uma campanha real, mas
             # mantém o slug no rótulo quando existe — é a pista p/ corrigir o tagueamento.
@@ -244,15 +284,19 @@ def build_campaign_report(
             if cid:
                 row_by_campaign[(channel, cid)] = row
         row["leads"] += 1
-        if lead_id in conversed_ids:
-            row["conversas"] += 1
-        if lead_id in closer_ids:
-            row["closer"] += 1
         sale = sales_by_lead.get(lead_id)
-        if sale:
+        cliente = bool(sale)
+        closer = cliente or lead_id in closer_ids
+        if closer or lead_id in conversed_ids:
+            row["conversas"] += 1
+        if closer:
+            row["closer"] += 1
+        if cliente:
             row["clientes"] += 1  # leads distintos que compraram (base da conversão)
             row["pedidos"] += int(sale.get("count", 0) or 0)  # nº de vendas (recompra: pode ser >1)
             row["receita"] += float(sale.get("value", 0.0) or 0.0)
+            if lead_id not in closer_ids:
+                entraram_ja_clientes += 1
 
     # Investimento: percorre as CAMPANHAS (não os leads), então cada custo entra uma única vez.
     # Campanha que gastou e não gerou lead ganha uma linha zerada — sumir do relatório seria
@@ -303,7 +347,7 @@ def build_campaign_report(
     total["investimento"] = round(total["investimento"], 2)
     total["roas"] = round(paid_receita / total["investimento"], 2) if total["investimento"] else None
     return {"mode": mode, "period": period, "rows": rows, "total": total,
-            "channel_subtotals": channel_subtotals}
+            "channel_subtotals": channel_subtotals, "entraram_ja_clientes": entraram_ja_clientes}
 
 
 # --- Relatório geral (bloco acima da tabela) -------------------------------------------
@@ -357,7 +401,8 @@ def build_report_summary(report: dict[str, Any], leads: list[dict[str, Any]],
     rates = _stage_rates(counts)
     candidates = [(rates["taxa_" + s], i, s) for i, s in enumerate(_FUNNEL_STAGES)
                   if rates["taxa_" + s] is not None]
-    funnel = {**counts, **rates, "gargalo": min(candidates)[2] if candidates else None}
+    funnel = {**counts, **rates, "gargalo": min(candidates)[2] if candidates else None,
+              "entraram_ja_clientes": int(report.get("entraram_ja_clientes", 0) or 0)}
 
     paid = dict.fromkeys(_COUNT_KEYS, 0)
     inv = rec = 0.0
@@ -436,8 +481,25 @@ class _MetaAdCol:
     enabled = True
 
 
+# Colunas do P0 (20261006_call_semanal_base.sql — migração manual). Até o Rafael aplicá-la, o
+# PostgREST rejeita o select inteiro; o relatório degrada (perde só atribuição manual e "já
+# era cliente") em vez de zerar.
+_P0_LEAD_COLS = ("campanha_manual_canal, campanha_manual_id, campanha_manual_nome, "
+                 "ja_era_cliente, ja_era_cliente_fonte")
+_P0_COL_MARKERS = ("campanha_manual", "ja_era_cliente")
+
+
+class _P0Col:
+    """Flag de processo: colunas do P0 existem? Desligada só quando o erro CITA uma delas —
+    um erro de rede não pode desligar a atribuição manual até o próximo deploy."""
+    enabled = True
+
+
 def _lead_cols() -> str:
-    return _LEAD_COLS + ", meta_ad_id" if _MetaAdCol.enabled else _LEAD_COLS
+    cols = _LEAD_COLS + ", meta_ad_id" if _MetaAdCol.enabled else _LEAD_COLS
+    return cols + ", " + _P0_LEAD_COLS if _P0Col.enabled else cols
+
+
 _DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
 
@@ -498,44 +560,54 @@ def _fetch_all(build_query, page: int = _PAGE) -> list[dict[str, Any]]:
         offset += page
 
 
-def _fetch_leads(sb, mode: str, lo: str | None, hi: str | None) -> list[dict[str, Any]]:
-    cols = _lead_cols()
-
-    def _leads_in(chunk):
-        return _fetch_all(lambda: sb.table("leads").select(cols).in_("id", chunk))
-
-    if mode == "sale":
-        def _sales_q():
-            q = sb.table("sales").select("lead_id")
-            if lo:
-                q = q.gte("sold_at", lo)
-            if hi:
-                q = q.lte("sold_at", hi)
-            return q
-        sale_ids = sorted({r["lead_id"] for r in _fetch_all(_sales_q) if r.get("lead_id")})
-        leads: list[dict[str, Any]] = []
-        for chunk in _chunks(sale_ids):
-            leads.extend(_leads_in(chunk))
-        return leads
-
-    def _q():
-        q = sb.table("leads").select(cols)
-        if lo:
-            q = q.gte("created_at", lo)
-        if hi:
-            q = q.lte("created_at", hi)
-        return q
+def _select_leads(fetch) -> list[dict[str, Any]]:
+    """Roda `fetch(cols)` degradando as colunas de migration ainda não aplicada."""
     try:
-        return _fetch_all(_q)
+        return fetch(_lead_cols())
     except Exception as exc:
+        if _P0Col.enabled and any(m in str(exc) for m in _P0_COL_MARKERS):
+            logger.warning("traffic_report: colunas do P0 ausentes (%s) - migration 20261006 pendente?", exc)
+            _P0Col.enabled = False
+            return _select_leads(fetch)
         # A coluna meta_ad_id vem de migration; se ela ainda nao foi aplicada o PostgREST
         # rejeita o select inteiro. Degrada para o conjunto base (perde so a atribuicao de
         # campanha do Meta) em vez de zerar o relatorio.
         if _MetaAdCol.enabled:
             logger.warning("traffic_report: select com meta_ad_id falhou (%s) - migration pendente?", exc)
             _MetaAdCol.enabled = False
-            return _fetch_leads(sb, mode, lo, hi)
+            return _select_leads(fetch)
         raise
+
+
+def _fetch_leads(sb, mode: str, lo: str | None, hi: str | None) -> list[dict[str, Any]]:
+    if mode == "sale":
+        def _sales_q():
+            q = sb.table("sales").select("lead_id, status")
+            if lo:
+                q = q.gte("sold_at", lo)
+            if hi:
+                q = q.lte("sold_at", hi)
+            return q
+        sale_ids = sorted({r["lead_id"] for r in _fetch_all(_sales_q)
+                           if r.get("lead_id") and not _cancelada(r)})
+
+        def _por_venda(cols):
+            leads: list[dict[str, Any]] = []
+            for chunk in _chunks(sale_ids):
+                leads.extend(_fetch_all(lambda c=chunk: sb.table("leads").select(cols).in_("id", c)))
+            return leads
+        return _select_leads(_por_venda)
+
+    def _por_janela(cols):
+        def _q():
+            q = sb.table("leads").select(cols)
+            if lo:
+                q = q.gte("created_at", lo)
+            if hi:
+                q = q.lte("created_at", hi)
+            return q
+        return _fetch_all(_q)
+    return _select_leads(_por_janela)
 
 
 def _conversed_ids(sb, lead_ids: list[str]) -> set[str]:
@@ -574,7 +646,7 @@ def _sales_by_lead(sb, lead_ids: list[str], lo: str | None, hi: str | None, mode
     out: dict[str, dict[str, Any]] = {}
     for chunk in _chunks(lead_ids):
         def _q(c=chunk):
-            q = sb.table("sales").select("lead_id, value, sold_at").in_("lead_id", c)
+            q = sb.table("sales").select("lead_id, value, sold_at, status").in_("lead_id", c)
             if mode == "sale" and lo:
                 q = q.gte("sold_at", lo)
             if mode == "sale" and hi:
@@ -582,7 +654,7 @@ def _sales_by_lead(sb, lead_ids: list[str], lo: str | None, hi: str | None, mode
             return q
         for r in _fetch_all(_q):
             lid = r.get("lead_id")
-            if not lid:
+            if not lid or _cancelada(r):
                 continue
             agg = out.setdefault(lid, {"count": 0, "value": 0.0, "last_sold_at": None,
                                         "first_sold_at": None})
@@ -683,11 +755,24 @@ def select_campaign_leads(leads: list[dict[str, Any]], channel: str, campaign: s
 
     O rotulo da linha e o nome da campanha NA PLATAFORMA, nao o utm_campaign do lead (varios
     slugs caem na mesma campanha). Entao o drill-down precisa resolver o lead do mesmo jeito
-    que o build_campaign_report resolveu — comparar com utm_campaign cru so acharia zero."""
+    que o build_campaign_report resolveu — comparar com utm_campaign cru so acharia zero.
+    A atribuicao manual vence, como em build_campaign_report."""
     campaigns = campaigns or {}
     campaign_id_by_lead = campaign_id_by_lead or {}
-    in_channel = [l for l in leads if derive_channel(l) == channel]
+    in_channel = [l for l in leads if lead_channel(l) == channel]
 
+    def _manual_label(l):
+        _, cid, nome = manual_attribution(l)
+        return campaigns[cid]["name"] if cid in campaigns else nome
+
+    auto = [l for l in in_channel if manual_attribution(l) is None]
+    auto_ids = {id(l) for l in _select_auto(auto, campaign, campaigns, campaign_id_by_lead)}
+    return [l for l in in_channel
+            if (_manual_label(l) == campaign if manual_attribution(l) else id(l) in auto_ids)]
+
+
+def _select_auto(in_channel, campaign, campaigns, campaign_id_by_lead):
+    """Leads SEM atribuição manual de uma linha — o casamento por anúncio/UTM de sempre."""
     if not campaigns:  # canal nao pago: a linha e o proprio utm_campaign
         return [l for l in in_channel if (_s(l.get("utm_campaign")) or _NO_CAMPAIGN) == campaign]
 
@@ -787,13 +872,13 @@ def campaign_detail(channel: str, campaign: str, period: str = "30d", mode: str 
         sales_rows: list[dict[str, Any]] = []
         for chunk in _chunks(lead_ids):
             def _sq(c=chunk):
-                q = sb.table("sales").select("value, sold_at").in_("lead_id", c)
+                q = sb.table("sales").select("value, sold_at, status").in_("lead_id", c)
                 if mode == "sale" and lo:
                     q = q.gte("sold_at", lo)
                 if mode == "sale" and hi:
                     q = q.lte("sold_at", hi)
                 return q
-            sales_rows.extend(_fetch_all(_sq))
+            sales_rows.extend(r for r in _fetch_all(_sq) if not _cancelada(r))
         timeseries = build_campaign_timeseries(_daterange_days(lo, hi), selected, sales_rows)
         return {"summary": summary, "leads": leads, "timeseries": timeseries}
     except Exception as exc:
@@ -826,6 +911,26 @@ def traffic_report(period: str = "30d", mode: str = "lead",
         return _empty_report(mode, period)
 
 
+def _primeira_origem(sb, lead_ids: list[str]) -> dict[str, dict[str, Any]]:
+    """lead_id -> primeira entrada registrada (view lead_primeira_origem do P0, enchida pelo P3).
+
+    Fail-soft: sem a migração a view não existe e a coluna cai no canal atual na tela."""
+    try:
+        out: dict[str, dict[str, Any]] = {}
+        for chunk in _chunks(lead_ids):
+            rows = _fetch_all(lambda c=chunk: sb.table("lead_primeira_origem")
+                              .select("lead_id, canal, campanha_id, campanha_nome, occurred_at")
+                              .in_("lead_id", c))
+            for r in rows:
+                if r.get("lead_id"):
+                    out[r["lead_id"]] = {k: r.get(k) for k in
+                                         ("canal", "campanha_id", "campanha_nome", "occurred_at")}
+        return out
+    except Exception as exc:
+        logger.warning("lead_primeira_origem indisponível (migration 20261006 pendente?): %s", exc)
+        return {}
+
+
 def _stage_info_map(sb) -> dict[str, dict[str, Any]]:
     stages = _fetch_all(lambda: sb.table("pipeline_stages").select("id, key, order_index"))
     return {s["id"]: {"key": s.get("key"), "order_index": s.get("order_index")} for s in stages}
@@ -846,6 +951,9 @@ def campaign_leads(channel: str, campaign: str, period: str = "30d", mode: str =
         lead_ids = [l["id"] for l in selected if l.get("id")]
         conversed = _conversed_ids(sb, lead_ids)
         sales = _sales_by_lead(sb, lead_ids, lo, hi, mode)
+        # "Compras" é a vida inteira do lead; no modo venda `sales` vem recortado pela janela.
+        compras = sales if mode != "sale" else _sales_by_lead(sb, lead_ids, None, None, "lead")
+        origem = _primeira_origem(sb, lead_ids)
         stage_info = _stage_info_map(sb)
         deals = []
         for chunk in _chunks(lead_ids):
@@ -870,6 +978,7 @@ def campaign_leads(channel: str, campaign: str, period: str = "30d", mode: str =
         for l in selected:
             lid = l["id"]
             sale = sales.get(lid)
+            manual = manual_attribution(l)
             out.append({
                 "lead_id": lid, "name": l.get("name"), "phone": l.get("phone"),
                 "created_at": l.get("created_at"), "utm_source": l.get("utm_source"),
@@ -878,6 +987,15 @@ def campaign_leads(channel: str, campaign: str, period: str = "30d", mode: str =
                 "stage": furthest_stage.get(lid),
                 "comprou": bool(sale), "valor": float(sale["value"]) if sale else 0.0,
                 "sold_at": sale.get("last_sold_at") if sale else None,
+                "canal": lead_channel(l),
+                "atribuicao_manual": manual is not None,
+                "campanha_manual_canal": _s(l.get("campanha_manual_canal")).lower() if manual else None,
+                "campanha_manual_id": manual[1] if manual else None,
+                "campanha_manual_nome": manual[2] if manual else None,
+                "ja_era_cliente": l.get("ja_era_cliente"),
+                "ja_era_cliente_fonte": l.get("ja_era_cliente_fonte"),
+                "compras": int((compras.get(lid) or {}).get("count", 0) or 0),
+                "primeira_origem": origem.get(lid),
             })
         out.sort(key=lambda r: (not r["comprou"], r.get("created_at") or ""), reverse=False)
         return out

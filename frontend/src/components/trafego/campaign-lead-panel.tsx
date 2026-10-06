@@ -18,6 +18,7 @@ import {
   SheetTitle,
 } from "@/components/ui/sheet";
 import { Skeleton } from "@/components/ui/skeleton";
+import { CampaignAttribution, type AtribuicaoManual } from "@/components/trafego/campaign-attribution";
 import { getTemperature, TEMPERATURE_CONFIG } from "@/lib/temperature";
 import {
   buildJourney,
@@ -44,6 +45,11 @@ export interface CampaignLeadPanelTarget {
   utm_source: string | null;
   utm_medium: string | null;
   utm_campaign: string | null;
+  // Atribuição manual de campanha (call de 01/10, P2) — opcional: backend antigo não manda.
+  atribuicao_manual?: boolean;
+  campanha_manual_canal?: "meta" | "google" | null;
+  campanha_manual_id?: string | null;
+  campanha_manual_nome?: string | null;
 }
 
 const DASH = "—";
@@ -276,9 +282,11 @@ function PanelSkeleton() {
 export function CampaignLeadPanel({
   target,
   onClose,
+  onAttributionChange,
 }: {
   target: CampaignLeadPanelTarget | null;
   onClose: () => void;
+  onAttributionChange?: (leadId: string, a: AtribuicaoManual) => void;
 }) {
   const router = useRouter();
   const leadId = target?.lead_id ?? null;
@@ -417,6 +425,21 @@ export function CampaignLeadPanel({
 
         {/* ── Corpo ── */}
         <div className="flex-1 overflow-y-auto px-5 py-4 space-y-3">
+          {leadId && (
+            // key: trocar de lead recomeça o select do zero, sem herdar a escolha do anterior.
+            <CampaignAttribution
+              key={leadId}
+              leadId={leadId}
+              atual={{
+                atribuicao_manual: Boolean(target?.atribuicao_manual),
+                campanha_manual_canal: target?.campanha_manual_canal ?? null,
+                campanha_manual_id: target?.campanha_manual_id ?? null,
+                campanha_manual_nome: target?.campanha_manual_nome ?? null,
+              }}
+              onChange={(a) => onAttributionChange?.(leadId, a)}
+            />
+          )}
+
           {loading && <PanelSkeleton />}
 
           {error && (

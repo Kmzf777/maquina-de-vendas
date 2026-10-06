@@ -6,8 +6,12 @@ import { useEffect, useState, type ReactNode } from "react";
 import { CHANNEL_STYLES } from "@/components/trafego/campaign-report-table";
 import {
   STAGE_LABEL, collapsedLine, fmtBRLOrDash, fmtDays, fmtInt, fmtPctOrDash, fmtRoasOrDash,
-  type ReportSummary, type SummaryStage,
+  type ReportSummary, type SummaryFunnel, type SummaryStage,
 } from "@/lib/traffic-summary";
+
+/** Campo do funil cumulativo (call de 01/10). Opcional: backend anterior não o manda. O tipo
+ *  base mora em lib/traffic-summary.ts, fora do pacote P2 — por isso a extensão local. */
+export type FunnelComEntrada = SummaryFunnel & { entraram_ja_clientes?: number };
 
 const STORAGE_KEY = "trafego:summary-collapsed";
 const LABEL = "text-[11px] font-medium uppercase tracking-[0.6px] text-[#7b7b78]";
@@ -36,6 +40,7 @@ function Stat({ label, value, hint }: { label: string; value: string; hint?: str
 // ---- 1. Funil ------------------------------------------------------------------------------
 function FunnelBand({ summary, mode }: { summary: ReportSummary; mode: "lead" | "sale" }) {
   const f = summary.funnel;
+  const entraram = (f as FunnelComEntrada).entraram_ja_clientes;
   const showRates = mode === "lead";
   const steps: { label: string; n: number; stage?: SummaryStage; rate?: number | null }[] = [
     { label: "Leads", n: f.leads },
@@ -74,9 +79,19 @@ function FunnelBand({ summary, mode }: { summary: ReportSummary; mode: "lead" | 
         })}
       </ol>
       {showRates ? (
-        <p className="text-[12px] text-[#7b7b78] border-t border-[#dedbd6] pt-2">
-          Lead → cliente: <span className="text-[#111111] tabular-nums">{fmtPctOrDash(f.taxa_total)}</span>
-        </p>
+        <div className="flex flex-col gap-1 border-t border-[#dedbd6] pt-2">
+          <p className="text-[12px] text-[#7b7b78]">
+            Lead → cliente: <span className="text-[#111111] tabular-nums">{fmtPctOrDash(f.taxa_total)}</span>
+          </p>
+          {entraram != null && (
+            <p
+              className="text-[12px] text-[#7b7b78]"
+              title="Clientes que compraram sem ter chegado ao closer — em geral pedido do Bling de quem já era cliente. O funil os conta em conversa e closer também."
+            >
+              Entraram já como cliente: <span className="text-[#111111] tabular-nums">{fmtInt(entraram)}</span>
+            </p>
+          )}
+        </div>
       ) : (
         <p className="text-[12px] text-[#7b7b78] border-t border-[#dedbd6] pt-2 leading-[1.45]">
           No modo Por venda a base já é quem comprou — leia o funil no modo Por lead.
