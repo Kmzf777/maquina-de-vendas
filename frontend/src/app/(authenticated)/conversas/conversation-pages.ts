@@ -15,7 +15,8 @@ import { conversationMatchesTab } from "@/lib/contact-search";
 import { sortByLastMsgDesc, type ConversationRow } from "@/lib/conversations-live";
 import { decodeCursor, type ConversationsPage } from "@/app/api/conversations/list-params";
 
-export type ConversationPages = InfiniteData<ConversationsPage<Conversation>, string | null>;
+// `pageParams` fica `unknown`: é o que o useInfiniteQuery infere, e nenhum helper o lê.
+export type ConversationPages = InfiniteData<ConversationsPage<Conversation>, unknown>;
 
 /** Chave do cache da lista: um cache por canal + aba. */
 export function conversationsQueryKey(channelId: string, tab: string) {

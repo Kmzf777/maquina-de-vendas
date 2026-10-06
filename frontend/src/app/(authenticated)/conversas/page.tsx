@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import {
   keepPreviousData,
+  useInfiniteQuery,
   useQuery,
   useQueryClient,
 } from "@tanstack/react-query";
@@ -17,16 +18,36 @@ import { setActiveConversation } from "@/lib/active-conversation";
 import {
   applyConversationUpdate,
   isBlockedConversationRow,
-  sortByLastMsgDesc,
   previewFromMessage,
   type ConversationRow,
 } from "@/lib/conversations-live";
+import {
+  conversationsListUrl,
+  type ConversationCounts,
+  type ConversationsPage,
+} from "@/app/api/conversations/list-params";
 import { ConversasQueryProvider } from "./query-provider";
+import {
+  conversationBelongsToKey,
+  conversationsQueryKey,
+  flattenPages,
+  insertIntoPages,
+  isWithinLoadedWindow,
+  patchPages,
+  shouldFetchUnknownRow,
+  type ConversationPages,
+} from "./conversation-pages";
 import type { Conversation, Channel, Tag, Lead } from "@/lib/types";
 
 // Espera do refetch integral disparado por eventos que o patch local não cobre
 // (conversa nova/desconhecida). Rajadas colapsam em 1 invalidação.
 const REFETCH_DEBOUNCE_MS = 3_000;
+// Conversa desconhecida que recebeu UPDATE: até este tanto, busca uma a uma pelo id
+// (barato); acima, uma invalidação integral sai mais em conta.
+const MAX_SINGLE_FETCHES = 10;
+// Conversa buscada que não pertence à aba ativa: ignora novos UPDATEs dela por 1 min
+// (aba de segmento não sabe o estágio do lead pela linha crua do Realtime).
+const IGNORE_OUTSIDE_TAB_MS = 60_000;
 
 export default function ConversasPage() {
   return (
@@ -72,28 +93,59 @@ function ConversasContent() {
     });
   }, []);
 
-  // Lista de conversas via React Query: latest-wins/abort/keep-previous que antes
-  // eram coordenados à mão (AbortController + fetchSeqRef + isRefreshing) agora são
-  // semântica nativa da queryKey + placeholderData.
+  // Lista PAGINADA por cursor (200 por página): o PostgREST corta toda leitura em
+  // 1.000 linhas, então a lista inteira de uma vez cobria só ~11 dias. A aba é filtro
+  // de servidor — um cache por canal + aba. latest-wins/abort/keep-previous seguem
+  // sendo semântica nativa da queryKey + placeholderData.
   const {
-    data: conversations = [],
+    data: pagesData,
     isPending: convPending,
     isError: listError,
     isPlaceholderData: isRefreshing,
     refetch: refetchConversations,
-  } = useQuery({
-    queryKey: ["conversations", selectedChannelId],
-    queryFn: async ({ signal }): Promise<Conversation[]> => {
-      const url = selectedChannelId
-        ? `/api/conversations?channel_id=${selectedChannelId}`
-        : "/api/conversations";
+    hasNextPage,
+    isFetchingNextPage,
+    fetchNextPage,
+  } = useInfiniteQuery({
+    queryKey: conversationsQueryKey(selectedChannelId, activeTab),
+    queryFn: async ({ signal, pageParam }): Promise<ConversationsPage<Conversation>> => {
+      const url = conversationsListUrl({
+        channelId: selectedChannelId,
+        tab: activeTab,
+        cursor: pageParam,
+      });
       const res = await fetch(url, { signal });
       if (!res.ok) throw new Error(`conversations ${res.status}`);
       const data = await res.json();
-      return applyOverrides(Array.isArray(data) ? data : []);
+      const list: Conversation[] = Array.isArray(data?.conversations) ? data.conversations : [];
+      return {
+        conversations: applyOverrides(list),
+        next_cursor: typeof data?.next_cursor === "string" ? data.next_cursor : null,
+      };
+    },
+    initialPageParam: null as string | null,
+    getNextPageParam: (lastPage) => lastPage.next_cursor,
+    placeholderData: keepPreviousData,
+  });
+  const conversations = useMemo(() => flattenPages(pagesData), [pagesData]);
+
+  // Contadores do servidor: o badge de "Não lidas" e o total não podem contar só o
+  // que está carregado.
+  const { data: counts } = useQuery({
+    queryKey: ["conversation-counts", selectedChannelId],
+    queryFn: async ({ signal }): Promise<ConversationCounts | null> => {
+      const qs = selectedChannelId ? `?channel_id=${encodeURIComponent(selectedChannelId)}` : "";
+      const res = await fetch(`/api/conversations/counts${qs}`, { signal });
+      if (!res.ok) return null;
+      return (await res.json()) as ConversationCounts;
     },
     placeholderData: keepPreviousData,
   });
+
+  const handleLoadMore = useCallback(() => {
+    if (isRefreshing || !hasNextPage || isFetchingNextPage) return;
+    void fetchNextPage();
+  }, [isRefreshing, hasNextPage, isFetchingNextPage, fetchNextPage]);
 
   const { data: channels = [], isPending: channelsPending } = useQuery({
     queryKey: ["channels"],
@@ -114,28 +166,16 @@ function ConversasContent() {
     },
   });
 
-  const { data: leadTagsMap = {}, isPending: leadTagsPending } = useQuery({
-    queryKey: ["lead-tags"],
-    queryFn: async (): Promise<Record<string, string[]>> => {
-      const { data } = await supabase.from("lead_tags").select("lead_id, tag_id");
-      const map: Record<string, string[]> = {};
-      (data ?? []).forEach((row: { lead_id: string; tag_id: string }) => {
-        (map[row.lead_id] ??= []).push(row.tag_id);
-      });
-      return map;
-    },
-  });
-
-  // Patch local no cache da lista vigente (substitui os pares espelhados de
-  // setConversations/setSelectedConversation — a seleção agora é DERIVADA).
+  // Patch local em TODOS os caches da lista (um por canal + aba): a mesma conversa
+  // pode estar na aba "Todos" e na de "Atacado", e a troca de aba não pode mostrar
+  // um estado velho. A seleção continua DERIVADA do cache da aba ativa.
   const patchList = useCallback(
     (updater: (list: Conversation[]) => Conversation[]) => {
-      queryClient.setQueryData<Conversation[]>(
-        ["conversations", selectedChannelId],
-        (old) => updater(old ?? []),
+      queryClient.setQueriesData<ConversationPages>({ queryKey: ["conversations"] }, (old) =>
+        old ? patchPages(old, updater) : old,
       );
     },
-    [queryClient, selectedChannelId],
+    [queryClient],
   );
 
   const patchConversation = useCallback(
@@ -150,18 +190,19 @@ function ConversasContent() {
   );
 
   /**
-   * Injeta no cache da lista uma conversa que veio de fora dela (busca de
-   * contatos, resultado de mensagem, deep-link). Sem isso a seleção é derivada
-   * de `conversations.find` e cairia no fallback — abrindo o chat ERRADO, o
-   * último que estava na tela.
+   * Injeta no cache da lista ATIVA uma conversa que veio de fora dela (busca de
+   * contatos, resultado de mensagem, deep-link, irmã, ou a aberta depois de trocar
+   * de aba). Sem isso a seleção é derivada de `conversations.find` e cairia no
+   * fallback — que não recebe os patches (toggle de IA, mark-read).
    */
   const ensureInList = useCallback(
     (conv: Conversation) => {
-      patchList((list) =>
-        list.some((c) => c.id === conv.id) ? list : sortByLastMsgDesc([...list, conv]),
+      queryClient.setQueryData<ConversationPages>(
+        conversationsQueryKey(selectedChannelId, activeTab),
+        (old) => (old ? insertIntoPages(old, conv) : old),
       );
     },
-    [patchList],
+    [queryClient, selectedChannelId, activeTab],
   );
 
   /** Busca avulsa de uma conversa fora da lista carregada. null = sem acesso/inexistente. */
@@ -194,6 +235,17 @@ function ConversasContent() {
   }, [selectedConvId, selectedLeadId]);
   useEffect(() => () => setActiveConversation({ conversationId: null, leadId: null }), []);
 
+  // A conversa aberta precisa estar no cache da aba ATIVA para receber os patches.
+  // Antes havia um cache só com todas as abas; agora, ao trocar de aba (ou depois de
+  // um refetch que não a traz mais), ela é reinjetada a partir do último objeto
+  // conhecido. A aba continua escondendo-a da lista se não pertencer a ela.
+  useEffect(() => {
+    if (!selectedId || !pagesData || isRefreshing) return;
+    if (conversations.some((c) => c.id === selectedId)) return;
+    const last = lastSelectedRef.current;
+    if (last && last.id === selectedId) ensureInList(last);
+  }, [selectedId, pagesData, isRefreshing, conversations, ensureInList]);
+
   // Deep-link: pre-select conversation by lead_id from URL param
   useEffect(() => {
     if (deepLinkApplied.current || convPending) return;
@@ -212,11 +264,12 @@ function ConversasContent() {
     // demanda em vez de ignorar o link em silêncio.
     void (async () => {
       try {
-        const res = await fetch(`/api/conversations?lead_id=${encodeURIComponent(leadId)}`);
+        const res = await fetch(conversationsListUrl({ leadId }));
         if (!res.ok) return;
-        const data = (await res.json()) as Conversation[];
-        const conv = Array.isArray(data) ? data[0] : null; // a rota já ordena por last_msg_at desc
+        const data = (await res.json()) as ConversationsPage<Conversation>;
+        const conv = Array.isArray(data?.conversations) ? data.conversations[0] : null; // a rota já ordena por last_msg_at desc
         if (!conv) return;
+        lastSelectedRef.current = conv;
         ensureInList(conv);
         setSelectedId(conv.id);
       } catch {
@@ -227,14 +280,51 @@ function ConversasContent() {
     })();
   }, [conversations, convPending, searchParams, router, ensureInList]);
 
+  // A aba ativa é lida por ref no handler do Realtime: trocar de aba não pode
+  // derrubar e refazer a inscrição (cada re-inscrição tem custo e janela cega).
+  const activeTabRef = useRef(activeTab);
+  useEffect(() => {
+    activeTabRef.current = activeTab;
+  }, [activeTab]);
+
   // Realtime SEM refetch integral por evento (corte de Egress): o payload do
   // UPDATE já traz a linha nova de `conversations` — aplicamos o delta no cache
-  // e o preview vem do INSERT de `messages`. A invalidação integral (debounced)
-  // fica reservada para o que o delta não cobre: conversa nova/desconhecida
-  // (precisa dos joins da API).
+  // e o preview vem do INSERT de `messages`. Conversa que não está na página
+  // carregada é buscada sozinha pelo id (se couber na janela/aba); a invalidação
+  // integral (debounced) fica para conversa nova (INSERT) e rajadas grandes.
   useEffect(() => {
-    const debouncedInvalidate = debounce(() => {
-      queryClient.invalidateQueries({ queryKey: ["conversations"] });
+    const invalidateAll = () => queryClient.invalidateQueries({ queryKey: ["conversations"] });
+    const debouncedInvalidate = debounce(invalidateAll, REFETCH_DEBOUNCE_MS);
+    const debouncedCounts = debounce(
+      () => queryClient.invalidateQueries({ queryKey: ["conversation-counts"] }),
+      REFETCH_DEBOUNCE_MS,
+    );
+
+    const pendingUnknown = new Set<string>();
+    const ignoredUntil = new Map<string, number>();
+    const flushUnknown = debounce(async () => {
+      const ids = [...pendingUnknown];
+      pendingUnknown.clear();
+      if (ids.length === 0) return;
+      if (ids.length > MAX_SINGLE_FETCHES) {
+        void invalidateAll();
+        return;
+      }
+      const fetched = await Promise.all(ids.map((id) => fetchConversationById(id)));
+      const activeKey = conversationsQueryKey(selectedChannelId, activeTabRef.current);
+      for (const conv of fetched) {
+        if (!conv || isBlockedConversationRow(conv)) continue;
+        const [fresh] = applyOverrides([conv]);
+        for (const query of queryClient.getQueryCache().findAll({ queryKey: ["conversations"] })) {
+          if (!conversationBelongsToKey(fresh, query.queryKey)) continue;
+          queryClient.setQueryData<ConversationPages>(query.queryKey, (old) =>
+            old ? insertIntoPages(old, fresh, { respectWindow: true }) : old,
+          );
+        }
+        if (!conversationBelongsToKey(fresh, activeKey)) {
+          ignoredUntil.set(fresh.id, Date.now() + IGNORE_OUTSIDE_TAB_MS);
+        }
+      }
     }, REFETCH_DEBOUNCE_MS);
 
     const applyRowPatch = (row: ConversationRow) => {
@@ -259,10 +349,13 @@ function ConversasContent() {
         "postgres_changes",
         { event: "*", schema: "public", table: "conversations" },
         (payload) => {
+          debouncedCounts(); // não lidas/total podem ter mudado
           if (payload.eventType === "DELETE") {
             const oldId = (payload.old as { id?: string } | null)?.id;
             if (!oldId) return;
             patchList((prev) => prev.filter((c) => c.id !== oldId));
+            // Sem isto a reinjeção da conversa aberta a ressuscitaria na lista.
+            setSelectedId((cur) => (cur === oldId ? null : cur));
             return;
           }
           const row = payload.new as ConversationRow;
@@ -272,22 +365,27 @@ function ConversasContent() {
             debouncedInvalidate(); // linha crua não tem lead/channel — precisa da API
             return;
           }
-          // BLOQUEIO antes da checagem de cache: remover linha não precisa dos
-          // joins da API, então não vale gastar um refetch integral atrás de uma
-          // conversa que a listagem justamente deixou de devolver.
-          if (isBlockedConversationRow(row)) {
-            applyRowPatch(row);
-            return;
-          }
-          const cached = queryClient.getQueryData<Conversation[]>([
-            "conversations",
-            selectedChannelId,
-          ]);
-          if (!cached?.some((c) => c.id === row.id)) {
-            debouncedInvalidate(); // conversa fora da lista atual (ex.: fetch anterior falhou)
-            return;
-          }
+          // Patch em todo cache que já conhece a conversa (inclusive o bloqueio, que
+          // remove a linha sem precisar dos joins da API).
           applyRowPatch(row);
+          if (isBlockedConversationRow(row)) return;
+
+          const tab = activeTabRef.current;
+          const cached = queryClient.getQueryData<ConversationPages>(
+            conversationsQueryKey(selectedChannelId, tab),
+          );
+          if (!cached) {
+            debouncedInvalidate(); // aba ainda sem dados (fetch anterior falhou/em voo)
+            return;
+          }
+          if (flattenPages(cached).some((c) => c.id === row.id)) return;
+          // Desconhecida: fora da janela carregada → a próxima página a trará; aba que
+          // não pode contê-la → ignora; senão busca só ela pelo id.
+          if (!isWithinLoadedWindow(cached, row.last_msg_at)) return;
+          if (!shouldFetchUnknownRow(row, tab)) return;
+          if ((ignoredUntil.get(row.id) ?? 0) > Date.now()) return;
+          pendingUnknown.add(row.id);
+          flushUnknown();
         },
       )
       .on(
@@ -318,18 +416,24 @@ function ConversasContent() {
       // socket fora ficaria defasado para sempre (só o F5 corrigia). Invalidação
       // integral aqui, sem debounce: reconexão é rara e precisa reconciliar já.
       .subscribe(
-        onResubscribe(() => queryClient.invalidateQueries({ queryKey: ["conversations"] })),
+        onResubscribe(() => {
+          void invalidateAll();
+          void queryClient.invalidateQueries({ queryKey: ["conversation-counts"] });
+        }),
       );
 
     return () => {
       debouncedInvalidate.cancel();
+      debouncedCounts.cancel();
+      flushUnknown.cancel();
       supabase.removeChannel(realtimeChannel);
     };
-  }, [selectedChannelId, queryClient, supabase, patchList]);
+  }, [selectedChannelId, queryClient, supabase, patchList, applyOverrides, fetchConversationById]);
 
   function handleSelectConversation(conv: Conversation) {
     // A lista pode entregar um resultado da busca server-side, que não está no
     // cache — sem injetar, a seleção derivada abriria o chat anterior.
+    lastSelectedRef.current = conv;
     ensureInList(conv);
     setSelectedId(conv.id);
     setPendingScrollMessageId(null);
@@ -342,6 +446,7 @@ function ConversasContent() {
       // era um `return` mudo — o clique no resultado simplesmente não fazia nada.
       const conv = await fetchConversationById(conversationId);
       if (!conv) return;
+      lastSelectedRef.current = conv;
       ensureInList(conv);
     }
     setSelectedId(conversationId);
@@ -356,6 +461,7 @@ function ConversasContent() {
     patchConversation(conversationId, { unread_count: 0 });
     try {
       await fetch(`/api/conversations/${conversationId}/mark-read`, { method: "POST" });
+      void queryClient.invalidateQueries({ queryKey: ["conversation-counts"] });
     } catch (err) {
       console.warn("[mark-read] failed:", err);
     }
@@ -433,13 +539,43 @@ function ConversasContent() {
 
   const selectedLead = selectedConversation?.leads as Lead | undefined | null;
 
-  const selectedLeadTags = selectedLead
-    ? tags.filter((t) => leadTagsMap[selectedLead.id]?.includes(t.id))
+  // Tags SÓ do lead aberto: o mapa global de `lead_tags` (5,4k linhas) era cortado
+  // em 1.000 pelo PostgREST e mostrava tags erradas no painel.
+  const { data: selectedLeadTagIds } = useQuery({
+    queryKey: ["lead-tags", selectedLeadId],
+    enabled: !!selectedLeadId,
+    queryFn: async (): Promise<string[]> => {
+      const { data, error } = await supabase
+        .from("lead_tags")
+        .select("tag_id")
+        .eq("lead_id", selectedLeadId as string);
+      if (error) throw error;
+      return (data ?? []).map((row: { tag_id: string }) => row.tag_id);
+    },
+  });
+
+  const selectedLeadTags = selectedLeadTagIds
+    ? tags.filter((t) => selectedLeadTagIds.includes(t.id))
     : [];
 
-  // Sibling conversations: same lead_id as open conversation, different conversation id
+  // Conversas irmãs (mesmo lead, outro canal) vêm do servidor: a lista paginada
+  // não garante que elas estejam carregadas.
+  const { data: siblingRows = [] } = useQuery({
+    queryKey: ["conversation-siblings", selectedLeadId, selectedChannelId],
+    enabled: !!selectedLeadId,
+    queryFn: async ({ signal }): Promise<Conversation[]> => {
+      const res = await fetch(
+        conversationsListUrl({ channelId: selectedChannelId, leadId: selectedLeadId as string }),
+        { signal },
+      );
+      if (!res.ok) return [];
+      const data = await res.json();
+      return Array.isArray(data?.conversations) ? data.conversations : [];
+    },
+  });
+
   const siblingConversations: SiblingConversationSummary[] = selectedConversation
-    ? conversations
+    ? siblingRows
         .filter(
           (c) =>
             c.lead_id === selectedConversation.lead_id &&
@@ -450,6 +586,12 @@ function ConversasContent() {
           channelName: c.channels?.name ?? "Outro canal",
         }))
     : [];
+
+  function handleSelectSibling(id: string) {
+    const sibling =
+      conversations.find((c) => c.id === id) ?? siblingRows.find((c) => c.id === id);
+    if (sibling) handleSelectConversation(sibling);
+  }
 
   function handleLeadUpdate(leadId: string, patch: Partial<Lead>) {
     patchList((prev) =>
@@ -462,12 +604,12 @@ function ConversasContent() {
   }
 
   async function handleTagToggle(tagId: string, add: boolean) {
-    if (!selectedLead) return;
+    // Tags do lead ainda não carregadas: gravar agora sobrescreveria as existentes.
+    if (!selectedLead || !selectedLeadTagIds) return;
 
-    const currentTagIds = leadTagsMap[selectedLead.id] || [];
     const newTagIds = add
-      ? [...currentTagIds, tagId]
-      : currentTagIds.filter((id) => id !== tagId);
+      ? [...selectedLeadTagIds, tagId]
+      : selectedLeadTagIds.filter((id) => id !== tagId);
 
     const res = await fetch(`/api/leads/${selectedLead.id}/tags`, {
       method: "POST",
@@ -476,15 +618,12 @@ function ConversasContent() {
     });
 
     if (res.ok) {
-      queryClient.setQueryData<Record<string, string[]>>(["lead-tags"], (prev) => ({
-        ...(prev ?? {}),
-        [selectedLead.id]: newTagIds,
-      }));
+      queryClient.setQueryData<string[]>(["lead-tags", selectedLead.id], newTagIds);
     }
   }
 
-  const initialLoading =
-    channelsPending || tagsPending || leadTagsPending || (convPending && !isRefreshing);
+  const initialLoading = channelsPending || tagsPending || (convPending && !isRefreshing);
+  const openTotal = counts?.total ?? conversations.length;
 
   if (initialLoading) {
     return (
@@ -516,6 +655,10 @@ function ConversasContent() {
           isRefreshing={isRefreshing}
           onRetry={() => refetchConversations()}
           onSelectMessageResult={handleSelectMessageResult}
+          unreadTotal={counts?.unread}
+          hasMore={!!hasNextPage && !isRefreshing}
+          loadingMore={isFetchingNextPage}
+          onLoadMore={handleLoadMore}
         />
       </div>
 
@@ -534,10 +677,7 @@ function ConversasContent() {
             onBack={() => setMobileView("list")}
             onOpenContact={() => setMobileView("contact")}
             siblingConversations={siblingConversations}
-            onSelectSibling={(id) => {
-              const sibling = conversations.find((c) => c.id === id);
-              if (sibling) handleSelectConversation(sibling);
-            }}
+            onSelectSibling={handleSelectSibling}
             targetMessageId={pendingScrollMessageId}
             onTargetConsumed={() => setPendingScrollMessageId(null)}
           />
@@ -579,6 +719,10 @@ function ConversasContent() {
           isRefreshing={isRefreshing}
           onRetry={() => refetchConversations()}
           onSelectMessageResult={handleSelectMessageResult}
+          unreadTotal={counts?.unread}
+          hasMore={!!hasNextPage && !isRefreshing}
+          loadingMore={isFetchingNextPage}
+          onLoadMore={handleLoadMore}
         />
         {selectedConversation ? (
           <>
@@ -593,10 +737,7 @@ function ConversasContent() {
               onToggleFollowup={handleToggleFollowup}
               onMarkRead={() => handleMarkRead(selectedConversation.id)}
               siblingConversations={siblingConversations}
-              onSelectSibling={(id) => {
-                const sibling = conversations.find((c) => c.id === id);
-                if (sibling) handleSelectConversation(sibling);
-              }}
+              onSelectSibling={handleSelectSibling}
               targetMessageId={pendingScrollMessageId}
               onTargetConsumed={() => setPendingScrollMessageId(null)}
             />
@@ -628,7 +769,7 @@ function ConversasContent() {
                 Selecione uma conversa
               </p>
               <p className="text-[#7b7b78] text-[14px] mt-1">
-                {conversations.length} conversa{conversations.length !== 1 ? "s" : ""} aberta{conversations.length !== 1 ? "s" : ""}
+                {openTotal} conversa{openTotal !== 1 ? "s" : ""} aberta{openTotal !== 1 ? "s" : ""}
               </p>
             </div>
           </div>
