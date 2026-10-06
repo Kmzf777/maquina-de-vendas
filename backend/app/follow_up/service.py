@@ -1122,6 +1122,45 @@ def carregar_dias_sem_prospeccao_apos_venda(sb=None) -> int:
     return DIAS_SEM_PROSPECCAO_PADRAO
 
 
+def motivo_venda_no_envio(
+    sb, codigo: str, *, lead_id: str | None, deal_id: str | None,
+    matricula_em: Any, now: datetime,
+) -> str | None:
+    """A regra de venda na HORA DO ENVIO (spec 2026-10-06, P6.1). None = pode enviar.
+
+    Uma leitura por lead e não paginada — mesmo raciocínio de `templates_do_joao_hoje`:
+    as vendas de UM lead são poucas. Erro PROPAGA: quem chama não envia sem a resposta.
+
+      prospecção -> `lead_comprou` (mesma regra da matrícula, com o N do ajuste)
+      kit        -> `lead_comprou` se houve venda nova depois da matrícula
+    """
+    if codigo not in CADENCIAS_COM_REGRA_DE_VENDA:
+        return None
+    if not lead_id:
+        return "sem_lead_para_verificar"
+    res = sb.table("sales").select(
+        "id, lead_id, sold_at, created_at, status").eq("lead_id", lead_id).execute()
+    vendas = res.data if isinstance(res.data, list) else []
+
+    if codigo == CADENCIA_KIT:
+        referencia = _parse_ts(matricula_em)
+        if referencia is None:
+            return "kit_sem_matricula"
+        return (MOTIVO_LEAD_COMPROU
+                if comprou_depois_da_matricula(vendas, matricula_em=referencia) else None)
+
+    deal_criado_em = None
+    if deal_id:
+        res_deal = sb.table("deals").select("id, created_at").eq(
+            "id", deal_id).limit(1).execute()
+        linhas = res_deal.data if isinstance(res_deal.data, list) else []
+        deal_criado_em = _parse_ts(linhas[0].get("created_at")) if linhas else None
+    dias = carregar_dias_sem_prospeccao_apos_venda(sb)
+    if lead_comprou(vendas, now=now, deal_criado_em=deal_criado_em, dias=dias):
+        return MOTIVO_LEAD_COMPROU
+    return None
+
+
 def _dia_em_sao_paulo(now: datetime) -> tuple[str, str]:
     """`[início, fim)` do dia corrente em America/Sao_Paulo, em ISO UTC.
 
