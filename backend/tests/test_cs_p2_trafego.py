@@ -254,3 +254,120 @@ def test_fetch_leads_erro_generico_nao_desliga_p0():
     with pytest.raises(Exception):
         tr._fetch_leads(banco, "lead", None, None)
     assert tr._P0Col.enabled is True
+
+
+# --- 2.3 Endpoints de atribuição ---------------------------------------------------------
+
+from datetime import date, datetime, timedelta, timezone  # noqa: E402
+
+from fastapi import FastAPI  # noqa: E402
+from fastapi.testclient import TestClient  # noqa: E402
+
+import app.campaigns.traffic_attribution as ta  # noqa: E402
+import app.campaigns.traffic_router as rotas  # noqa: E402
+
+LEAD = "6f1c2b9e-1111-4222-8333-944455556666"
+ADMIN = "rafael@cafecanastra.com"
+
+
+@pytest.fixture
+def banco_attr(monkeypatch):
+    b = _Banco(
+        leads=[{"id": LEAD, "campanha_manual_canal": None, "campanha_manual_id": None,
+                "campanha_manual_nome": None}],
+        lead_events=[], ad_spend=[],
+    )
+    monkeypatch.setattr(ta, "get_supabase", lambda: b)
+    monkeypatch.setattr(ta, "_agora", lambda: datetime(2026, 10, 6, 15, 0, tzinfo=timezone.utc))
+    return b
+
+
+def _app(admin=True):
+    app = FastAPI()
+    app.include_router(rotas.router)
+    if admin:
+        app.dependency_overrides[rotas.exigir_admin] = lambda: ADMIN
+    return TestClient(app)
+
+
+def test_patch_atribui_campanha_e_grava_evento(banco_attr):
+    r = _app().patch(f"/api/traffic/leads/{LEAD}/campanha",
+                     json={"canal": "meta", "campanha_id": "cm_terc", "campanha_nome": "Terceirização WA"})
+    assert r.status_code == 200
+    assert r.json()["atribuicao_manual"] is True
+    lead = banco_attr.tabelas["leads"][0]
+    assert (lead["campanha_manual_canal"], lead["campanha_manual_id"], lead["campanha_manual_nome"]) == \
+        ("meta", "cm_terc", "Terceirização WA")
+    assert lead["campanha_manual_por"] == ADMIN
+    assert lead["campanha_manual_em"] == "2026-10-06T15:00:00+00:00"
+    [ev] = banco_attr.tabelas["lead_events"]
+    assert (ev["lead_id"], ev["event_type"], ev["source"]) == (LEAD, "atribuicao_manual", "crm")
+    assert (ev["old_value"], ev["new_value"]) == (None, "meta:cm_terc")
+    assert ev["occurred_at"] == "2026-10-06T15:00:00+00:00"
+    assert ev["metadata"]["campanha_nome"] == "Terceirização WA" and ev["metadata"]["por"] == ADMIN
+
+
+def test_patch_remover_limpa_e_registra(banco_attr):
+    banco_attr.tabelas["leads"][0].update(campanha_manual_canal="google", campanha_manual_id="cg_pmax",
+                                          campanha_manual_nome="PMAX | Atacado")
+    r = _app().patch(f"/api/traffic/leads/{LEAD}/campanha", json={"remover": True})
+    assert r.status_code == 200 and r.json()["atribuicao_manual"] is False
+    lead = banco_attr.tabelas["leads"][0]
+    assert lead["campanha_manual_canal"] is None and lead["campanha_manual_id"] is None
+    assert lead["campanha_manual_por"] == ADMIN
+    [ev] = banco_attr.tabelas["lead_events"]
+    assert (ev["old_value"], ev["new_value"]) == ("google:cg_pmax", None)
+    assert ev["metadata"]["remover"] is True
+
+
+@pytest.mark.parametrize("corpo", [{"canal": "tiktok", "campanha_id": "x"}, {"canal": "meta"}])
+def test_patch_invalido_e_422_sem_gravar(banco_attr, corpo):
+    r = _app().patch(f"/api/traffic/leads/{LEAD}/campanha", json=corpo)
+    assert r.status_code == 422
+    assert banco_attr.tabelas["leads"][0]["campanha_manual_canal"] is None
+    assert banco_attr.tabelas["lead_events"] == []
+
+
+def test_patch_lead_inexistente_404(banco_attr):
+    r = _app().patch("/api/traffic/leads/00000000-0000-4000-8000-000000000000/campanha",
+                     json={"canal": "meta", "campanha_id": "cm_terc"})
+    assert r.status_code == 404
+
+
+def test_patch_lead_id_que_nao_e_uuid_422(banco_attr):
+    r = _app().patch("/api/traffic/leads/nao-e-uuid/campanha", json={"remover": True})
+    assert r.status_code == 422
+
+
+def test_patch_falha_no_evento_nao_desfaz_atribuicao(banco_attr):
+    banco_attr.falha_insert = {"lead_events"}
+    r = _app().patch(f"/api/traffic/leads/{LEAD}/campanha", json={"canal": "meta", "campanha_id": "cm_terc"})
+    assert r.status_code == 200
+    assert banco_attr.tabelas["leads"][0]["campanha_manual_id"] == "cm_terc"
+    assert banco_attr.tabelas["leads"][0]["campanha_manual_nome"] == "cm_terc"  # sem nome: o id
+
+
+def test_rotas_novas_exigem_admin(banco_attr):
+    cliente = _app(admin=False)
+    assert cliente.patch(f"/api/traffic/leads/{LEAD}/campanha", json={"remover": True}).status_code == 401
+    assert cliente.get("/api/traffic/campanhas").status_code == 401
+
+
+def test_campanhas_com_gasto_nos_ultimos_120_dias(banco_attr):
+    hoje = datetime.now(tr._TZ).date()
+    d = lambda n: (hoje - timedelta(days=n)).isoformat()  # noqa: E731
+    banco_attr.tabelas["ad_spend"] = [
+        {"platform": "google", "campaign_id": "cg_pmax", "campaign_name": "PMAX | Atacado", "cost": 100.0, "date": d(5)},
+        {"platform": "meta", "campaign_id": "cm_atac", "campaign_name": "Atacado WA (antigo)", "cost": 50.0, "date": d(30)},
+        {"platform": "meta", "campaign_id": "cm_atac", "campaign_name": "Atacado WA", "cost": 250.0, "date": d(3)},
+        {"platform": "meta", "campaign_id": "cm_terc", "campaign_name": "Terceirização WA", "cost": 400.0, "date": d(10)},
+        {"platform": "meta", "campaign_id": "cm_velha", "campaign_name": "Julho", "cost": 900.0, "date": d(200)},
+        {"platform": "meta", "campaign_id": "cm_zero", "campaign_name": "Pausada", "cost": 0, "date": d(2)},
+    ]
+    r = _app().get("/api/traffic/campanhas")
+    assert r.status_code == 200
+    camps = r.json()["campanhas"]
+    assert [(c["canal"], c["campanha_id"]) for c in camps] == \
+        [("meta", "cm_terc"), ("meta", "cm_atac"), ("google", "cg_pmax")]
+    atac = camps[1]
+    assert atac["campanha_nome"] == "Atacado WA" and atac["investimento"] == 300.0
