@@ -149,7 +149,6 @@ async def test_preco_unico_mantem_o_qualificador(sem_foto):
 
 @pytest.mark.parametrize("qualificador", [
     "gira em torno de", "fica por volta de", "na faixa de", "por volta de",
-    "Gira em torno de",
 ])
 def test_qualquer_qualificador_aprovado_sai_antes_da_faixa(qualificador):
     corpo = f"{qualificador} {{preco}} a unidade."
@@ -162,3 +161,42 @@ def test_qualificador_longe_do_marcador_fica():
     corpo = "o preço gira em torno de mercado.\nvalor: {preco}."
     texto = runner._resolver(corpo, {"preco": "a partir de R$ 28,70"})
     assert texto == "o preço gira em torno de mercado.\nvalor: a partir de R$ 28,70."
+
+
+# ── revisão de 06/10 ────────────────────────────────────────────────────────
+@pytest.mark.parametrize("corpo,esperado", [
+    ("Gira em torno de {preco} a unidade.", "A partir de R$ 28,70 a unidade."),
+    ("Esse é o Clássico.\nFica por volta de {preco}.", "Esse é o Clássico.\nA partir de R$ 28,70."),
+    ("Bom café. Na faixa de {preco} a unidade.", "Bom café. A partir de R$ 28,70 a unidade."),
+])
+def test_qualificador_maiusculo_no_inicio_da_frase_capitaliza_a_faixa(corpo, esperado):
+    """O editor marcou o início da frase com maiúscula; tirar o qualificador não pode
+    deixar a frase começando em minúscula."""
+    assert runner._resolver(corpo, {"preco": "a partir de R$ 28,70"}) == esperado
+
+
+def test_qualificador_minusculo_mantem_a_faixa_minuscula():
+    """O registry escreve tudo em minúscula de propósito (tom de WhatsApp): não inventa
+    maiúscula onde o editor não pôs."""
+    corpo = "esse é o Clássico.\n\ngira em torno de {preco} a unidade."
+    assert runner._resolver(corpo, {"preco": "a partir de R$ 28,70"}) == (
+        "esse é o Clássico.\n\na partir de R$ 28,70 a unidade.")
+
+
+@pytest.mark.parametrize("precos", [
+    (28.7, 31.7),
+    (28.7, "R$ 31,70"),
+    (None, 31.7),
+])
+def test_preco_numerico_entre_os_formatos_corta_a_linha(catalogo, precos):
+    """price_formatted numérico (float vindo do banco/planilha) levantava AttributeError
+    no parse_brl — fora do except ValueError, derrubando o envio do nó."""
+    quebrado = [_sku("Canastra Clássico — Moído 250g", precos[0]),
+                _sku("Canastra Clássico — Em Grãos 250g", precos[1])]
+    with catalogo(quebrado):
+        assert runner.preco_do_no(reg.NOS["N5"]) == ""
+
+
+def test_preco_numerico_em_candidato_unico_corta_a_linha(catalogo):
+    with catalogo([_sku("Canastra Clássico — Moído 250g", 28.7)]):
+        assert runner.preco_do_no(reg.NOS["N5"]) == ""

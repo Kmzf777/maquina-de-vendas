@@ -149,9 +149,13 @@ PREFIXO_FAIXA = "a partir de"
 # "gira em torno de a partir de R$ 28,70" não é português. Só o COLADO ao
 # marcador: o resto do corpo é texto do editor e não se mexe.
 _QUALIFICADOR_DO_PRECO = re.compile(
-    r"\b(?:gira em torno de|fica por volta de|na faixa de|por volta de)\s+(?=\{preco\})",
+    r"\b(?:gira em torno de|fica por volta de|na faixa de|por volta de)\s+\{preco\}",
     re.IGNORECASE,
 )
+# Quando o qualificador tirado começava com maiúscula ("Gira em torno de {preco}"), o
+# editor marcou ali o início da frase: a faixa entra com maiúscula ("A partir de...").
+# Minúsculo continua minúsculo — o registry escreve em minúscula de propósito.
+_PRECO_MAIUSCULO = "preco_maiusculo"
 
 
 def limpar_cache_de_fotos() -> None:
@@ -216,12 +220,17 @@ def _resolver(corpo: str, contexto: dict | None) -> str:
 
     Preço em faixa ("a partir de R$ 28,70", ver `preco_do_no`) já traz a sua
     própria ressalva: o qualificador colado ao `{preco}` sai, para o lead não
-    ler "gira em torno de a partir de".
+    ler "gira em torno de a partir de" — e, se ele abria a frase com maiúscula,
+    a faixa herda a maiúscula.
     """
     dados = {k: str(v) for k, v in (contexto or {}).items() if v}
     corpo = corpo or ""
-    if dados.get("preco", "").startswith(PREFIXO_FAIXA):
-        corpo = _QUALIFICADOR_DO_PRECO.sub("", corpo)
+    preco = dados.get("preco", "")
+    if preco.startswith(PREFIXO_FAIXA):
+        dados[_PRECO_MAIUSCULO] = preco[:1].upper() + preco[1:]
+        corpo = _QUALIFICADOR_DO_PRECO.sub(
+            lambda m: "{" + (_PRECO_MAIUSCULO if m.group(0)[0].isupper() else "preco") + "}",
+            corpo)
     texto = flows.render(corpo, dados)
     limpas: list[str] = []
     for linha in texto.splitlines():
@@ -259,10 +268,17 @@ def _faixa_a_partir_de(produto: str, candidatos: list[dict]) -> str:
         logger.info("%s produto %r casou com %d SKUs de %d cafés — entrega SEM preço",
                     _LOG, produto, len(candidatos), len(bases))
         return ""
+    def _valor(p: dict) -> float:
+        bruto = p.get("price_formatted")
+        # Número cru NÃO passa por str(): parse_brl tira o "." como milhar e
+        # 28.7 viraria 287 — o "menor" sairia errado. Ilegível, corta a linha.
+        if not isinstance(bruto, str):
+            raise ValueError(f"price_formatted não é texto: {bruto!r}")
+        return parse_brl(bruto)
+
     try:
-        menor = min(candidatos,
-                    key=lambda p: parse_brl(p.get("price_formatted") or ""))
-    except ValueError as exc:
+        menor = min(candidatos, key=_valor)
+    except (ValueError, TypeError, AttributeError) as exc:
         logger.warning("%s preço ilegível entre os SKUs de %r — entrega SEM preço: %s",
                        _LOG, produto, exc)
         return ""
@@ -312,7 +328,12 @@ def preco_do_no(no: reg.No) -> str:
                     _LOG, no.produto)
         return ""
     if len(candidatos) == 1:
-        return (candidatos[0].get("price_formatted") or "").strip()
+        preco = candidatos[0].get("price_formatted")
+        if preco is not None and not isinstance(preco, str):
+            logger.warning("%s preço do SKU de %r não é texto (%r) — entrega SEM preço",
+                           _LOG, no.produto, preco)
+            return ""
+        return (preco or "").strip()
     return _faixa_a_partir_de(no.produto, candidatos)
 
 
