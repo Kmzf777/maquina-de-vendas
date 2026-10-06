@@ -432,7 +432,7 @@ begin
            where dedupe_key = 'venda_cancelada:cccccccc-0000-0000-0000-0000000000e1') = 1,
     'cancelamento gera um evento so';
   select * into e from public.lead_events where dedupe_key = 'venda_cancelada:cccccccc-0000-0000-0000-0000000000e1';
-  assert e.source = 'bling' and e.new_value = '60', e.metadata::text;
+  assert e.source = 'bling' and e.new_value = '60.00', e.metadata::text;
   assert (select metadata->>'status' from public.lead_events
            where dedupe_key = 'venda:cccccccc-0000-0000-0000-0000000000e1') = 'cancelada',
     'a venda passa a mostrar o status';
@@ -444,7 +444,7 @@ do $$
 declare e public.lead_events;
 begin
   select * into e from public.lead_events where dedupe_key = 'venda:cccccccc-0000-0000-0000-0000000000e2';
-  assert e.source = 'crm' and e.metadata->>'sold_by' = 'joao@cafecanastra.com' and e.new_value = '120.5',
+  assert e.source = 'crm' and e.metadata->>'sold_by' = 'joao@cafecanastra.com' and e.new_value = '120.50',
     coalesce(e.metadata::text, 'sem evento');
 end $$;
 rollback;
