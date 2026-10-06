@@ -5,6 +5,7 @@ As funções que tocam o banco (traffic_report, campaign_leads) são fail-soft.
 """
 import logging
 import re
+import time as _time
 import unicodedata
 from statistics import median
 from datetime import date, datetime, time, timedelta, timezone
@@ -491,13 +492,34 @@ _P0_COL_MARKERS = ("campanha_manual", "ja_era_cliente")
 
 class _P0Col:
     """Flag de processo: colunas do P0 existem? Desligada só quando o erro CITA uma delas —
-    um erro de rede não pode desligar a atribuição manual até o próximo deploy."""
-    enabled = True
+    um erro de rede não pode desligar a atribuição manual.
+
+    Religa sozinha depois de TTL_S: o código sobe pelo deploy e a migração é aplicada à mão
+    depois. Sem o TTL, um acesso ao /trafego antes da migração desligaria as colunas até o
+    próximo restart, e o relatório ignoraria em silêncio a atribuição manual e o "já era
+    cliente" já gravados. `relogio` é injetável para o teste andar o tempo."""
+    TTL_S = 300.0
+    falhou_em: float | None = None
+    relogio = staticmethod(_time.monotonic)
+
+    @classmethod
+    def ativo(cls) -> bool:
+        if cls.falhou_em is None:
+            return True
+        if cls.relogio() - cls.falhou_em >= cls.TTL_S:
+            cls.falhou_em = None
+            logger.info("traffic_report: tentando de novo as colunas do P0")
+            return True
+        return False
+
+    @classmethod
+    def desligar(cls) -> None:
+        cls.falhou_em = cls.relogio()
 
 
 def _lead_cols() -> str:
     cols = _LEAD_COLS + ", meta_ad_id" if _MetaAdCol.enabled else _LEAD_COLS
-    return cols + ", " + _P0_LEAD_COLS if _P0Col.enabled else cols
+    return cols + ", " + _P0_LEAD_COLS if _P0Col.ativo() else cols
 
 
 _DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
@@ -562,12 +584,14 @@ def _fetch_all(build_query, page: int = _PAGE) -> list[dict[str, Any]]:
 
 def _select_leads(fetch) -> list[dict[str, Any]]:
     """Roda `fetch(cols)` degradando as colunas de migration ainda não aplicada."""
+    cols = _lead_cols()
     try:
-        return fetch(_lead_cols())
+        return fetch(cols)
     except Exception as exc:
-        if _P0Col.enabled and any(m in str(exc) for m in _P0_COL_MARKERS):
-            logger.warning("traffic_report: colunas do P0 ausentes (%s) - migration 20261006 pendente?", exc)
-            _P0Col.enabled = False
+        if _P0_LEAD_COLS in cols and any(m in str(exc) for m in _P0_COL_MARKERS):
+            logger.warning("traffic_report: colunas do P0 ausentes (%s) - migration 20261006 pendente?"
+                           " Nova tentativa em %.0f s.", exc, _P0Col.TTL_S)
+            _P0Col.desligar()
             return _select_leads(fetch)
         # A coluna meta_ad_id vem de migration; se ela ainda nao foi aplicada o PostgREST
         # rejeita o select inteiro. Degrada para o conjunto base (perde so a atribuicao de

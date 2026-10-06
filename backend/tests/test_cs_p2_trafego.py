@@ -69,6 +69,8 @@ class _Query:
             linhas.append(dict(self.payload))
             return _Resp([self.payload])
         alvo = [r for r in linhas if all(f(r) for f in self.filtros)]
+        if self.op == "select":
+            self.banco.selects.append(self.cols)
         if self.op == "update":
             for r in alvo:
                 r.update(self.payload)
@@ -89,6 +91,7 @@ class _Banco:
         self.ausentes: set[str] = set()
         self.colunas_ausentes: dict[str, list[str]] = {}
         self.falha_insert: set[str] = set()
+        self.selects: list[str] = []  # colunas de cada select executado, em ordem
 
     def table(self, nome):
         return _Query(self, nome)
@@ -98,7 +101,7 @@ class _Banco:
 def _flags_de_coluna(monkeypatch):
     """As flags de coluna são de processo: um teste que as desliga não vaza para o próximo."""
     monkeypatch.setattr(tr._MetaAdCol, "enabled", True)
-    monkeypatch.setattr(tr._P0Col, "enabled", True)
+    monkeypatch.setattr(tr._P0Col, "falhou_em", None)
 
 
 # --- 2.1 Funil cumulativo + canceladas fora ----------------------------------------------
@@ -244,7 +247,7 @@ def test_fetch_leads_degrada_sem_colunas_do_p0():
     banco.colunas_ausentes = {"leads": ["campanha_manual_canal"]}
     out = tr._fetch_leads(banco, "lead", None, None)
     assert [l["id"] for l in out] == ["l1"]
-    assert tr._P0Col.enabled is False
+    assert tr._P0Col.ativo() is False
     assert tr._MetaAdCol.enabled is True  # o erro era só das colunas do P0
 
 
@@ -253,7 +256,70 @@ def test_fetch_leads_erro_generico_nao_desliga_p0():
     banco.ausentes = {"leads"}
     with pytest.raises(Exception):
         tr._fetch_leads(banco, "lead", None, None)
-    assert tr._P0Col.enabled is True
+    assert tr._P0Col.ativo() is True
+
+
+class _Relogio:
+    """Relógio monotônico de mentira: o teste anda o tempo à mão."""
+    def __init__(self, t=1000.0):
+        self.t = t
+
+    def __call__(self):
+        return self.t
+
+
+def _tentou_p0(banco):
+    return any("campanha_manual" in cols for cols in banco.selects)
+
+
+def test_p0_desligado_nao_tenta_de_novo_antes_de_5_minutos(monkeypatch):
+    relogio = _Relogio()
+    monkeypatch.setattr(tr._P0Col, "relogio", relogio)
+    banco = _Banco(leads=[_g(1)])
+    banco.colunas_ausentes = {"leads": ["campanha_manual_canal"]}
+    tr._fetch_leads(banco, "lead", None, None)
+    assert tr._P0Col.ativo() is False
+
+    relogio.t += 299
+    banco.selects.clear()
+    assert [l["id"] for l in tr._fetch_leads(banco, "lead", None, None)] == ["l1"]
+    assert not _tentou_p0(banco)
+    assert tr._P0Col.ativo() is False
+
+
+def test_p0_religa_depois_de_5_minutos_quando_a_migracao_chega(monkeypatch):
+    """O código sobe pelo deploy e a migração do P0 é aplicada à mão depois: o relatório não
+    pode ficar sem atribuição manual e "já era cliente" até o próximo restart."""
+    relogio = _Relogio()
+    monkeypatch.setattr(tr._P0Col, "relogio", relogio)
+    banco = _Banco(leads=[_g(1, campanha_manual_canal="meta", campanha_manual_id="cm_terc")])
+    banco.colunas_ausentes = {"leads": ["campanha_manual_canal"]}
+    tr._fetch_leads(banco, "lead", None, None)
+    assert tr._P0Col.ativo() is False
+
+    banco.colunas_ausentes = {}  # Rafael aplicou a 20261006
+    relogio.t += 300
+    banco.selects.clear()
+    [lead] = tr._fetch_leads(banco, "lead", None, None)
+    assert _tentou_p0(banco)
+    assert lead["campanha_manual_id"] == "cm_terc"
+    assert tr._P0Col.ativo() is True
+
+
+def test_p0_continua_faltando_depois_de_5_minutos_desliga_de_novo(monkeypatch):
+    relogio = _Relogio()
+    monkeypatch.setattr(tr._P0Col, "relogio", relogio)
+    banco = _Banco(leads=[_g(1)])
+    banco.colunas_ausentes = {"leads": ["campanha_manual_canal"]}
+    tr._fetch_leads(banco, "lead", None, None)
+
+    relogio.t += 301
+    banco.selects.clear()
+    assert [l["id"] for l in tr._fetch_leads(banco, "lead", None, None)] == ["l1"]
+    assert _tentou_p0(banco)
+    assert tr._P0Col.ativo() is False
+    relogio.t += 299  # o prazo recomeça da nova falha
+    assert tr._P0Col.ativo() is False
 
 
 # --- 2.3 Endpoints de atribuição ---------------------------------------------------------
