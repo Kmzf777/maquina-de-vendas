@@ -371,3 +371,59 @@ def test_campanhas_com_gasto_nos_ultimos_120_dias(banco_attr):
         [("meta", "cm_terc"), ("meta", "cm_atac"), ("google", "cg_pmax")]
     atac = camps[1]
     assert atac["campanha_nome"] == "Atacado WA" and atac["investimento"] == 300.0
+
+
+# --- 2.4 Colunas novas na tabela de leads da campanha -------------------------------------
+
+def _banco_colunas():
+    return _Banco(
+        leads=[
+            _g(1, name="Iago", ja_era_cliente=True, ja_era_cliente_fonte="auto"),
+            _g(2, name="Velho Hank", ja_era_cliente=None, ja_era_cliente_fonte=None),
+        ],
+        sales=[
+            {"lead_id": "l1", "value": 60.0, "sold_at": "2026-01-10T12:00:00+00:00", "status": "registrada"},
+            {"lead_id": "l1", "value": 60.0, "sold_at": "2026-09-02T12:00:00+00:00", "status": "cancelada"},
+            {"lead_id": "l1", "value": 90.0, "sold_at": "2026-09-20T12:00:00+00:00", "status": None},
+        ],
+        lead_primeira_origem=[{"lead_id": "l1", "canal": "Meta Ads", "campanha_id": "cm_atac",
+                               "campanha_nome": "Atacado WA", "occurred_at": "2026-07-01T12:00:00+00:00"}],
+    )
+
+
+def test_campaign_leads_traz_colunas_novas(monkeypatch):
+    banco = _banco_colunas()
+    monkeypatch.setattr(tr, "get_supabase", lambda: banco)
+    out = {l["lead_id"]: l for l in tr.campaign_leads("Google Ads", "black", period="all")}
+    a, b = out["l1"], out["l2"]
+    assert (a["ja_era_cliente"], a["ja_era_cliente_fonte"]) == (True, "auto")
+    assert a["compras"] == 2  # a cancelada não conta
+    assert a["primeira_origem"]["campanha_nome"] == "Atacado WA"
+    assert (a["canal"], a["atribuicao_manual"]) == ("Google Ads", False)
+    assert b["ja_era_cliente"] is None and b["compras"] == 0 and b["primeira_origem"] is None
+
+
+def test_compras_conta_todas_as_datas_no_modo_venda(monkeypatch):
+    banco = _banco_colunas()
+    monkeypatch.setattr(tr, "get_supabase", lambda: banco)
+    [a] = tr.campaign_leads("Google Ads", "black", period="all", mode="sale",
+                            date_from="2026-09-01", date_to="2026-09-30")
+    assert a["valor"] == 90.0  # receita: só a venda da janela
+    assert a["compras"] == 2   # compras: a vida inteira do lead
+
+
+def test_campaign_leads_sem_view_primeira_origem_e_fail_soft(monkeypatch):
+    banco = _banco_colunas()
+    banco.ausentes = {"lead_primeira_origem"}
+    monkeypatch.setattr(tr, "get_supabase", lambda: banco)
+    out = tr.campaign_leads("Google Ads", "black", period="all")
+    assert len(out) == 2 and all(l["primeira_origem"] is None for l in out)
+
+
+def test_campaign_leads_marca_atribuicao_manual(monkeypatch):
+    banco = _Banco(leads=[_g(1, name="Serginho", **_manual("meta", "cm_x", "Campanha X"))])
+    monkeypatch.setattr(tr, "get_supabase", lambda: banco)
+    [l] = tr.campaign_leads("Meta Ads", "Campanha X", period="all")
+    assert l["atribuicao_manual"] is True and l["canal"] == "Meta Ads"
+    assert (l["campanha_manual_canal"], l["campanha_manual_id"], l["campanha_manual_nome"]) == \
+        ("meta", "cm_x", "Campanha X")

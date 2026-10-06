@@ -911,6 +911,26 @@ def traffic_report(period: str = "30d", mode: str = "lead",
         return _empty_report(mode, period)
 
 
+def _primeira_origem(sb, lead_ids: list[str]) -> dict[str, dict[str, Any]]:
+    """lead_id -> primeira entrada registrada (view lead_primeira_origem do P0, enchida pelo P3).
+
+    Fail-soft: sem a migração a view não existe e a coluna cai no canal atual na tela."""
+    try:
+        out: dict[str, dict[str, Any]] = {}
+        for chunk in _chunks(lead_ids):
+            rows = _fetch_all(lambda c=chunk: sb.table("lead_primeira_origem")
+                              .select("lead_id, canal, campanha_id, campanha_nome, occurred_at")
+                              .in_("lead_id", c))
+            for r in rows:
+                if r.get("lead_id"):
+                    out[r["lead_id"]] = {k: r.get(k) for k in
+                                         ("canal", "campanha_id", "campanha_nome", "occurred_at")}
+        return out
+    except Exception as exc:
+        logger.warning("lead_primeira_origem indisponível (migration 20261006 pendente?): %s", exc)
+        return {}
+
+
 def _stage_info_map(sb) -> dict[str, dict[str, Any]]:
     stages = _fetch_all(lambda: sb.table("pipeline_stages").select("id, key, order_index"))
     return {s["id"]: {"key": s.get("key"), "order_index": s.get("order_index")} for s in stages}
@@ -931,6 +951,9 @@ def campaign_leads(channel: str, campaign: str, period: str = "30d", mode: str =
         lead_ids = [l["id"] for l in selected if l.get("id")]
         conversed = _conversed_ids(sb, lead_ids)
         sales = _sales_by_lead(sb, lead_ids, lo, hi, mode)
+        # "Compras" é a vida inteira do lead; no modo venda `sales` vem recortado pela janela.
+        compras = sales if mode != "sale" else _sales_by_lead(sb, lead_ids, None, None, "lead")
+        origem = _primeira_origem(sb, lead_ids)
         stage_info = _stage_info_map(sb)
         deals = []
         for chunk in _chunks(lead_ids):
@@ -955,6 +978,7 @@ def campaign_leads(channel: str, campaign: str, period: str = "30d", mode: str =
         for l in selected:
             lid = l["id"]
             sale = sales.get(lid)
+            manual = manual_attribution(l)
             out.append({
                 "lead_id": lid, "name": l.get("name"), "phone": l.get("phone"),
                 "created_at": l.get("created_at"), "utm_source": l.get("utm_source"),
@@ -963,6 +987,15 @@ def campaign_leads(channel: str, campaign: str, period: str = "30d", mode: str =
                 "stage": furthest_stage.get(lid),
                 "comprou": bool(sale), "valor": float(sale["value"]) if sale else 0.0,
                 "sold_at": sale.get("last_sold_at") if sale else None,
+                "canal": lead_channel(l),
+                "atribuicao_manual": manual is not None,
+                "campanha_manual_canal": _s(l.get("campanha_manual_canal")).lower() if manual else None,
+                "campanha_manual_id": manual[1] if manual else None,
+                "campanha_manual_nome": manual[2] if manual else None,
+                "ja_era_cliente": l.get("ja_era_cliente"),
+                "ja_era_cliente_fonte": l.get("ja_era_cliente_fonte"),
+                "compras": int((compras.get(lid) or {}).get("count", 0) or 0),
+                "primeira_origem": origem.get(lid),
             })
         out.sort(key=lambda r: (not r["comprou"], r.get("created_at") or ""), reverse=False)
         return out
