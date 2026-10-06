@@ -29,12 +29,21 @@ export function searchTokens(query: string): string[] {
 const digitsOf = (value: string | null | undefined): string => (value ?? "").replace(/\D/g, "");
 
 /**
+ * Mínimo de dígitos para casar por telefone/CNPJ. Abaixo disso o número quase sempre
+ * é parte de um nome ("Café 3 Corações") e casaria com qualquer telefone que tenha um 3.
+ */
+export const MIN_DIGITS_FOR_PHONE_MATCH = 4;
+
+/** Sequência de dígitos longa o bastante para buscar em telefone/CNPJ? */
+const isPhoneDigits = (digits: string): boolean => digits.length >= MIN_DIGITS_FOR_PHONE_MATCH;
+
+/**
  * True quando a busca casa com o lead:
- *  1. os dígitos da busca inteira aparecem no telefone ou no CNPJ (com ou sem máscara
- *     dos dois lados — "(34) 99999-8888", "25.139.264/0001-51"); ou
+ *  1. os dígitos da busca inteira (4+) aparecem no telefone ou no CNPJ (com ou sem
+ *     máscara dos dois lados — "(34) 99999-8888", "25.139.264/0001-51"); ou
  *  2. TODOS os termos aparecem, em qualquer ordem e em qualquer campo de texto
- *     (nome, empresa, razão social, fantasia, e-mail) — termo só de dígitos também
- *     vale no telefone/CNPJ. "angelucci hiago" acha "Hiago Angelucci".
+ *     (nome, empresa, razão social, fantasia, e-mail) — termo só de dígitos (4+)
+ *     também vale no telefone/CNPJ. "angelucci hiago" acha "Hiago Angelucci".
  * É superconjunto da regra antiga (frase contígua). Busca vazia casa tudo.
  */
 export function leadMatchesSearch(query: string, lead: LeadSearchFields): boolean {
@@ -44,7 +53,7 @@ export function leadMatchesSearch(query: string, lead: LeadSearchFields): boolea
   const phoneDigits = digitsOf(lead.phone);
   const cnpjDigits = digitsOf(lead.cnpj);
   const qDigits = digitsOf(raw);
-  if (qDigits && (phoneDigits.includes(qDigits) || cnpjDigits.includes(qDigits))) return true;
+  if (isPhoneDigits(qDigits) && (phoneDigits.includes(qDigits) || cnpjDigits.includes(qDigits))) return true;
 
   const tokens = searchTokens(raw);
   if (tokens.length === 0) return false;
@@ -57,7 +66,9 @@ export function leadMatchesSearch(query: string, lead: LeadSearchFields): boolea
   return tokens.every(
     (token) =>
       text.includes(token) ||
-      (/^\d+$/.test(token) && (phoneDigits.includes(token) || cnpjDigits.includes(token))),
+      (/^\d+$/.test(token) &&
+        isPhoneDigits(token) &&
+        (phoneDigits.includes(token) || cnpjDigits.includes(token))),
   );
 }
 
@@ -143,7 +154,7 @@ export function buildDigitsPattern(digits: string): string {
 function tokenTerms(token: string): string[] {
   const pattern = buildAccentInsensitivePattern(token) ?? token;
   const terms: string[] = LEAD_TEXT_COLUMNS.map((col) => `${col}.imatch.${pattern}`);
-  if (/^\d+$/.test(token)) {
+  if (/^\d+$/.test(token) && isPhoneDigits(token)) {
     const d = buildDigitsPattern(token);
     terms.push(`phone.imatch.${d}`, `cnpj.imatch.${d}`);
   }
@@ -167,7 +178,7 @@ export function buildLeadSearchOrFilter(query: string): string | null {
   const terms: string[] = [];
   const digits = query.replace(/\D/g, "");
   const singleDigitToken = tokens.length === 1 && tokens[0] === digits;
-  if (digits && !singleDigitToken) {
+  if (isPhoneDigits(digits) && !singleDigitToken) {
     const d = buildDigitsPattern(digits);
     terms.push(`phone.imatch.${d}`, `cnpj.imatch.${d}`);
   }

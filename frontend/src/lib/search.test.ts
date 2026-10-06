@@ -248,3 +248,34 @@ describe("buildLeadSearchOrFilter — tokens (P5)", () => {
     expect(filter).not.toContain("phone.");
   });
 });
+
+describe("casamento por dígitos exige 4+ dígitos (revisão P5)", () => {
+  const lead = {
+    name: "Mercearia Boa Vista",
+    phone: "5565993650001",
+    cnpj: "12345678000190",
+  };
+
+  it("does not match by phone a text query that carries a lone digit", () => {
+    expect(leadMatchesSearch("Café 3 Corações", lead)).toBe(false);
+    expect(leadMatchesSearch("3", lead)).toBe(false);
+    expect(leadMatchesSearch("boa 65", lead)).toBe(false);
+  });
+
+  it("still matches by phone with 4+ digits", () => {
+    expect(leadMatchesSearch("65993", lead)).toBe(true);
+    expect(leadMatchesSearch("boa 6599", lead)).toBe(true);
+    expect(leadMatchesSearch("65650", { name: "X", phone: "5565650123" })).toBe(true);
+  });
+
+  it("keeps a text match on a short number (\"Café 3 Corações\" finds itself)", () => {
+    expect(leadMatchesSearch("Café 3 Corações", { name: "Café 3 Corações", phone: "5511" })).toBe(true);
+  });
+
+  it("server filter: no phone/cnpj term for fewer than 4 digits", () => {
+    expect(buildLeadSearchOrFilter("Café 3 Corações")).not.toContain("phone.");
+    expect(buildLeadSearchOrFilter("3")).not.toContain("phone.");
+    expect(buildLeadSearchOrFilter("65650")).toContain(`phone.imatch.${buildDigitsPattern("65650")}`);
+    expect(buildLeadSearchOrFilter("boa 6599")).toContain(`phone.imatch.${buildDigitsPattern("6599")}`);
+  });
+});
