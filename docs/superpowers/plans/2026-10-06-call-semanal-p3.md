@@ -973,6 +973,7 @@ git commit -m "feat(timeline): P3 — triggers da linha do tempo em lead_events"
 test_cs_p3_timeline_pg.py::test_backfill_idempotente."""
 import importlib.util
 import json
+import sys
 from pathlib import Path
 
 import pytest
@@ -982,6 +983,7 @@ _spec = importlib.util.spec_from_file_location(
     "backfill_lead_events", RAIZ / "scripts" / "timeline" / "backfill_lead_events.py"
 )
 bf = importlib.util.module_from_spec(_spec)
+sys.modules[_spec.name] = bf  # @dataclass procura o módulo em sys.modules
 _spec.loader.exec_module(bf)
 
 MIG = (RAIZ / "supabase" / "migrations" / "20261006b_lead_timeline_triggers.sql").read_text(
@@ -1212,7 +1214,9 @@ def test_backfill_idempotente():
         segunda = _backfill("--aplicar")
         assert segunda["inseridos"] == {}, segunda["inseridos"]
         assert json.loads(_psql(CONTA_BACKFILL).strip()) == ESPERADO_BACKFILL
-        assert segunda["eventos"] == primeira["eventos"], "mesma contagem nas duas rodadas"
+        candidatos = lambda r: {e["event_type"]: e["candidatos"] for e in r["eventos"]}  # noqa: E731
+        assert candidatos(segunda) == candidatos(primeira), "mesma contagem nas duas rodadas"
+        assert all(e["existentes"] == e["candidatos"] for e in segunda["eventos"]), segunda["eventos"]
 
         seca = _backfill()
         assert all(e["candidatos"] == e["existentes"] for e in seca["eventos"]), seca["eventos"]
@@ -1431,7 +1435,7 @@ REFERRALS = """json_build_object(
                    - (select count(*) from cand where dedupe_key like 'entrada:referral:%'))"""
 
 FINAL_DRY = """
-select json_build_object(
+select jsonb_build_object(  -- jsonb: sai numa linha só (json_agg quebra linha)
   'eventos', __CONTAGEM__,
   'referrals', __REFERRALS__,
   'inseridos', '{}'::json)"""
@@ -1445,7 +1449,7 @@ ins as (
   on conflict (dedupe_key) where dedupe_key is not null do nothing
   returning event_type
 )
-select json_build_object(
+select jsonb_build_object(  -- jsonb: sai numa linha só (json_agg quebra linha)
   'eventos', __CONTAGEM__,
   'referrals', __REFERRALS__,
   'inseridos', (select coalesce(json_object_agg(event_type, n), '{}'::json)

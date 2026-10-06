@@ -350,7 +350,137 @@ def test_trigger_com_erro_nao_derruba_a_escrita():
         assert f"{fn}:" in r.stderr, fn  # o erro vira WARNING, não exceção
 
 
-# (o cenário do backfill — SEED_BACKFILL, test_backfill_idempotente — entra na Task 2)
+# ── Backfill: semente SEM triggers (o backfill é quem cria os eventos) ─────────────────
+# L1 CTWA novo: referral na criação (+ repetido 5 min depois)  → 1 entrada (referral)
+# L2 importado em 08/01, clicou em 09/10 (referral de número SEM o 9) → 1 entrada (referral)
+# L3 LP Google (gclid/utm)                                      → 1 entrada inicial Google
+# L4 LP orgânica (instagram/bio) e depois CTWA                   → inicial Orgânico + referral
+# L5/L6 o mesmo número (phone de um, wa_id do outro)            → referral ambíguo, nada
+SEED_BACKFILL = """
+delete from public.leads where id::text like 'f0f0f0f0-%';
+delete from public.meta_referrals_arquivo where log_id::text like 'f0f0f0f0-%';
+delete from public.broadcasts where id::text like 'f0f0f0f0-%';
+delete from public.pipelines where id::text like 'f0f0f0f0-%';
+delete from public.meta_ad_campaigns where ad_id = 'ad-bf';
+set session_replication_role = replica;
+insert into public.meta_ad_campaigns (ad_id, campaign_id, campaign_name) values ('ad-bf', 'camp-bf', 'Campanha BF');
+insert into public.leads (id, phone, wa_id, created_at, ctwa_clid, meta_ad_id, gclid, utm_source, utm_medium, utm_campaign) values
+  ('f0f0f0f0-0000-0000-0000-000000000001', '5511911110001', null, '2026-09-01 10:00+00', 'clid-bf1', 'ad-bf', null, null, null, null),
+  ('f0f0f0f0-0000-0000-0000-000000000002', '5511911110002', null, '2026-08-01 10:00+00', 'clid-bf2', 'ad-bf', null, null, null, null),
+  ('f0f0f0f0-0000-0000-0000-000000000003', '5511911110003', null, '2026-09-05 10:00+00', null, null, 'g-bf', 'google', 'cpc', 'marca'),
+  ('f0f0f0f0-0000-0000-0000-000000000004', '5511911110004', null, '2026-08-20 10:00+00', 'clid-bf4', null, null, 'instagram', 'bio', null),
+  ('f0f0f0f0-0000-0000-0000-000000000005', '5511911110005', null, '2026-08-01 10:00+00', null, null, null, null, null, null),
+  ('f0f0f0f0-0000-0000-0000-000000000006', '5511911110006', '5511911110005', '2026-08-01 10:00+00', null, null, null, null, null, null);
+insert into public.meta_referrals_arquivo (log_id, received_at, from_number, ctwa_clid, source_id, source_type, referral) values
+  ('f0f0f0f0-0000-0000-0000-0000000000a1', '2026-09-01 09:59:58+00', '5511911110001', 'clid-bf1', 'ad-bf', 'ad', '{"ctwa_clid": "clid-bf1", "source_id": "ad-bf"}'),
+  ('f0f0f0f0-0000-0000-0000-0000000000a2', '2026-09-01 10:05:00+00', '5511911110001', 'clid-bf1', 'ad-bf', 'ad', '{"ctwa_clid": "clid-bf1", "source_id": "ad-bf", "n": 2}'),
+  ('f0f0f0f0-0000-0000-0000-0000000000a3', '2026-09-10 14:00:00+00', '551111110002', 'clid-bf2', 'ad-bf', 'ad', '{"ctwa_clid": "clid-bf2", "source_id": "ad-bf"}'),
+  ('f0f0f0f0-0000-0000-0000-0000000000a4', '2026-09-15 14:00:00+00', '5511911110004', 'clid-bf4', 'ad-bf', 'ad', '{"ctwa_clid": "clid-bf4", "source_id": "ad-bf"}'),
+  ('f0f0f0f0-0000-0000-0000-0000000000a5', '2026-09-16 14:00:00+00', '5511911110005', 'clid-bf5', 'ad-bf', 'ad', '{"ctwa_clid": "clid-bf5", "source_id": "ad-bf"}');
+insert into public.sales (id, lead_id, value, product, sold_at, origin, status) values
+  ('f0f0f0f0-0000-0000-0000-0000000000e1', 'f0f0f0f0-0000-0000-0000-000000000001', 60, 'Kit Degustação', '2026-09-02 12:00+00', 'bling', 'registrada'),
+  ('f0f0f0f0-0000-0000-0000-0000000000e2', 'f0f0f0f0-0000-0000-0000-000000000001', 30, 'Clássico', '2026-09-03 12:00+00', 'crm', 'cancelada');
+insert into public.sale_items (sale_id, descricao, quantidade, valor_unitario, total) values
+  ('f0f0f0f0-0000-0000-0000-0000000000e1', 'Kit Degustação 4 cafés', 1, 60, 60);
+insert into public.pipelines (id, name) values ('f0f0f0f0-0000-0000-0000-0000000000b1', 'Funil BF');
+insert into public.pipeline_stages (id, pipeline_id, label, key, order_index) values
+  ('f0f0f0f0-0000-0000-0000-0000000000c1', 'f0f0f0f0-0000-0000-0000-0000000000b1', 'Novo', 'novo', 0),
+  ('f0f0f0f0-0000-0000-0000-0000000000c2', 'f0f0f0f0-0000-0000-0000-0000000000b1', 'Qualificado', 'qualificado', 1);
+insert into public.deals (id, lead_id, title, pipeline_id, stage_id, created_at, entered_stage_at) values
+  ('f0f0f0f0-0000-0000-0000-0000000000d1', 'f0f0f0f0-0000-0000-0000-000000000001', 'Card 1',
+   'f0f0f0f0-0000-0000-0000-0000000000b1', 'f0f0f0f0-0000-0000-0000-0000000000c1', '2026-09-01 10:01+00', '2026-09-01 10:01+00'),
+  ('f0f0f0f0-0000-0000-0000-0000000000d2', 'f0f0f0f0-0000-0000-0000-000000000003', 'Card 3',
+   'f0f0f0f0-0000-0000-0000-0000000000b1', 'f0f0f0f0-0000-0000-0000-0000000000c2', '2026-09-05 10:00+00', '2026-09-08 10:00+00');
+insert into public.broadcasts (id, name, template_name) values ('f0f0f0f0-0000-0000-0000-0000000000b2', 'Disparo BF', 'tpl');
+insert into public.broadcast_leads (id, broadcast_id, lead_id, sent_at) values
+  ('f0f0f0f0-0000-0000-0000-0000000000f1', 'f0f0f0f0-0000-0000-0000-0000000000b2', 'f0f0f0f0-0000-0000-0000-000000000002', '2026-09-09 12:00+00'),
+  ('f0f0f0f0-0000-0000-0000-0000000000f2', 'f0f0f0f0-0000-0000-0000-0000000000b2', 'f0f0f0f0-0000-0000-0000-000000000003', null);
+set session_replication_role = origin;
+"""
+
+LIMPA_BACKFILL = """
+delete from public.leads where id::text like 'f0f0f0f0-%';
+delete from public.meta_referrals_arquivo where log_id::text like 'f0f0f0f0-%';
+delete from public.broadcasts where id::text like 'f0f0f0f0-%';
+delete from public.pipelines where id::text like 'f0f0f0f0-%';
+delete from public.meta_ad_campaigns where ad_id = 'ad-bf';
+"""
+
+CONTA_BACKFILL = """
+select coalesce(json_object_agg(event_type, n), '{}'::json) from (
+  select event_type, count(*) as n from public.lead_events
+   where lead_id::text like 'f0f0f0f0-%' group by event_type) t;
+"""
+
+CONFERE_BACKFILL = """
+do $$
+declare e public.lead_events;
+begin
+  -- L1: só o referral da criação (o repetido em 5 min colapsa; a "inicial" não entra)
+  assert (select count(*) from public.lead_events where lead_id = 'f0f0f0f0-0000-0000-0000-000000000001'
+           and event_type = 'entrada') = 1, 'L1: uma entrada';
+  select * into e from public.lead_events where lead_id = 'f0f0f0f0-0000-0000-0000-000000000001' and event_type = 'entrada';
+  assert e.dedupe_key like 'entrada:referral:f0f0f0f0-0000-0000-0000-0000000000a1:%', e.dedupe_key;
+  assert e.metadata->>'campanha_nome' = 'Campanha BF' and e.metadata->>'canal' = 'Meta Ads' and e.source = 'ctwa', e.metadata::text;
+  assert e.occurred_at = '2026-09-01 09:59:58+00', e.occurred_at::text;
+  -- L2: referral de número sem o 9 casa com o lead; rastreio explicado → sem inicial
+  assert (select count(*) from public.lead_events where lead_id = 'f0f0f0f0-0000-0000-0000-000000000002'
+           and event_type = 'entrada') = 1, 'L2: uma entrada';
+  assert (select occurred_at from public.lead_events where lead_id = 'f0f0f0f0-0000-0000-0000-000000000002'
+           and event_type = 'entrada') = '2026-09-10 14:00+00', 'L2: na data do clique';
+  -- L3: inicial Google
+  select * into e from public.lead_events where dedupe_key = 'entrada:lead:f0f0f0f0-0000-0000-0000-000000000003:inicial';
+  assert e.metadata->>'canal' = 'Google Ads' and e.source = 'google', coalesce(e.metadata::text, 'L3 sem inicial');
+  -- L4: inicial orgânica sem o clid do clique posterior + o referral
+  select * into e from public.lead_events where dedupe_key = 'entrada:lead:f0f0f0f0-0000-0000-0000-000000000004:inicial';
+  assert e.metadata->>'canal' = 'Orgânico' and e.metadata->>'ctwa_clid' is null, coalesce(e.metadata::text, 'L4 sem inicial');
+  assert (select count(*) from public.lead_events where lead_id = 'f0f0f0f0-0000-0000-0000-000000000004'
+           and event_type = 'entrada') = 2, 'L4: inicial + referral';
+  -- L5/L6: ambíguo
+  assert not exists (select 1 from public.lead_events where lead_id in
+           ('f0f0f0f0-0000-0000-0000-000000000005', 'f0f0f0f0-0000-0000-0000-000000000006')), 'ambiguo nao entra';
+  -- venda com kit, card que se moveu = 2 eventos
+  assert (select metadata->>'kit' from public.lead_events
+           where dedupe_key = 'venda:f0f0f0f0-0000-0000-0000-0000000000e1') = 'true', 'kit';
+  assert (select new_value from public.lead_events
+           where dedupe_key = 'etapa:f0f0f0f0-0000-0000-0000-0000000000d2:criado') is null, 'etapa inicial desconhecida';
+  assert (select count(*) from public.lead_events where lead_id = 'f0f0f0f0-0000-0000-0000-000000000003'
+           and event_type = 'etapa' and new_value = 'Qualificado') = 1, 'etapa atual';
+end $$;
+"""
+
+ESPERADO_BACKFILL = {"entrada": 5, "venda": 2, "venda_cancelada": 1, "etapa": 3, "disparo": 1}
+
+
+def _backfill(*args: str) -> dict:
+    r = subprocess.run(
+        [sys.executable, str(BACKFILL), "--psql", PSQL, "--json", *args],
+        text=True, capture_output=True,
+    )
+    assert r.returncode == 0, r.stderr
+    return json.loads(r.stdout.strip().splitlines()[-1])
+
+
+@_precisa_pg
+def test_backfill_idempotente():
+    _psql(SEED_BACKFILL)
+    try:
+        primeira = _backfill("--aplicar")
+        assert json.loads(_psql(CONTA_BACKFILL).strip()) == ESPERADO_BACKFILL
+        _psql(CONFERE_BACKFILL)
+        assert primeira["referrals"]["ambiguos"] >= 1 and primeira["referrals"]["colapsados"] >= 1
+
+        segunda = _backfill("--aplicar")
+        assert segunda["inseridos"] == {}, segunda["inseridos"]
+        assert json.loads(_psql(CONTA_BACKFILL).strip()) == ESPERADO_BACKFILL
+        candidatos = lambda r: {e["event_type"]: e["candidatos"] for e in r["eventos"]}  # noqa: E731
+        assert candidatos(segunda) == candidatos(primeira), "mesma contagem nas duas rodadas"
+        assert all(e["existentes"] == e["candidatos"] for e in segunda["eventos"]), segunda["eventos"]
+
+        seca = _backfill()
+        assert all(e["candidatos"] == e["existentes"] for e in seca["eventos"]), seca["eventos"]
+    finally:
+        _psql(LIMPA_BACKFILL)
 
 
 if __name__ == "__main__":
