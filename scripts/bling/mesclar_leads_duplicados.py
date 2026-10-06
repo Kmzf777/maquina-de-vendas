@@ -500,7 +500,7 @@ def executar(db, saida, aplicar=False, limite=None, pares_csv=None, excluir=()):
                              "supabase/migrations/20261006_call_semanal_base.sql antes do --aplicar")
         a_aplicar, recusados = selecionar_revisados(pares, revisados)
         aplicados.extend(recusados)
-        for par in a_aplicar[:limite] if limite else a_aplicar:
+        for par in a_aplicar[:limite] if limite is not None else a_aplicar:
             try:
                 db.executar(sql_mesclar_par(par["duplicado"], par["sobrevivente"], tabelas,
                                             par["motivo"]))

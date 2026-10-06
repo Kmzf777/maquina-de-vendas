@@ -372,3 +372,11 @@ def test_sql_trava_os_dois_leads_logo_apos_o_begin():
     assert linhas[0] == "begin;"
     assert linhas[1] == (f"select 1 from public.leads where id in ('{DUP}', '{HIAGO}')"
                          " for update;")
+
+
+@pytest.mark.parametrize("limite,esperado", [(0, []), (1, [DUP]), (None, [DUP, DUP2])])
+def test_limite_zero_nao_aplica_nada(tmp_path, limite, esperado):
+    db = _banco_dois_pares()
+    csv_ = _pares_csv(tmp_path / "revisado.csv", [(DUP, HIAGO), (DUP2, SOB2)])
+    m.executar(db, tmp_path / "saida", aplicar=True, pares_csv=csv_, limite=limite)
+    assert _aplicados(db) == esperado
