@@ -28,7 +28,13 @@ import { blingGate } from "@/lib/bling-gate";
 import { productSummary } from "@/lib/bling";
 import { divergenceFrom, type Divergence } from "@/lib/bling-divergence";
 import { CONTA_PADRAO } from "@/lib/bling-accounts";
-import { defaultsDoContato, useLeadCliente } from "@/components/sales/lead-cliente";
+import { JaEraClienteToggle } from "@/components/sales/ja-era-cliente-toggle";
+import {
+  defaultsDoContato,
+  precisaPerguntarJaEraCliente,
+  salvarJaEraCliente,
+  useLeadCliente,
+} from "@/components/sales/lead-cliente";
 import { PainelLateral } from "@/components/sales/painel-lateral";
 
 /**
@@ -235,6 +241,45 @@ export function SaleCreateModal({
     payload: OrderPayloadResult["payload"];
     total: number;
   } | null>(null);
+
+  // ── lead e "Já é cliente?" ───────────────────────────────────────────────
+  // Cadastro do lead POR ID — vale para qualquer porta de entrada (conversa,
+  // card, painel de vendas). Antes vinha da lista do `pickLead`, vazia quando o
+  // modal era aberto pela conversa, e o vendedor redigitava tudo no cadastro
+  // do Bling (call de 01/10).
+  const resolvedLeadId = selectedLeadId || leadId || "";
+  const { lead: leadCliente, atualizar: atualizarLeadCliente } = useLeadCliente(
+    isEditing ? null : resolvedLeadId,
+  );
+  // Obrigatório só quando o banco não sabe (decisão de 06/10: automático
+  // quando há evidência, o vendedor responde só na dúvida). Edição não pergunta.
+  const perguntarCliente = !isEditing && precisaPerguntarJaEraCliente(leadCliente);
+  const [respostaCliente, setRespostaCliente] = useState<boolean | null>(null);
+  const faltaRespostaCliente = perguntarCliente && respostaCliente === null;
+
+  /**
+   * Grava a resposta no lead ANTES da venda: o trigger do banco só marca
+   * "auto" em lead ainda nulo, então a resposta do vendedor precisa chegar
+   * primeiro para não ser atropelada. `false` = falhou, não registrar a venda.
+   */
+  async function gravarRespostaCliente(): Promise<boolean> {
+    if (!perguntarCliente) return true;
+    if (respostaCliente === null) {
+      setError("Responda “Já é cliente?” para registrar a venda");
+      return false;
+    }
+    setSaving(true);
+    setError(null);
+    try {
+      await salvarJaEraCliente(resolvedLeadId, respostaCliente, currentUserEmail);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Erro ao salvar “Já é cliente?”");
+      setSaving(false);
+      return false;
+    }
+    atualizarLeadCliente({ ja_era_cliente: respostaCliente, ja_era_cliente_fonte: "vendedor" });
+    return true;
+  }
 
   // ── initial data fetches ─────────────────────────────────────────────────
   useEffect(() => {
@@ -566,6 +611,7 @@ export function SaleCreateModal({
         );
         return;
       }
+      if (!(await gravarRespostaCliente())) return;
 
       // `/api/bling/orders` recebe `deal_id` pronto — o deal inline é criado
       // antes, e o id fica guardado para a retentativa não criar um segundo.
@@ -611,6 +657,8 @@ export function SaleCreateModal({
       return;
     }
 
+    if (!(await gravarRespostaCliente())) return;
+
     setSaving(true);
     setError(null);
 
@@ -653,12 +701,6 @@ export function SaleCreateModal({
   }
 
   // ── helpers ───────────────────────────────────────────────────────────────
-  const resolvedLeadId = selectedLeadId || leadId || "";
-  // Cadastro do lead POR ID — vale para qualquer porta de entrada (conversa,
-  // card, painel de vendas). Antes vinha da lista do `pickLead`, vazia quando o
-  // modal era aberto pela conversa, e o vendedor redigitava tudo no cadastro
-  // do Bling (call de 01/10).
-  const { lead: leadCliente } = useLeadCliente(isEditing ? null : resolvedLeadId);
 
   /** Fecha avisando o chamador quando o pedido já foi lançado (recarrega a lista). */
   function fecharModal() {
@@ -750,6 +792,20 @@ export function SaleCreateModal({
                     </div>
                   </PopoverContent>
                 </Popover>
+              </div>
+            )}
+
+            {perguntarCliente && (
+              <div className="p-3 bg-[#faf9f6] border border-[#dedbd6] rounded-[4px] space-y-1">
+                <JaEraClienteToggle
+                  obrigatorio
+                  valor={respostaCliente}
+                  onEscolher={setRespostaCliente}
+                />
+                <p className="text-[11px] text-[#7b7b78]">
+                  O sistema não sabe se este lead já comprava antes de chegar. A
+                  resposta fica gravada no lead.
+                </p>
               </div>
             )}
 
@@ -991,6 +1047,12 @@ export function SaleCreateModal({
               </p>
             )}
 
+            {faltaRespostaCliente && !error && (
+              <p className="text-[11px] text-[#7b7b78]">
+                Responda “Já é cliente?” para registrar a venda.
+              </p>
+            )}
+
             {gate.message && (
               <p className="text-[12px] text-red-600">{gate.message}</p>
             )}
@@ -1006,7 +1068,12 @@ export function SaleCreateModal({
               </button>
               <button
                 type="submit"
-                disabled={saving || !gate.canSubmit || (blingMode && !orderResult?.valid)}
+                disabled={
+                  saving ||
+                  !gate.canSubmit ||
+                  (blingMode && !orderResult?.valid) ||
+                  faltaRespostaCliente
+                }
                 className="flex-1 py-2 text-[13px] font-medium text-white rounded-[4px] transition-colors bg-[#1f9d57] hover:bg-[#1b8a4c] disabled:bg-[#7b7b78]"
               >
                 {saving

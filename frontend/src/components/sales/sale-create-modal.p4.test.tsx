@@ -140,3 +140,70 @@ describe("SaleCreateModal — pré-preenchimento (P4.1)", () => {
     expect(chamadas.some((c) => c.url === "/api/leads")).toBe(false);
   });
 });
+
+describe("SaleCreateModal — 'Já é cliente?' obrigatório (P4.4)", () => {
+  it("lead com ja_era_cliente nulo: pergunta e só libera Salvar com resposta", async () => {
+    h.maybeSingle.mockResolvedValue({ data: { ...LEAD_VIDA, ja_era_cliente: null, ja_era_cliente_fonte: null }, error: null });
+    const { onSaved } = abrir({ blingEnabled: false });
+    expect(await screen.findByRole("group", { name: "Já é cliente?" })).toBeTruthy();
+    const salvar = screen.getByRole("button", { name: "Registrar Venda" }) as HTMLButtonElement;
+    expect(salvar.disabled).toBe(true);
+
+    fireEvent.click(screen.getByRole("button", { name: "Não" }));
+    expect(salvar.disabled).toBe(false);
+
+    fireEvent.change(screen.getByPlaceholderText("Ex: Café especial 5kg"), { target: { value: "Kit degustação" } });
+    fireEvent.change(screen.getByPlaceholderText("0,00"), { target: { value: "60" } });
+    fireEvent.click(salvar);
+
+    await waitFor(() => expect(onSaved).toHaveBeenCalled());
+    const patch = chamadas.findIndex((c) => c.url === "/api/leads/lead-1" && c.method === "PATCH");
+    const venda = chamadas.findIndex((c) => c.url === "/api/sales" && c.method === "POST");
+    expect(patch).toBeGreaterThanOrEqual(0);
+    expect(patch).toBeLessThan(venda);
+    expect(chamadas[patch].body).toMatchObject({
+      ja_era_cliente: false,
+      ja_era_cliente_fonte: "vendedor",
+      ja_era_cliente_por: "joao@cafecanastra.com",
+    });
+  });
+
+  it("lead que o sistema já sabe: não pergunta nem grava", async () => {
+    h.maybeSingle.mockResolvedValue({ data: LEAD_VIDA, error: null });
+    const { onSaved } = abrir({ blingEnabled: false });
+    await waitFor(() => expect(h.maybeSingle).toHaveBeenCalled());
+    expect(screen.queryByRole("group", { name: "Já é cliente?" })).toBeNull();
+    fireEvent.change(screen.getByPlaceholderText("Ex: Café especial 5kg"), { target: { value: "Kit" } });
+    fireEvent.change(screen.getByPlaceholderText("0,00"), { target: { value: "60" } });
+    fireEvent.click(screen.getByRole("button", { name: "Registrar Venda" }));
+    await waitFor(() => expect(onSaved).toHaveBeenCalled());
+    expect(chamadas.some((c) => c.method === "PATCH")).toBe(false);
+  });
+
+  it("banco sem a coluna (P0 não aplicado): não trava a venda", async () => {
+    h.maybeSingle
+      .mockResolvedValueOnce({ data: null, error: { message: "column does not exist" } })
+      .mockResolvedValueOnce({ data: { id: "lead-1", name: "Iago" }, error: null });
+    abrir({ blingEnabled: false });
+    await waitFor(() => expect(h.maybeSingle).toHaveBeenCalledTimes(2));
+    expect(screen.queryByRole("group", { name: "Já é cliente?" })).toBeNull();
+  });
+
+  it("falha ao gravar a resposta: não registra a venda e mostra o erro", async () => {
+    h.maybeSingle.mockResolvedValue({ data: { ...LEAD_VIDA, ja_era_cliente: null }, error: null });
+    const original = global.fetch;
+    global.fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (init?.method === "PATCH")
+        return { ok: false, status: 500, json: async () => ({ error: "falhou o PATCH" }) } as Response;
+      return original(input, init);
+    }) as unknown as typeof fetch;
+    abrir({ blingEnabled: false });
+    await screen.findByRole("group", { name: "Já é cliente?" });
+    fireEvent.click(screen.getByRole("button", { name: "Sim" }));
+    fireEvent.change(screen.getByPlaceholderText("Ex: Café especial 5kg"), { target: { value: "Kit" } });
+    fireEvent.change(screen.getByPlaceholderText("0,00"), { target: { value: "60" } });
+    fireEvent.click(screen.getByRole("button", { name: "Registrar Venda" }));
+    expect(await screen.findByText("falhou o PATCH")).toBeTruthy();
+    expect(chamadas.some((c) => c.url === "/api/sales")).toBe(false);
+  });
+});
