@@ -16,6 +16,8 @@ REGRAS:
   - Move todas as linhas com `lead_id` (lista conferida contra information_schema — tabela
     nao coberta ABORTA), copia cnpj/razao_social/nome_fantasia/email so onde o sobrevivente
     esta vazio, grava `lead_events` 'mesclagem' e apaga o duplicado.
+  - Sobrevivente que receberia mais de 2 duplicados (celular compartilhado, contatos de
+    teste) vai INTEIRO para os ambiguos.
   - Vendas gemeas (mesmo valor, sold_at a <= 1 dia, uma bling e outra manual/crm): so relata.
 
 USO (dry-run e o padrao — so le):
@@ -85,6 +87,9 @@ def doc_para_par(valor):
 # ---------------------------------------------------------------------------
 
 
+MAX_DUPLICADOS_POR_SOBREVIVENTE = 2
+
+
 def parear(candidatos, leads):
     """candidatos: [{id, phone, name, contatos: [{account, id, nome, doc_digits,
     telefone_e164, celular_e164}]}]; leads: linhas de `leads` que casaram alguma chave
@@ -126,6 +131,26 @@ def parear(candidatos, leads):
                                                 for lid, mv in sorted(achados.items()))})
         else:
             orfaos.append(base)
+
+    # Sobrevivente que receberia MAIS de 2 duplicados nao e cliente com cadastro repetido:
+    # e um celular compartilhado (contatos "Teste Rafael" do Bling com o celular do Rafael,
+    # 14 pares no dry-run de 06/10 — o --aplicar moveria 22 vendas de teste para o lead
+    # real). O grupo inteiro vai para os ambiguos, para revisao a mao.
+    por_sobrevivente = {}
+    for par in pares:
+        por_sobrevivente.setdefault(par["sobrevivente"], []).append(par)
+    lotados = {lid for lid, ps in por_sobrevivente.items()
+               if len(ps) > MAX_DUPLICADOS_POR_SOBREVIVENTE}
+    for par in pares:
+        if par["sobrevivente"] in lotados:
+            n = len(por_sobrevivente[par["sobrevivente"]])
+            ambiguos.append({
+                "duplicado": par["duplicado"], "duplicado_nome": par["duplicado_nome"],
+                "duplicado_phone": par["duplicado_phone"], "opcoes": [par["sobrevivente"]],
+                "motivo": (f"sobrevivente {par['sobrevivente']} receberia {n} duplicados"
+                           f" (limite {MAX_DUPLICADOS_POR_SOBREVIVENTE}) — revisar a mao;"
+                           f" {par['motivo']}")})
+    pares = [p for p in pares if p["sobrevivente"] not in lotados]
     return {"pares": pares, "ambiguos": ambiguos, "orfaos": orfaos}
 
 

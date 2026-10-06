@@ -173,3 +173,38 @@ def test_sql_recusa_id_que_nao_e_uuid():
 def test_motivo_com_aspas_e_escapado():
     sql = m.sql_mesclar_par(DUP, HIAGO, set(), "nome d'agua")
     assert "nome d''agua" in sql
+
+
+# ── revisao de 06/10: o lead real do Rafael recebia 14 contatos "Teste Rafael" ──────────
+
+RAFAEL = "5ee7a58f-8c8e-4bcc-8963-9022eeaf67c7"
+
+
+def _dups_com_o_mesmo_celular(n, celular="5534988861441"):
+    return [_cand(id_=f"00000000-0000-0000-0000-{i:012d}", celular_e164=celular)
+            for i in range(1, n + 1)]
+
+
+def test_sobrevivente_com_mais_de_2_duplicados_vai_inteiro_para_ambiguos():
+    r = m.parear(_dups_com_o_mesmo_celular(3),
+                 [{"id": RAFAEL, "phone": "5534988861441", "name": "Rafael", "cnpj": None}])
+    assert r["pares"] == []
+    assert len(r["ambiguos"]) == 3
+    for amb in r["ambiguos"]:
+        assert amb["opcoes"] == [RAFAEL]
+        assert "3 duplicados" in amb["motivo"] and "limite 2" in amb["motivo"]
+
+
+def test_sobrevivente_com_2_duplicados_continua_pareando():
+    r = m.parear(_dups_com_o_mesmo_celular(2),
+                 [{"id": RAFAEL, "phone": "5534988861441", "name": "Rafael", "cnpj": None}])
+    assert [p["sobrevivente"] for p in r["pares"]] == [RAFAEL, RAFAEL]
+    assert r["ambiguos"] == []
+
+
+def test_limite_por_sobrevivente_nao_afeta_os_outros_pares():
+    r = m.parear(_dups_com_o_mesmo_celular(3) + [_cand(telefone_e164="5543999565650")],
+                 [{"id": RAFAEL, "phone": "5534988861441", "name": "Rafael", "cnpj": None},
+                  {"id": HIAGO, "phone": "5543999565650", "name": "Hiago", "cnpj": None}])
+    assert [(p["duplicado"], p["sobrevivente"]) for p in r["pares"]] == [(DUP, HIAGO)]
+    assert len(r["ambiguos"]) == 3
