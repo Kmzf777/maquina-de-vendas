@@ -14,7 +14,8 @@
 --                    metadata.kit vem de sale_items (descricao ~ 'kit degust'), recalculado
 --                    pelo trigger de sale_items porque os itens chegam DEPOIS.
 --   venda_cancelada  sales: status passa a 'cancelada'.
---   disparo          broadcast_leads: sent_at passa a ter valor.
+--   disparo          broadcast_leads: sent_at passa a ter valor; volta a NULL (cap da
+--                    Meta) apaga; o reenvio grava a data nova.
 -- mesclagem e atribuicao_manual sao gravados pelo codigo do P1/P2.
 --
 -- dedupe_key deterministica: scripts/timeline/backfill_lead_events.py gera AS MESMAS chaves,
@@ -400,7 +401,15 @@ declare
   v_meta jsonb;
 begin
   begin
-    if new.lead_id is null or new.sent_at is null then
+    if new.lead_id is null then
+      return new;
+    end if;
+    if new.sent_at is null then
+      -- envio desfeito (cap da Meta, 131049: broadcast/worker.py limpa sent_at): ninguem
+      -- recebeu, entao o disparo sai da timeline. O reenvio grava de novo.
+      if tg_op = 'UPDATE' and old.sent_at is not null then
+        delete from public.lead_events where dedupe_key = 'disparo:' || new.id;
+      end if;
       return new;
     end if;
     if tg_op = 'UPDATE' then
@@ -412,7 +421,9 @@ begin
     insert into public.lead_events (lead_id, event_type, new_value, metadata, occurred_at, source, dedupe_key)
     values (new.lead_id, 'disparo', v_meta->>'broadcast_nome', v_meta, new.sent_at, 'disparo',
             'disparo:' || new.id)
-    on conflict (dedupe_key) where dedupe_key is not null do nothing;
+    on conflict (dedupe_key) where dedupe_key is not null do update
+      set occurred_at = excluded.occurred_at, metadata = excluded.metadata,
+          new_value = excluded.new_value;
   exception when others then
     raise warning 'fn_lead_events_broadcast_disparo: %', sqlerrm;
   end;

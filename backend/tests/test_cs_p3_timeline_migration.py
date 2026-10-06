@@ -75,10 +75,22 @@ def test_kit_pela_descricao():
     assert "descricao ilike '%kit degust%'" in SQL
 
 
-def test_todo_insert_tem_on_conflict_do_nothing():
+def test_todo_insert_tem_on_conflict():
     inserts = SQL.count("insert into public.lead_events")
     assert inserts == 6  # entrada, etapa (criado/mudança), venda, venda_cancelada, disparo
-    assert SQL.count("on conflict (dedupe_key) where dedupe_key is not null do nothing") == inserts
+    # o disparo é o único que atualiza no conflito (reenvio depois do cap da Meta)
+    assert SQL.count("on conflict (dedupe_key) where dedupe_key is not null do nothing") == inserts - 1
+    assert SQL.count("on conflict (dedupe_key) where dedupe_key is not null do update") == 1
+
+
+def test_disparo_retido_pelo_cap_sai_da_timeline_e_reenvio_atualiza():
+    """Revisão: broadcast/worker.py volta sent_at para NULL no erro 131049 (cap da Meta).
+    O disparo que ninguém recebeu não pode ficar na timeline; o reenvio leva a data nova."""
+    corpo = _corpo("fn_lead_events_broadcast_disparo")
+    assert "delete from public.lead_events" in corpo
+    assert "'disparo:' || new.id" in corpo
+    assert ("on conflict (dedupe_key) where dedupe_key is not null do update\n"
+            "      set occurred_at = excluded.occurred_at, metadata = excluded.metadata") in corpo
 
 
 def test_janela_de_30_min_funde_os_updates_do_webhook():

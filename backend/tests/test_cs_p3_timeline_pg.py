@@ -556,6 +556,52 @@ def test_venda_editada_e_apagada():
     assert "WARNING" not in r.stderr, r.stderr
 
 
+
+# Revisão (item 3): o worker volta sent_at para NULL quando a Meta retém a mensagem pelo cap
+# de marketing (131049). O disparo sai da timeline; o reenvio grava a data nova.
+CENARIO_DISPARO_CAP = """
+begin;
+insert into public.broadcasts (id, name, template_name)
+values ('dededede-0000-0000-0000-0000000000b1', 'Disparo Cap', 'tpl');
+insert into public.leads (id, phone) values ('dededede-0000-0000-0000-0000000000c1', '5511900000071');
+insert into public.broadcast_leads (id, broadcast_id, lead_id, sent_at) values
+  ('dededede-0000-0000-0000-0000000000f1', 'dededede-0000-0000-0000-0000000000b1',
+   'dededede-0000-0000-0000-0000000000c1', '2026-09-01 12:00+00');
+update public.broadcast_leads set sent_at = null, wamid = null where id = 'dededede-0000-0000-0000-0000000000f1';
+do $$ begin
+  assert not exists (select 1 from public.lead_events where dedupe_key = 'disparo:dededede-0000-0000-0000-0000000000f1'),
+    'disparo retido pelo cap sai da timeline';
+end $$;
+update public.broadcast_leads set sent_at = '2026-09-02 12:00+00' where id = 'dededede-0000-0000-0000-0000000000f1';
+do $$ begin
+  assert (select occurred_at from public.lead_events where dedupe_key = 'disparo:dededede-0000-0000-0000-0000000000f1')
+    = '2026-09-02 12:00+00', 'reenvio grava a data nova';
+end $$;
+-- evento que sobrou (ex.: gravado pelo backfill com o trigger desligado): o reenvio atualiza
+set session_replication_role = replica;
+update public.broadcast_leads set sent_at = null where id = 'dededede-0000-0000-0000-0000000000f1';
+update public.broadcasts set name = 'Disparo Cap v2' where id = 'dededede-0000-0000-0000-0000000000b1';
+set session_replication_role = origin;
+update public.broadcast_leads set sent_at = '2026-09-03 12:00+00' where id = 'dededede-0000-0000-0000-0000000000f1';
+do $$
+declare e public.lead_events;
+begin
+  select * into e from public.lead_events where dedupe_key = 'disparo:dededede-0000-0000-0000-0000000000f1';
+  assert e.occurred_at = '2026-09-03 12:00+00', 'on conflict atualiza a data: ' || e.occurred_at;
+  assert e.metadata->>'broadcast_nome' = 'Disparo Cap v2', e.metadata::text;
+  assert (select count(*) from public.lead_events where lead_id = 'dededede-0000-0000-0000-0000000000c1') = 1,
+    'um evento so';
+end $$;
+rollback;
+"""
+
+
+@_precisa_pg
+def test_disparo_retido_pelo_cap_e_reenvio():
+    r = _rodar(CENARIO_DISPARO_CAP)
+    assert "WARNING" not in r.stderr, r.stderr
+
+
 # ── Backfill: semente SEM triggers (o backfill é quem cria os eventos) ─────────────────
 # L1 CTWA novo: referral na criação (+ repetido 5 min depois)  → 1 entrada (referral)
 # L2 importado em 08/01, clicou em 09/10 (referral de número SEM o 9) → 1 entrada (referral)
