@@ -311,3 +311,40 @@ def test_main_aplicar_exige_pares(capsys):
     with pytest.raises(SystemExit):
         m.main(["--psql", "psql", "--aplicar"])
     assert "--pares" in capsys.readouterr().err
+
+
+def test_excluir_tira_o_par_pelo_duplicado_ou_pelo_sobrevivente(tmp_path):
+    db = _banco_dois_pares()
+    r = m.executar(db, tmp_path, excluir=[HIAGO])
+    assert [p["duplicado"] for p in r["pares"]] == [DUP2]
+    assert [e["duplicado"] for e in r["excluidos"]] == [DUP]
+    assert r["contagens"]["excluidos"] == 1
+    assert "excluido" in (tmp_path / "excluidos.csv").read_text(encoding="utf-8")
+
+    r = m.executar(_banco_dois_pares(), tmp_path / "2", excluir=[DUP2])
+    assert [p["duplicado"] for p in r["pares"]] == [DUP]
+
+
+def test_excluido_no_csv_revisado_e_recusado(tmp_path):
+    db = _banco_dois_pares()
+    csv_ = _pares_csv(tmp_path / "revisado.csv", [(DUP, HIAGO), (DUP2, SOB2)])
+    r = m.executar(db, tmp_path / "saida", aplicar=True, pares_csv=csv_, excluir=[SOB2])
+    assert _aplicados(db) == [DUP]
+    assert r["contagens"]["aplicados_recusados"] == 1
+
+
+def test_excluir_recusa_id_invalido():
+    with pytest.raises(ValueError):
+        m.executar(_banco_dois_pares(), "/nao/usado", excluir=["nao-e-uuid"])
+
+
+def test_main_excluir_aceita_lista_separada_por_virgula(monkeypatch):
+    visto = {}
+
+    def falso(db, saida, **kw):
+        visto.update(kw)
+        return {"contagens": {}}
+
+    monkeypatch.setattr(m, "executar", falso)
+    m.main(["--psql", "psql", "--saida", "/tmp/x", "--excluir", f"{HIAGO}, {SOB2}"])
+    assert visto["excluir"] == [HIAGO, SOB2]

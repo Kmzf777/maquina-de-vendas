@@ -28,7 +28,9 @@ USO (dry-run e o padrao — so le):
       # executa SO os pares do CSV revisado (copia do pares.csv com as linhas aprovadas),
       # recalculando cada um; uma transacao por par — SO com OK do Rafael, depois do P0
 
-Saida: pares.csv, ambiguos.csv, orfaos.csv, gemeas.csv, backup.json (+ aplicados.csv) e as
+  ... --excluir <lead_id,lead_id>   # tira esses leads (duplicado ou sobrevivente) dos pares
+
+Saida: pares.csv, ambiguos.csv, orfaos.csv, excluidos.csv, gemeas.csv, backup.json (+ aplicados.csv) e as
 contagens em JSON no stdout. So stdlib: roda no host da VPS (psql), sem o venv do backend.
 """
 import argparse
@@ -437,7 +439,8 @@ def selecionar_revisados(pares, revisados):
     return aplicar, recusados
 
 
-def executar(db, saida, aplicar=False, limite=None, pares_csv=None):
+def executar(db, saida, aplicar=False, limite=None, pares_csv=None, excluir=()):
+    excluir = {_uuid(i) for i in excluir}
     if aplicar and not pares_csv:
         raise SystemExit("--aplicar exige --pares <csv revisado> (o pares.csv do dry-run,"
                          " so com as linhas aprovadas)")
@@ -452,6 +455,12 @@ def executar(db, saida, aplicar=False, limite=None, pares_csv=None):
     chaves, docs = coletar_chaves(candidatos)
     leads = db.linhas(q_leads(chaves, docs)) if (chaves or docs) else []
     r = parear(candidatos, leads)
+    # --excluir: lead que o Rafael marcou (duplicado OU sobrevivente) sai dos pares.
+    r["excluidos"] = [{**p, "motivo": f"excluido via --excluir; {p['motivo']}"}
+                      for p in r["pares"]
+                      if p["duplicado"] in excluir or p["sobrevivente"] in excluir]
+    r["pares"] = [p for p in r["pares"]
+                  if p["duplicado"] not in excluir and p["sobrevivente"] not in excluir]
     pares = r["pares"]
 
     ids = {p["duplicado"] for p in pares} | {p["sobrevivente"] for p in pares}
@@ -464,6 +473,8 @@ def executar(db, saida, aplicar=False, limite=None, pares_csv=None):
          base + ["sobrevivente", "sobrevivente_nome", "sobrevivente_phone", "motivo"])
     _csv(saida / "ambiguos.csv", r["ambiguos"], base + ["opcoes", "motivo"])
     _csv(saida / "orfaos.csv", r["orfaos"], base)
+    _csv(saida / "excluidos.csv", r["excluidos"],
+         base + ["sobrevivente", "sobrevivente_nome", "sobrevivente_phone", "motivo"])
     _csv(saida / "gemeas.csv", gemeas,
          ["sobrevivente", "duplicado", "valor", "venda_bling", "sold_at_bling",
           "venda_outra", "origin_outra", "sold_at_outra", "diferenca_horas"])
@@ -491,6 +502,7 @@ def executar(db, saida, aplicar=False, limite=None, pares_csv=None):
     contagens = {
         "candidatos": len(candidatos), "pares": len(pares),
         "ambiguos": len(r["ambiguos"]), "orfaos": len(r["orfaos"]),
+        "excluidos": len(r["excluidos"]),
         "gemeas": len(gemeas),
         "vendas_do_duplicado_movidas": sum(1 for v in vendas if v["lead_id"] in duplicados),
         "aplicados_ok": sum(1 for a in aplicados if a["resultado"] == "ok"),
@@ -512,6 +524,9 @@ def main(argv=None):
     ap.add_argument("--pares", default=None,
                     help="CSV revisado (formato do pares.csv do dry-run): o --aplicar aplica"
                          " SO estes pares, recalculados — o que nao bate mais e recusado")
+    ap.add_argument("--excluir", default="",
+                    help="lead_ids separados por virgula (duplicado ou sobrevivente) que saem"
+                         " dos pares — vao para excluidos.csv")
     ap.add_argument("--limite", type=int, default=None, help="aplica so os N primeiros pares")
     args = ap.parse_args(argv)
     if not args.psql:
@@ -520,7 +535,8 @@ def main(argv=None):
         ap.error("--aplicar exige --pares <csv revisado>")
     saida = args.saida or f"mesclagem-{datetime.now():%Y%m%d-%H%M%S}"
     resultado = executar(Psql(args.psql), saida, aplicar=args.aplicar, limite=args.limite,
-                         pares_csv=args.pares)
+                         pares_csv=args.pares,
+                         excluir=[i.strip() for i in args.excluir.split(",") if i.strip()])
     print(json.dumps(resultado["contagens"], ensure_ascii=False))
     print(f"arquivos em {Path(saida).resolve()}", file=sys.stderr)
     return 0
