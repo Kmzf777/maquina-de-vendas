@@ -58,7 +58,7 @@ describe("LeadPicker", () => {
     expect(fetchMock).not.toHaveBeenCalled();
     await act(async () => { vi.advanceTimersByTime(1); });
     expect(fetchMock).toHaveBeenCalledTimes(1);
-    expect(fetchMock.mock.calls[0][0]).toBe("/api/conversations/search-contacts?q=vida");
+    expect(fetchMock).toHaveBeenCalledWith("/api/conversations/search-contacts?q=vida");
 
     vi.useRealTimers();
     const opcao = await screen.findByText("Vida Natural");
