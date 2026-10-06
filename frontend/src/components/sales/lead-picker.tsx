@@ -6,12 +6,12 @@
  * Antes carregava `/api/leads` inteiro e filtrava no browser — o PostgREST
  * corta em 1.000 linhas, então quem estava fora das 1.000 mais recentes não
  * existia para o seletor. Agora cada busca vai ao servidor
- * (`/api/conversations/search-contacts`, a mesma da lista de conversas), com
+ * (`/api/leads?q=`, com a mesma regra de busca da lista de conversas), com
  * respiro entre as teclas.
  *
- * Limite conhecido: a busca é sobre conversas, dentro dos canais do usuário —
- * lead sem conversa não aparece. Para venda isso é o esperado (o vendedor
- * vende para quem conversou).
+ * A busca é na base de LEADS, não de conversas: lead sem conversa (`bling-*`
+ * criado pelo webhook do Bling, importado, lista fria) também compra, e a
+ * versão que buscava em `search-contacts` o deixava de fora.
  */
 import { useEffect, useState } from "react";
 import { CheckIcon, ChevronDownIcon } from "lucide-react";
@@ -26,13 +26,13 @@ export interface LeadEscolhido extends DadosDeContato {
 
 export const ATRASO_BUSCA_MS = 300;
 
-/** Conversas de `search-contacts` → um lead por id, na ordem recebida. */
+/** Linhas de `/api/leads?q=` → um lead por id, na ordem recebida. */
 export function leadsDaBusca(linhas: unknown): LeadEscolhido[] {
   if (!Array.isArray(linhas)) return [];
   const vistos = new Set<string>();
   const out: LeadEscolhido[] = [];
   for (const linha of linhas) {
-    const l = (linha as { leads?: LeadEscolhido | null } | null)?.leads;
+    const l = linha as LeadEscolhido | null;
     if (!l?.id || vistos.has(l.id)) continue;
     vistos.add(l.id);
     out.push({
@@ -46,6 +46,13 @@ export function leadsDaBusca(linhas: unknown): LeadEscolhido[] {
   }
   return out;
 }
+
+/** `bling-<id>` é o telefone sintético dos leads do webhook do Bling. */
+const telefoneReal = (phone: string | null | undefined) =>
+  phone && !phone.startsWith("bling-") ? phone : null;
+
+const rotulo = (l: LeadEscolhido) =>
+  l.name || l.razao_social || telefoneReal(l.phone) || l.email || "Lead sem nome";
 
 interface LeadPickerProps {
   selecionado: LeadEscolhido | null;
@@ -68,7 +75,7 @@ export function LeadPicker({ selecionado, onEscolher }: LeadPickerProps) {
     if (curto) return;
     let vivo = true;
     const timer = setTimeout(() => {
-      fetch(`/api/conversations/search-contacts?q=${encodeURIComponent(q)}`)
+      fetch(`/api/leads?q=${encodeURIComponent(q)}&limit=30`)
         .then((r) => (r.ok ? r.json() : Promise.reject(new Error(String(r.status)))))
         .then((d) => {
           if (vivo) setResultado({ termo: q, leads: leadsDaBusca(d), erro: false });
@@ -94,9 +101,7 @@ export function LeadPicker({ selecionado, onEscolher }: LeadPickerProps) {
           className="flex w-full h-[37px] items-center justify-between bg-white border border-[#dedbd6] rounded-[4px] px-3 text-[14px] text-[#111111] focus:border-[#111111] focus:outline-none"
         >
           <span className={selecionado ? "truncate" : "text-[#8a8a8a]"}>
-            {selecionado
-              ? (selecionado.name ?? selecionado.phone ?? "Lead selecionado")
-              : "Selecione o lead"}
+            {selecionado ? rotulo(selecionado) : "Selecione o lead"}
           </span>
           <ChevronDownIcon className="size-4 shrink-0 text-[#8a8a8a]" />
         </button>
@@ -138,8 +143,8 @@ export function LeadPicker({ selecionado, onEscolher }: LeadPickerProps) {
               className="flex w-full items-center justify-between gap-2 rounded-md px-2 py-1.5 text-left text-[14px] hover:bg-[#f4f2ee]"
             >
               <span className="min-w-0">
-                <span className="block truncate">{l.name ?? l.phone}</span>
-                {l.name && l.phone && (
+                <span className="block truncate">{rotulo(l)}</span>
+                {rotulo(l) !== telefoneReal(l.phone) && telefoneReal(l.phone) && (
                   <span className="block text-[11px] text-[#7b7b78] truncate">{l.phone}</span>
                 )}
               </span>
