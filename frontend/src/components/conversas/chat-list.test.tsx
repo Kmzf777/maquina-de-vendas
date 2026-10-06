@@ -105,6 +105,15 @@ describe("ChatList — rolagem infinita", () => {
     expect(onLoadMore).toHaveBeenCalled();
   });
 
+  it("does not auto-load while the list is in error (only the manual button retries)", () => {
+    const onLoadMore = vi.fn();
+    renderList({ hasMore: true, listError: true, onLoadMore });
+    act(() => ioCallback?.([{ isIntersecting: true }]));
+    expect(onLoadMore).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByText("Carregar mais conversas"));
+    expect(onLoadMore).toHaveBeenCalledTimes(1);
+  });
+
   it("has no sentinel when everything is loaded", () => {
     renderList({ hasMore: false, onLoadMore: vi.fn() });
     expect(screen.queryByText("Carregar mais conversas")).toBeNull();
