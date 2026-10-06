@@ -18,6 +18,8 @@ O que entra (spec P3.2):
   venda / venda_cancelada   todas as vendas (cancelada: bling_event_date ou sold_at).
   etapa            criação do card (created_at) e, se o card já se moveu, a etapa atual
                    (entered_stage_at). A etapa em que o card nasceu, nesse caso, é desconhecida.
+                   Etapa atual já registrada (evento do card com para_stage_id = etapa atual)
+                   conta como existente, mesmo com outra chave.
   disparo          broadcast_leads com sent_at.
 
 Uso (o comando psql recebe -X -q -A -t -v ON_ERROR_STOP=1 e o SQL pela entrada padrão):
@@ -185,7 +187,7 @@ cand as (
    where bl.sent_at is not null and bl.lead_id is not null
 ),
 marcado as (
-  select c.*, __EXISTE__ as existe from cand c
+  select c.*, (__EXISTE__ or __MOVE_COBERTO__) as existe from cand c
 )"""
 
 CONTAGEM = """(select coalesce(json_agg(t order by t.event_type), '[]'::json) from (
@@ -213,7 +215,7 @@ ins as (
   insert into public.lead_events
          (lead_id, event_type, old_value, new_value, metadata, occurred_at, source, dedupe_key)
   select lead_id, event_type, old_value, new_value, metadata, occurred_at, source, dedupe_key
-    from cand
+    from marcado where not existe
   on conflict (dedupe_key) where dedupe_key is not null do nothing
   returning event_type
 )
@@ -232,6 +234,7 @@ def _tokens(esq: Esquema) -> dict[str, str]:
         "__REFS__": REFS_ARQUIVO if esq.arquivo else REFS_LOG,
         "__SEM_ENTRADA_VIVA__": "true",
         "__EXISTE__": "false",
+        "__MOVE_COBERTO__": "false",
         "__META_REF__": "null::jsonb",
         "__META_INI__": "null::jsonb",
         "__CANAL_INI__": "null::text",
@@ -264,6 +267,16 @@ def _tokens(esq: Esquema) -> dict[str, str]:
             "__META_MOVE__": "public.fn_lead_events_etapa_metadata(d.id, d.pipeline_id, null, d.stage_id)",
             "__META_DISPARO__": "public.fn_lead_events_disparo_metadata(bl)",
         })
+    if esq.p0 and esq.p3:
+        # A chave da etapa atual leva entered_stage_at, que muda sem mudar a etapa (a coluna
+        # legada `stage` recarimba no BEFORE trigger, e o trigger de etapa nao dispara). Um
+        # evento `etapa` do card que ja chega na etapa atual cobre o candidato: sem isto o
+        # re-run inseriria a mesma etapa de novo (etapa fantasma).
+        t["__MOVE_COBERTO__"] = """(c.event_type = 'etapa' and c.dedupe_key not like '%:criado'
+           and exists (select 1 from public.lead_events e
+                        where e.lead_id = c.lead_id and e.event_type = 'etapa'
+                          and e.metadata->>'deal_id' = c.metadata->>'deal_id'
+                          and e.metadata->>'para_stage_id' = c.metadata->>'para_stage_id'))"""
     return t
 
 

@@ -766,6 +766,11 @@ def test_backfill_idempotente():
         _psql(CONFERE_BACKFILL)
         assert primeira["referrals"]["ambiguos"] >= 1 and primeira["referrals"]["colapsados"] >= 1
 
+        # Revisão (item 6): a coluna legada `stage` muda sem mudar stage_id; o BEFORE trigger
+        # recarimba entered_stage_at e o trigger de etapa (update of stage_id) não dispara.
+        # A chave da etapa atual muda — o re-run não pode inventar uma etapa fantasma.
+        _psql("update public.deals set stage = 'legado-bf' "
+              "where id = 'f0f0f0f0-0000-0000-0000-0000000000d2';")
         segunda = _backfill("--aplicar")
         assert segunda["inseridos"] == {}, segunda["inseridos"]
         assert json.loads(_psql(CONTA_BACKFILL).strip()) == ESPERADO_BACKFILL
