@@ -169,7 +169,8 @@ def test_snapshot_do_incidente_e_ignorado_e_nao_entra_no_sql():
 def test_sql_do_par_move_tudo_e_apaga_o_duplicado():
     sql = m.sql_mesclar_par(DUP, HIAGO, {"sales", "messages", "lead_bling_contacts"}, "celular:1")
     assert sql.startswith("begin;") and sql.rstrip().endswith("commit;")
-    assert f"update public.sales set lead_id = '{HIAGO}' where lead_id = '{DUP}';" in sql
+    assert (f"update public.sales x set lead_id = '{HIAGO}' where x.lead_id = '{DUP}'"
+            in sql)
     assert "delete from public.lead_bling_contacts d using public.lead_bling_contacts s" in sql
     assert "'mesclagem'" in sql and f"'mesclagem:{DUP}'" in sql
     assert f"delete from public.leads where id = '{DUP}';" in sql
@@ -380,3 +381,37 @@ def test_limite_zero_nao_aplica_nada(tmp_path, limite, esperado):
     csv_ = _pares_csv(tmp_path / "revisado.csv", [(DUP, HIAGO), (DUP2, SOB2)])
     m.executar(db, tmp_path / "saida", aplicar=True, pares_csv=csv_, limite=limite)
     assert _aplicados(db) == esperado
+
+
+CHAVES = {"sales": ["id"], "lead_tags": ["lead_id", "tag_id"],
+          "lead_qualification_scores": ["lead_id"]}
+
+
+def test_sql_registra_as_chaves_movidas_por_tabela_no_evento():
+    sql = m.sql_mesclar_par(DUP, HIAGO, {"sales", "lead_tags", "lead_qualification_scores",
+                                         "messages"}, "m", chaves=CHAVES)
+    assert "create temp table _mesclagem_movidos" in sql and "on commit drop" in sql
+    assert (f"with movidas as (update public.sales x set lead_id = '{HIAGO}'"
+            f" where x.lead_id = '{DUP}' returning to_jsonb(x.id) as chave)") in sql
+    assert "returning jsonb_build_object('tag_id', x.tag_id) as chave" in sql
+    # PK so de lead_id ou tabela sem PK: a linha inteira (sem o lead_id) identifica
+    assert sql.count("returning to_jsonb(x) - 'lead_id' as chave") == 2
+    assert "'movidos', (select coalesce(jsonb_object_agg(tabela, chaves)" in sql
+    # o resumo sai no stdout antes do commit, para o backup.json
+    assert sql.rstrip().endswith("commit;")
+    assert "select 'movidos=' ||" in sql
+
+
+def test_movidos_do_stdout_do_psql():
+    saida = '1\n1\nmovidos={"sales": ["b1"], "lead_tags": [{"tag_id": "t"}]}\n'
+    assert m.movidos_do_stdout(saida) == {"sales": ["b1"], "lead_tags": [{"tag_id": "t"}]}
+    assert m.movidos_do_stdout(None) is None
+    assert m.movidos_do_stdout("1\n") is None
+
+
+def test_backup_traz_as_chaves_de_todas_as_tabelas_cobertas():
+    sql = m.q_backup({DUP}, {"sales", "lead_tags"}, chaves=CHAVES)
+    assert "'ids_por_tabela'" not in sql  # e uma coluna, nao chave de objeto
+    assert "as ids_por_tabela" in sql
+    assert "'sales', (select coalesce(jsonb_agg(to_jsonb(x.id)" in sql
+    assert "'lead_tags', (select coalesce(jsonb_agg(jsonb_build_object('tag_id', x.tag_id)" in sql

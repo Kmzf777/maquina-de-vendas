@@ -38,6 +38,7 @@ import argparse
 import csv
 import json
 import os
+import re
 import shlex
 import subprocess
 import sys
@@ -275,8 +276,24 @@ def _texto(valor):
 CAMPOS_COPIADOS = ("cnpj", "razao_social", "nome_fantasia", "email")
 
 
-def sql_mesclar_par(duplicado, sobrevivente, tabelas, motivo):
-    """SQL de UM par, numa transacao. `tabelas` = tabelas com lead_id que existem no banco."""
+_IDENT = re.compile(r"^[a-z_][a-z0-9_]*$")
+
+
+def _chave(tabela, chaves):
+    """Expressao (sobre o alias `x`) que identifica a linha para desfazer a mesclagem: o `id`
+    se a PK e so ele; as colunas da PK sem o lead_id se ela e composta; a linha inteira sem
+    o lead_id se a PK e so o lead_id ou se a tabela nao tem PK."""
+    pk = [c for c in (chaves or {}).get(tabela) or [] if c != "lead_id"]
+    if not pk or not all(_IDENT.match(c) for c in pk):
+        return "to_jsonb(x) - 'lead_id'"
+    if pk == ["id"]:
+        return "to_jsonb(x.id)"
+    return "jsonb_build_object(" + ", ".join(f"'{c}', x.{c}" for c in pk) + ")"
+
+
+def sql_mesclar_par(duplicado, sobrevivente, tabelas, motivo, chaves=None):
+    """SQL de UM par, numa transacao. `tabelas` = tabelas com lead_id que existem no banco;
+    `chaves` = {tabela: colunas da PK} (Q_CHAVES), para registrar o que foi movido."""
     d, s = _uuid(duplicado), _uuid(sobrevivente)
     linhas = [
         "begin;",
@@ -289,13 +306,23 @@ def sql_mesclar_par(duplicado, sobrevivente, tabelas, motivo):
         f"    raise exception 'par {d} -> {s}: um dos leads nao existe mais';",
         "  end if;",
         "end $$;",
+        # O que mudou de dono, por tabela — vai para o evento 'mesclagem' e para o
+        # backup.json; sem isto a mesclagem nao tem volta.
+        "create temp table _mesclagem_movidos (tabela text not null, chave jsonb)"
+        " on commit drop;",
     ]
     for tabela in sorted(set(tabelas) & TABELAS_COBERTAS):
         if tabela in COLISAO:
             linhas.append(
                 f"delete from public.{tabela} d using public.{tabela} s"
                 f" where d.lead_id = '{d}' and s.lead_id = '{s}' and ({COLISAO[tabela]});")
-        linhas.append(f"update public.{tabela} set lead_id = '{s}' where lead_id = '{d}';")
+        linhas.append(
+            f"with movidas as (update public.{tabela} x set lead_id = '{s}'"
+            f" where x.lead_id = '{d}' returning {_chave(tabela, chaves)} as chave)"
+            f" insert into _mesclagem_movidos select '{tabela}', chave from movidas;")
+    movidos = ("(select coalesce(jsonb_object_agg(tabela, chaves), '{}'::jsonb) from"
+               " (select tabela, jsonb_agg(chave order by chave) as chaves"
+               " from _mesclagem_movidos group by tabela) t)")
     sets = ",\n  ".join(
         f"{c} = case when coalesce(btrim(s.{c}), '') = '' then d.{c} else s.{c} end"
         for c in CAMPOS_COPIADOS)
@@ -308,10 +335,11 @@ def sql_mesclar_par(duplicado, sobrevivente, tabelas, motivo):
         " jsonb_build_object('duplicado', jsonb_build_object('id', d.id, 'phone', d.phone,"
         " 'name', d.name, 'cnpj', d.cnpj, 'razao_social', d.razao_social, 'email', d.email,"
         " 'channel', d.channel, 'created_at', d.created_at, 'metadata', d.metadata),"
-        f" 'motivo', {_texto(motivo)}),"
+        f" 'motivo', {_texto(motivo)}, 'movidos', {movidos}),"
         f" now(), 'sistema', 'mesclagem:{d}'\n"
         f"from public.leads d where d.id = '{d}'\non conflict do nothing;")
     linhas.append(f"delete from public.leads where id = '{d}';")
+    linhas.append(f"select 'movidos=' || {movidos}::text;")
     linhas.append("commit;")
     return "\n".join(linhas) + "\n"
 
@@ -337,13 +365,32 @@ class Psql:
         return json.loads(saida.strip() or "[]")
 
     def executar(self, sql):
-        self._rodar(sql)
+        return self._rodar(sql)
+
+
+def movidos_do_stdout(saida):
+    """O `movidos=<json>` que o SQL do par imprime antes do commit (None se nao veio)."""
+    for linha in (saida or "").splitlines():
+        if linha.startswith("movidos="):
+            return json.loads(linha[len("movidos="):])
+    return None
 
 
 Q_TABELAS = """
 select c.table_name from information_schema.columns c
 join information_schema.tables t using (table_schema, table_name)
 where c.table_schema = 'public' and c.column_name = 'lead_id' and t.table_type = 'BASE TABLE'
+"""
+
+Q_CHAVES = """
+select c.relname as tabela, array_agg(a.attname::text order by k.ord) as colunas
+from pg_index i
+join pg_class c on c.oid = i.indrelid
+join pg_namespace n on n.oid = c.relnamespace
+cross join unnest(i.indkey) with ordinality k(attnum, ord)
+join pg_attribute a on a.attrelid = c.oid and a.attnum = k.attnum
+where i.indisprimary and n.nspname = 'public'
+group by c.relname
 """
 
 Q_COLUNAS_P0 = """
@@ -397,12 +444,19 @@ def q_vendas(ids):
             f" where lead_id = any('{{{lista}}}'::uuid[])")
 
 
-def q_backup(ids, tabelas):
+def q_backup(ids, tabelas, chaves=None):
+    """Linha do lead, as linhas inteiras das tabelas de COLISAO (podem ser apagadas) e, em
+    `ids_por_tabela`, a chave de cada linha do duplicado em toda tabela coberta."""
     lista = ",".join(_uuid(i) for i in sorted(ids))
     extras = "".join(
         f", coalesce((select json_agg(to_jsonb(x)) from public.{t} x where x.lead_id = l.id),"
         f" '[]'::json) as {t}"
         for t in sorted(set(tabelas) & set(COLISAO)))
+    por_tabela = ", ".join(
+        f"'{t}', (select coalesce(jsonb_agg({_chave(t, chaves)} order by {_chave(t, chaves)}),"
+        f" '[]'::jsonb) from public.{t} x where x.lead_id = l.id)"
+        for t in sorted(set(tabelas) & TABELAS_COBERTAS))
+    extras += f", jsonb_build_object({por_tabela}) as ids_por_tabela"
     return (f"select to_jsonb(l) as lead{extras} from public.leads l"
             f" where l.id = any('{{{lista}}}'::uuid[])")
 
@@ -462,6 +516,7 @@ def executar(db, saida, aplicar=False, limite=None, pares_csv=None, excluir=()):
 
     tabelas = {r["table_name"] for r in db.linhas(Q_TABELAS)}
     verificar_cobertura(tabelas)
+    pks = {r["tabela"]: r["colunas"] for r in db.linhas(Q_CHAVES)}
 
     candidatos = db.linhas(Q_CANDIDATOS)
     chaves, docs = coletar_chaves(candidatos)
@@ -478,7 +533,8 @@ def executar(db, saida, aplicar=False, limite=None, pares_csv=None, excluir=()):
     ids = {p["duplicado"] for p in pares} | {p["sobrevivente"] for p in pares}
     vendas = db.linhas(q_vendas(ids)) if ids else []
     gemeas = vendas_gemeas(pares, vendas)
-    backup = db.linhas(q_backup({p["duplicado"] for p in pares}, tabelas)) if pares else []
+    backup = (db.linhas(q_backup({p["duplicado"] for p in pares}, tabelas, pks))
+              if pares else [])
 
     base = ["duplicado", "duplicado_nome", "duplicado_phone"]
     _csv(saida / "pares.csv", pares,
@@ -502,13 +558,21 @@ def executar(db, saida, aplicar=False, limite=None, pares_csv=None, excluir=()):
         aplicados.extend(recusados)
         for par in a_aplicar[:limite] if limite is not None else a_aplicar:
             try:
-                db.executar(sql_mesclar_par(par["duplicado"], par["sobrevivente"], tabelas,
-                                            par["motivo"]))
-                aplicados.append({**par, "resultado": "ok", "erro": ""})
+                saida_psql = db.executar(sql_mesclar_par(
+                    par["duplicado"], par["sobrevivente"], tabelas, par["motivo"], pks))
+                aplicados.append({**par, "resultado": "ok", "erro": "",
+                                  "movidos": movidos_do_stdout(saida_psql)})
             except RuntimeError as exc:
                 aplicados.append({**par, "resultado": "erro", "erro": str(exc)})
         _csv(saida / "aplicados.csv", aplicados,
              ["duplicado", "sobrevivente", "motivo", "resultado", "erro"])
+        # backup.json ganha, por duplicado aplicado, o que de fato mudou de dono
+        movidos = {a["duplicado"]: a["movidos"] for a in aplicados if a.get("movidos")}
+        for item in backup:
+            if item["lead"]["id"] in movidos:
+                item["movidos"] = movidos[item["lead"]["id"]]
+        (saida / "backup.json").write_text(json.dumps(backup, ensure_ascii=False, indent=1),
+                                           encoding="utf-8")
 
     duplicados = {p["duplicado"] for p in pares}
     contagens = {

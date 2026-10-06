@@ -119,6 +119,18 @@ def test_aplicar_move_tudo_para_o_sobrevivente(banco, tmp_path):
              f" where lead_id = '{SOB}' and event_type = 'mesclagem'") \
         == f"mesclagem|sistema|mesclagem:{DUP}|bling-18410375514"
 
+    # o que mudou de dono fica registrado (evento e backup.json) para dar para desfazer
+    movidos = json.loads(q(f"select metadata->'movidos' from public.lead_events"
+                           f" where dedupe_key = 'mesclagem:{DUP}'"))
+    assert movidos["sales"] == ["00000000-0000-0000-0000-00000000b001"]
+    assert movidos["lead_bling_contacts"] == [{"account": "secundaria"}]
+    msg_dup = q(f"select id from public.messages where content = 'mensagem presa no duplicado'")
+    assert movidos["messages"] == [msg_dup]
+    backup = json.loads((tmp_path / "backup.json").read_text(encoding="utf-8"))
+    assert backup[0]["lead"]["id"] == DUP
+    assert backup[0]["ids_por_tabela"]["sales"] == ["00000000-0000-0000-0000-00000000b001"]
+    assert backup[0]["movidos"] == movidos
+
     # segunda rodada: nada mais a mesclar
     r2 = _aplicar(m, banco, tmp_path / "2")
     assert r2["contagens"]["pares"] == 0 and r2["contagens"]["candidatos"] == 0
