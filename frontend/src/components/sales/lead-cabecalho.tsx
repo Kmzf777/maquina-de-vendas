@@ -19,7 +19,7 @@ import { salvarJaEraCliente, useLeadCliente, type LeadCliente } from "./lead-cli
 interface LeadCabecalhoProps {
   lead: { id: string; phone: string | null; email: string | null; cnpj: string | null };
   currentUserEmail?: string;
-  onSaveField: (field: string, value: string) => void | Promise<void>;
+  onSaveField: (field: string, value: string | null) => void | Promise<void>;
 }
 
 export function LeadCabecalho({ lead, currentUserEmail, onSaveField }: LeadCabecalhoProps) {
@@ -96,7 +96,8 @@ export function LeadCabecalho({ lead, currentUserEmail, onSaveField }: LeadCabec
         value={lead.cnpj ? formatDocument(lead.cnpj) : null}
         // Grava só os dígitos: é a forma que o Bling e o P1 usam para casar
         // o documento (`doc_digits`). Com máscara, a busca nunca achava.
-        onSave={(v) => onSaveField("cnpj", docDigits(v) ?? "")}
+        // Apagado grava null (não ""), como o Perfil.
+        onSave={(v) => onSaveField("cnpj", docDigits(v))}
         placeholder="Digite o CNPJ ou CPF"
       />
       {/* `undefined` = coluna inexistente (migração do P0 não aplicada) ou

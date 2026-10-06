@@ -114,7 +114,7 @@ export function ContactDetail({
       .then((data) => setPipelines(Array.isArray(data) ? data : []));
   }, []);
 
-  async function updateLeadField(field: string, value: string) {
+  async function updateLeadField(field: string, value: string | null) {
     if (!lead) return;
     onLeadUpdate?.(lead.id, { [field]: value } as Partial<Lead>);
     try {

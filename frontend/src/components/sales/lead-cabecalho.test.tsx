@@ -148,4 +148,14 @@ describe("LeadCabecalho", () => {
     expect(screen.queryByText("falhou o A")).toBeNull();
     expect(screen.getByRole("button", { name: "Sim" }).getAttribute("aria-pressed")).toBe("false");
   });
+
+  it("CNPJ apagado grava null, não string vazia", async () => {
+    h.maybeSingle.mockResolvedValue({ data: { id: "lead-1", ja_era_cliente: null }, error: null });
+    const { onSaveField } = abrir();
+    fireEvent.click(screen.getByText("12.345.678/0001-90"));
+    const campo = screen.getByDisplayValue("12.345.678/0001-90");
+    fireEvent.change(campo, { target: { value: "" } });
+    fireEvent.keyDown(campo, { key: "Enter" });
+    expect(onSaveField).toHaveBeenCalledWith("cnpj", null);
+  });
 });
