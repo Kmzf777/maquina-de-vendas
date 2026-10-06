@@ -24,7 +24,9 @@ USO (dry-run e o padrao — so le):
   python3 scripts/bling/mesclar_leads_duplicados.py \\
       --psql "docker exec -i $(docker ps -q -f name=supabase_db | head -1) psql -U postgres -d postgres" \\
       --saida /root/mesclagem-dryrun
-  ... --aplicar     # executa, uma transacao por par — SO com OK do Rafael, depois do P0
+  ... --aplicar --pares /root/mesclagem-dryrun/pares-revisado.csv
+      # executa SO os pares do CSV revisado (copia do pares.csv com as linhas aprovadas),
+      # recalculando cada um; uma transacao por par — SO com OK do Rafael, depois do P0
 
 Saida: pares.csv, ambiguos.csv, orfaos.csv, gemeas.csv, backup.json (+ aplicados.csv) e as
 contagens em JSON no stdout. So stdlib: roda no host da VPS (psql), sem o venv do backend.
@@ -404,7 +406,42 @@ def _csv(caminho, linhas, campos):
             w.writerow({k: ("|".join(v) if isinstance(v, list) else v) for k, v in linha.items()})
 
 
-def executar(db, saida, aplicar=False, limite=None):
+def ler_pares_revisados(caminho):
+    """Pares (duplicado, sobrevivente) do CSV revisado — o `pares.csv` do dry-run, com as
+    linhas que nao devem ser aplicadas apagadas. Id que nao e uuid aborta tudo (ValueError)."""
+    with open(caminho, newline="", encoding="utf-8") as f:
+        linhas = list(csv.DictReader(f))
+    if linhas and not {"duplicado", "sobrevivente"} <= set(linhas[0]):
+        raise ValueError(f"{caminho}: o CSV precisa das colunas duplicado e sobrevivente")
+    return [{"duplicado": _uuid(lin["duplicado"]), "sobrevivente": _uuid(lin["sobrevivente"])}
+            for lin in linhas]
+
+
+def selecionar_revisados(pares, revisados):
+    """Cruza o CSV revisado com o pareamento recalculado AGORA. So passa o par que ainda
+    existe igual (mesmo duplicado -> mesmo sobrevivente); o resto volta como recusado."""
+    atuais = {p["duplicado"]: p for p in pares}
+    aplicar, recusados, vistos = [], [], set()
+    for rev in revisados:
+        if rev["duplicado"] in vistos:
+            continue
+        vistos.add(rev["duplicado"])
+        atual = atuais.get(rev["duplicado"])
+        if atual and atual["sobrevivente"] == rev["sobrevivente"]:
+            aplicar.append(atual)
+            continue
+        hoje = (f"hoje pareia com {atual['sobrevivente']}" if atual
+                else "hoje nao e par (ambiguo, orfao, excluido ou ja mesclado)")
+        recusados.append({**rev, "motivo": "", "resultado": "recusado",
+                          "erro": f"par revisado nao bate mais com o pareamento atual: {hoje}"})
+    return aplicar, recusados
+
+
+def executar(db, saida, aplicar=False, limite=None, pares_csv=None):
+    if aplicar and not pares_csv:
+        raise SystemExit("--aplicar exige --pares <csv revisado> (o pares.csv do dry-run,"
+                         " so com as linhas aprovadas)")
+    revisados = ler_pares_revisados(pares_csv) if aplicar else []
     saida = Path(saida)
     saida.mkdir(parents=True, exist_ok=True)
 
@@ -438,7 +475,9 @@ def executar(db, saida, aplicar=False, limite=None):
         if len(db.linhas(Q_COLUNAS_P0)) != 3:
             raise SystemExit("lead_events sem occurred_at/source/dedupe_key: aplique "
                              "supabase/migrations/20261006_call_semanal_base.sql antes do --aplicar")
-        for par in pares[:limite] if limite else pares:
+        a_aplicar, recusados = selecionar_revisados(pares, revisados)
+        aplicados.extend(recusados)
+        for par in a_aplicar[:limite] if limite else a_aplicar:
             try:
                 db.executar(sql_mesclar_par(par["duplicado"], par["sobrevivente"], tabelas,
                                             par["motivo"]))
@@ -456,6 +495,7 @@ def executar(db, saida, aplicar=False, limite=None):
         "vendas_do_duplicado_movidas": sum(1 for v in vendas if v["lead_id"] in duplicados),
         "aplicados_ok": sum(1 for a in aplicados if a["resultado"] == "ok"),
         "aplicados_erro": sum(1 for a in aplicados if a["resultado"] == "erro"),
+        "aplicados_recusados": sum(1 for a in aplicados if a["resultado"] == "recusado"),
         "modo": "aplicar" if aplicar else "dry-run",
     }
     return {"contagens": contagens, "gemeas": gemeas, "aplicados": aplicados, **r}
@@ -467,13 +507,20 @@ def main(argv=None):
                     help="comando psql completo (ou env MESCLAR_PSQL)")
     ap.add_argument("--saida", default=None, help="pasta dos CSVs (default ./mesclagem-<data>)")
     ap.add_argument("--aplicar", action="store_true",
-                    help="EXECUTA a mesclagem (uma transacao por par). Sem isto, so le.")
+                    help="EXECUTA a mesclagem (uma transacao por par). Sem isto, so le."
+                         " Exige --pares.")
+    ap.add_argument("--pares", default=None,
+                    help="CSV revisado (formato do pares.csv do dry-run): o --aplicar aplica"
+                         " SO estes pares, recalculados — o que nao bate mais e recusado")
     ap.add_argument("--limite", type=int, default=None, help="aplica so os N primeiros pares")
     args = ap.parse_args(argv)
     if not args.psql:
         ap.error("informe --psql ou a env MESCLAR_PSQL")
+    if args.aplicar and not args.pares:
+        ap.error("--aplicar exige --pares <csv revisado>")
     saida = args.saida or f"mesclagem-{datetime.now():%Y%m%d-%H%M%S}"
-    resultado = executar(Psql(args.psql), saida, aplicar=args.aplicar, limite=args.limite)
+    resultado = executar(Psql(args.psql), saida, aplicar=args.aplicar, limite=args.limite,
+                         pares_csv=args.pares)
     print(json.dumps(resultado["contagens"], ensure_ascii=False))
     print(f"arquivos em {Path(saida).resolve()}", file=sys.stderr)
     return 0

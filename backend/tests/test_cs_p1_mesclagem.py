@@ -208,3 +208,106 @@ def test_limite_por_sobrevivente_nao_afeta_os_outros_pares():
                   {"id": HIAGO, "phone": "5543999565650", "name": "Hiago", "cnpj": None}])
     assert [(p["duplicado"], p["sobrevivente"]) for p in r["pares"]] == [(DUP, HIAGO)]
     assert len(r["ambiguos"]) == 3
+
+
+class BancoFalso:
+    """Responde as consultas de `executar` e guarda o SQL de escrita (um por par)."""
+
+    def __init__(self, candidatos, leads):
+        self.candidatos, self.leads, self.escritas = candidatos, leads, []
+
+    def linhas(self, sql):
+        if sql is m.Q_TABELAS:
+            return [{"table_name": "sales"}, {"table_name": "lead_bling_contacts"}]
+        if sql is m.Q_COLUNAS_P0:
+            return [{"column_name": c} for c in ("occurred_at", "source", "dedupe_key")]
+        if sql is m.Q_CANDIDATOS:
+            return self.candidatos
+        if sql.startswith("select id, phone, name, cnpj from public.leads"):
+            return self.leads
+        return []
+
+    def executar(self, sql):
+        self.escritas.append(sql)
+
+
+DUP2 = "22222222-2222-2222-2222-222222222222"
+SOB2 = "33333333-3333-3333-3333-333333333333"
+
+
+def _banco_dois_pares():
+    dup2 = _cand(id_=DUP2, telefone_e164="5511987654321")
+    return BancoFalso(
+        [_cand(telefone_e164="5543999565650"), dup2],
+        [{"id": HIAGO, "phone": "5543999565650", "name": "Hiago", "cnpj": None},
+         {"id": SOB2, "phone": "5511987654321", "name": "Outro", "cnpj": None}])
+
+
+def _pares_csv(caminho, linhas):
+    import csv
+    with open(caminho, "w", newline="", encoding="utf-8") as f:
+        w = csv.DictWriter(f, fieldnames=["duplicado", "duplicado_nome", "duplicado_phone",
+                                          "sobrevivente", "sobrevivente_nome",
+                                          "sobrevivente_phone", "motivo"])
+        w.writeheader()
+        for dup, sob in linhas:
+            w.writerow({"duplicado": dup, "sobrevivente": sob, "motivo": "revisado"})
+    return caminho
+
+
+def _aplicados(db):
+    return [sql.split(f"delete from public.leads where id = '")[1][:36] for sql in db.escritas]
+
+
+def test_aplicar_sem_csv_revisado_aborta(tmp_path):
+    db = _banco_dois_pares()
+    with pytest.raises(SystemExit) as exc:
+        m.executar(db, tmp_path, aplicar=True)
+    assert "--pares" in str(exc.value)
+    assert db.escritas == []
+
+
+def test_aplicar_so_os_pares_do_csv_revisado(tmp_path):
+    db = _banco_dois_pares()
+    csv_ = _pares_csv(tmp_path / "revisado.csv", [(DUP2, SOB2)])
+    r = m.executar(db, tmp_path / "saida", aplicar=True, pares_csv=csv_)
+    assert _aplicados(db) == [DUP2]
+    assert r["contagens"]["aplicados_ok"] == 1 and r["contagens"]["aplicados_recusados"] == 0
+
+
+def test_par_do_csv_que_nao_bate_mais_e_recusado(tmp_path):
+    db = _banco_dois_pares()
+    # DUP2 hoje pareia com SOB2, nao com HIAGO; OUTRO nem e candidato
+    csv_ = _pares_csv(tmp_path / "revisado.csv",
+                      [(DUP, HIAGO), (DUP2, HIAGO), (OUTRO, SOB2)])
+    r = m.executar(db, tmp_path / "saida", aplicar=True, pares_csv=csv_)
+    assert _aplicados(db) == [DUP]
+    recusados = [a for a in r["aplicados"] if a["resultado"] == "recusado"]
+    assert sorted(a["duplicado"] for a in recusados) == sorted([DUP2, OUTRO])
+    assert all("nao bate" in a["erro"] for a in recusados)
+    assert r["contagens"]["aplicados_recusados"] == 2
+    assert (tmp_path / "saida" / "aplicados.csv").read_text(encoding="utf-8").count("recusado") == 2
+
+
+def test_par_do_csv_que_virou_ambiguo_e_recusado(tmp_path):
+    db = BancoFalso(_dups_com_o_mesmo_celular(3),
+                    [{"id": RAFAEL, "phone": "5534988861441", "name": "Rafael", "cnpj": None}])
+    csv_ = _pares_csv(tmp_path / "revisado.csv",
+                      [("00000000-0000-0000-0000-000000000001", RAFAEL)])
+    r = m.executar(db, tmp_path / "saida", aplicar=True, pares_csv=csv_)
+    assert db.escritas == []
+    assert r["contagens"]["aplicados_recusados"] == 1
+
+
+def test_csv_revisado_com_id_invalido_aborta_antes_de_escrever(tmp_path):
+    db = _banco_dois_pares()
+    csv_ = _pares_csv(tmp_path / "revisado.csv", [(DUP2, SOB2), ("x'; drop", HIAGO)])
+    with pytest.raises(ValueError):
+        m.executar(db, tmp_path / "saida", aplicar=True, pares_csv=csv_)
+    assert db.escritas == []
+
+
+def test_main_aplicar_exige_pares(capsys):
+    with pytest.raises(SystemExit):
+        m.main(["--psql", "psql", "--aplicar"])
+    assert "--pares" in capsys.readouterr().err
