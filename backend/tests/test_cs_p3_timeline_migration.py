@@ -98,3 +98,26 @@ def test_so_meta_ad_id_enriquece_a_entrada_do_mesmo_ctwa_clid():
     assert "e.metadata->>'ctwa_clid' = new.ctwa_clid" in corpo
     trecho = corpo.split("so meta_ad_id mudou")[1].split("return new;")[0]
     assert "insert into" not in trecho
+
+
+FUNCOES_TRIGGER = re.findall(r"function public\.(\w+)\(\)\s+returns trigger", SQL)
+
+
+def test_funcoes_de_trigger_rodam_como_dono_e_nao_sao_rpc():
+    """Revisão: lead_events tem RLS sem policy. Rodando como quem grava (authenticated, ex.:
+    components/quick-add-lead.tsx), o insert no lead_events falhava e virava WARNING em
+    silêncio. SECURITY DEFINER com search_path fixo; EXECUTE fora de anon/authenticated."""
+    assert set(TRIGGERS) <= set(FUNCOES_TRIGGER)
+    for fn in FUNCOES_TRIGGER:
+        assert re.search(
+            rf"function public\.{fn}\(\)\s+returns trigger language plpgsql "
+            r"security definer set search_path = public, pg_temp as \$\$",
+            SQL,
+        ), fn
+        assert f"revoke execute on function public.{fn}() from public, anon, authenticated;" in SQL, fn
+
+
+def test_migracao_numa_transacao_so():
+    codigo = [ln for ln in SQL.splitlines() if ln.strip() and not ln.lstrip().startswith("--")]
+    assert codigo[0] == "begin;"
+    assert codigo[-1] == "commit;"

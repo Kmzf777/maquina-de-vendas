@@ -408,6 +408,107 @@ def test_trigger_com_erro_nao_derruba_a_escrita():
         assert f"{fn}:" in r.stderr, fn  # o erro vira WARNING, não exceção
 
 
+
+# Revisão (item 1): quem grava no CRM é muitas vezes `authenticated` (ex.:
+# components/quick-add-lead.tsx). Em produção ele tem os grants da ACL padrão em lead_events,
+# mas a tabela tem RLS SEM policy: rodando como quem grava, o insert do trigger viola o RLS e
+# vira WARNING em silêncio. E uma role sem grant algum em lead_events (como no teste da P0)
+# leva 'permission denied'. As duas têm que gerar os eventos.
+_GRAVA_TUDO = """
+insert into public.leads (id, phone, ctwa_clid) values ('__L__', '__FONE__', 'clid-sp');
+update public.leads set meta_ad_id = 'ad-sp' where id = '__L__';
+insert into public.deals (id, lead_id, title, pipeline_id, stage_id) values
+  ('__D__', '__L__', 'Card', 'acacacac-0000-0000-0000-000000000001', 'acacacac-0000-0000-0000-0000000000a1');
+update public.deals set stage_id = 'acacacac-0000-0000-0000-0000000000a2' where id = '__D__';
+insert into public.sales (id, lead_id, value, product, origin) values ('__S__', '__L__', 60, 'Kit', 'crm');
+insert into public.sale_items (sale_id, descricao, quantidade, valor_unitario, total)
+values ('__S__', 'Kit Degustação', 1, 60, 60);
+update public.sales set status = 'cancelada' where id = '__S__';
+insert into public.broadcast_leads (id, broadcast_id, lead_id) values
+  ('__B__', 'acacacac-0000-0000-0000-0000000000b1', '__L__');
+update public.broadcast_leads set sent_at = now() where id = '__B__';
+"""
+
+_CONFERE_TUDO = """
+do $$
+declare n int;
+begin
+  select count(*) into n from public.lead_events where lead_id = '__L__';
+  assert n = 6, format('__QUEM__: esperava 6 eventos (entrada, 2 etapas, venda, cancelada, disparo), achou %s', n);
+  assert (select metadata->>'meta_ad_id' from public.lead_events
+           where lead_id = '__L__' and event_type = 'entrada') = 'ad-sp', '__QUEM__: entrada enriquecida';
+  assert (select metadata->>'kit' from public.lead_events where dedupe_key = 'venda:__S__') = 'true',
+    '__QUEM__: kit marcado';
+end $$;
+"""
+
+
+def _cenario_role(quem: str, n: int) -> str:
+    ids = {
+        "__L__": f"acacacac-0000-0000-0000-00000000{n:04d}",
+        "__FONE__": f"551190009{n:04d}",
+        "__D__": f"acacacac-0000-0000-0000-0000000d{n:04d}",
+        "__S__": f"acacacac-0000-0000-0000-0000000e{n:04d}",
+        "__B__": f"acacacac-0000-0000-0000-0000000f{n:04d}",
+        "__QUEM__": quem,
+    }
+    sql = _GRAVA_TUDO + "reset role;\n" + _CONFERE_TUDO
+    for k, v in ids.items():
+        sql = sql.replace(k, v)
+    return sql
+
+
+CENARIO_SEM_PRIVILEGIO = (
+    """
+begin;
+insert into public.meta_ad_campaigns (ad_id, campaign_id, campaign_name)
+values ('ad-sp', 'camp-sp', 'Camp SP') on conflict (ad_id) do nothing;
+insert into public.pipelines (id, name) values ('acacacac-0000-0000-0000-000000000001', 'Funil SP');
+insert into public.pipeline_stages (id, pipeline_id, label, key, order_index) values
+  ('acacacac-0000-0000-0000-0000000000a1', 'acacacac-0000-0000-0000-000000000001', 'Novo', 'novo', 0),
+  ('acacacac-0000-0000-0000-0000000000a2', 'acacacac-0000-0000-0000-000000000001', 'Quente', 'quente', 1);
+insert into public.broadcasts (id, name, template_name)
+values ('acacacac-0000-0000-0000-0000000000b1', 'Disparo SP', 'tpl');
+
+-- 1) authenticated como em produção: grants da ACL padrão + policies; lead_events com RLS sem policy
+grant select, insert, update, delete on public.leads, public.deals, public.sales, public.sale_items,
+  public.broadcast_leads, public.lead_events to authenticated;
+create policy fxp3_deals on public.deals for all to authenticated using (true) with check (true);
+create policy fxp3_itens on public.sale_items for all to authenticated using (true) with check (true);
+create policy fxp3_bl on public.broadcast_leads for all to authenticated using (true) with check (true);
+set local role authenticated;
+"""
+    + _cenario_role("authenticated", 1)
+    + """
+-- 2) role sem grant algum em lead_events/pipelines/broadcasts (como o teste da P0)
+create role fxp3_t1 bypassrls;
+grant select, insert, update on public.leads, public.deals, public.sales, public.sale_items,
+  public.broadcast_leads to fxp3_t1;
+set local role fxp3_t1;
+"""
+    + _cenario_role("sem privilegio", 2)
+    + """
+do $$
+declare f text;
+begin
+  foreach f in array array['fn_lead_events_leads_entrada', 'fn_lead_events_deals_etapa',
+      'fn_lead_events_sales_venda', 'fn_lead_events_sale_items_kit', 'fn_lead_events_broadcast_disparo'] loop
+    assert not has_function_privilege('anon', 'public.' || f || '()', 'execute'), f || ' executavel por anon';
+    assert not has_function_privilege('authenticated', 'public.' || f || '()', 'execute'),
+      f || ' executavel por authenticated';
+  end loop;
+end $$;
+rollback;
+"""
+)
+
+
+@_precisa_pg
+def test_role_sem_privilegio_grava_os_eventos():
+    r = _rodar(CENARIO_SEM_PRIVILEGIO)
+    assert "WARNING" not in r.stderr, r.stderr
+
+
 # ── Backfill: semente SEM triggers (o backfill é quem cria os eventos) ─────────────────
 # L1 CTWA novo: referral na criação (+ repetido 5 min depois)  → 1 entrada (referral)
 # L2 importado em 08/01, clicou em 09/10 (referral de número SEM o 9) → 1 entrada (referral)

@@ -20,6 +20,13 @@
 -- entao o backfill nao duplica o que o trigger ja gravou (e vice-versa).
 -- Nenhum trigger derruba a escrita original: corpo em begin ... exception when others then
 -- raise warning ... end.
+-- Funcoes de trigger SECURITY DEFINER com search_path fixo (padrao da P0): rodam como o dono.
+-- lead_events tem RLS sem policy e quem grava e muitas vezes `authenticated` (ex.:
+-- components/quick-add-lead.tsx) — rodando como quem grava, o insert virava WARNING em
+-- silencio. Por isso mesmo nao podem ser RPC: EXECUTE revogado de public/anon/authenticated
+-- (EXECUTE de funcao de trigger so e checado no CREATE TRIGGER; o trigger dispara assim mesmo).
+
+begin;
 
 -- ── 0. CANAL — espelho de backend/app/campaigns/traffic_report.py:derive_channel ──────
 -- As tres listas abaixo sao testadas contra as constantes do Python
@@ -143,7 +150,7 @@ $$;
 -- (meta_router._register_lead). Update de rastreio a menos de 30 min da ultima entrada
 -- FUNDE o snapshot nela em vez de criar outra.
 create or replace function public.fn_lead_events_leads_entrada()
-returns trigger language plpgsql as $$
+returns trigger language plpgsql security definer set search_path = public, pg_temp as $$
 declare
   v_meta jsonb;
   v_ultimo uuid;
@@ -227,6 +234,8 @@ begin
   return new;
 end $$;
 
+revoke execute on function public.fn_lead_events_leads_entrada() from public, anon, authenticated;
+
 drop trigger if exists trg_lead_events_leads_entrada on public.leads;
 create trigger trg_lead_events_leads_entrada
   after insert or update of ctwa_clid, gclid, fbclid, meta_ad_id, utm_source, utm_campaign
@@ -237,7 +246,7 @@ create trigger trg_lead_events_leads_entrada
 -- O BEFORE trigger update_deal_entered_stage_at ja carimbou entered_stage_at = now() na
 -- mudanca: a chave usa esse instante, e o backfill acha a mesma para a etapa atual.
 create or replace function public.fn_lead_events_deals_etapa()
-returns trigger language plpgsql as $$
+returns trigger language plpgsql security definer set search_path = public, pg_temp as $$
 declare
   v_de uuid;
   v_meta jsonb;
@@ -276,6 +285,8 @@ begin
   return new;
 end $$;
 
+revoke execute on function public.fn_lead_events_deals_etapa() from public, anon, authenticated;
+
 drop trigger if exists trg_lead_events_deals_etapa on public.deals;
 create trigger trg_lead_events_deals_etapa
   after insert or update of stage_id
@@ -284,7 +295,7 @@ create trigger trg_lead_events_deals_etapa
 
 -- ── 4. VENDA / VENDA_CANCELADA (sales) ─────────────────────────────────────────────────
 create or replace function public.fn_lead_events_sales_venda()
-returns trigger language plpgsql as $$
+returns trigger language plpgsql security definer set search_path = public, pg_temp as $$
 declare
   v_meta jsonb;
   v_source text;
@@ -323,6 +334,8 @@ begin
   return new;
 end $$;
 
+revoke execute on function public.fn_lead_events_sales_venda() from public, anon, authenticated;
+
 drop trigger if exists trg_lead_events_sales_venda on public.sales;
 create trigger trg_lead_events_sales_venda
   after insert or update of status
@@ -332,7 +345,7 @@ create trigger trg_lead_events_sales_venda
 -- Os itens chegam depois da venda (orders.py grava sales e depois sale_items; no update do
 -- Bling apaga e regrava). Recalcula metadata.kit dos eventos da venda.
 create or replace function public.fn_lead_events_sale_items_kit()
-returns trigger language plpgsql as $$
+returns trigger language plpgsql security definer set search_path = public, pg_temp as $$
 declare
   v_sale uuid;
   v_kit boolean;
@@ -355,6 +368,8 @@ begin
   return null;
 end $$;
 
+revoke execute on function public.fn_lead_events_sale_items_kit() from public, anon, authenticated;
+
 drop trigger if exists trg_lead_events_sale_items_kit on public.sale_items;
 create trigger trg_lead_events_sale_items_kit
   after insert or delete or update of descricao
@@ -363,7 +378,7 @@ create trigger trg_lead_events_sale_items_kit
 
 -- ── 5. DISPARO (broadcast_leads) ───────────────────────────────────────────────────────
 create or replace function public.fn_lead_events_broadcast_disparo()
-returns trigger language plpgsql as $$
+returns trigger language plpgsql security definer set search_path = public, pg_temp as $$
 declare
   v_meta jsonb;
 begin
@@ -387,8 +402,12 @@ begin
   return new;
 end $$;
 
+revoke execute on function public.fn_lead_events_broadcast_disparo() from public, anon, authenticated;
+
 drop trigger if exists trg_lead_events_broadcast_disparo on public.broadcast_leads;
 create trigger trg_lead_events_broadcast_disparo
   after insert or update of sent_at
   on public.broadcast_leads
   for each row execute function public.fn_lead_events_broadcast_disparo();
+
+commit;
