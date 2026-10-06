@@ -419,6 +419,30 @@ def test_rotas_novas_exigem_admin(banco_attr):
     assert cliente.get("/api/traffic/campanhas").status_code == 401
 
 
+def test_rotas_novas_recusam_vendedor_com_jwt_valido(banco_attr, monkeypatch):
+    """Token assinado de verdade (passa a validação), mas o papel não é admin → 403."""
+    import time as _t
+
+    import jwt as pyjwt
+
+    from app.config import settings
+
+    segredo = "segredo-de-teste-com-32-caracteres!!"
+    monkeypatch.setattr(settings, "supabase_jwt_secret", segredo)
+    token = pyjwt.encode({"aud": "authenticated", "exp": int(_t.time()) + 3600,
+                          "sub": "00000000-0000-4000-8000-000000000002",
+                          "email": "vendedor@cafecanastra.com",
+                          "app_metadata": {"role": "vendedor"}, "role": "authenticated"},
+                         segredo, algorithm="HS256")
+    cab = {"Authorization": f"Bearer {token}"}
+    cliente = _app(admin=False)
+    r = cliente.patch(f"/api/traffic/leads/{LEAD}/campanha", json={"remover": True}, headers=cab)
+    assert r.status_code == 403
+    assert cliente.get("/api/traffic/campanhas", headers=cab).status_code == 403
+    assert banco_attr.tabelas["lead_events"] == []
+    assert banco_attr.tabelas["leads"][0].get("campanha_manual_por") is None
+
+
 def test_campanhas_com_gasto_nos_ultimos_120_dias(banco_attr):
     hoje = datetime.now(tr._TZ).date()
     d = lambda n: (hoje - timedelta(days=n)).isoformat()  # noqa: E731
