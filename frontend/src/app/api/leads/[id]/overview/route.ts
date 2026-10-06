@@ -17,6 +17,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { getServiceSupabase } from "@/lib/supabase/api";
 import { getCurrentUser } from "@/lib/supabase/pipeline-access";
 import type { LeadOverview } from "@/lib/lead-overview";
+import { FILTRO_TIPOS_DA_LINHA_DO_TEMPO } from "@/lib/lead-event-types";
 import {
   mapBroadcast,
   mapCadence,
@@ -133,6 +134,7 @@ export async function GET(
             .from("lead_events")
             .select("id, event_type, old_value, new_value, created_at")
             .eq("lead_id", id)
+            .not("event_type", "in", FILTRO_TIPOS_DA_LINHA_DO_TEMPO)
             .order("created_at", { ascending: false })
             .limit(MAX_EVENTS),
         ).map(mapEvent),

@@ -1,5 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { getServiceSupabase } from "@/lib/supabase/api";
+import { FILTRO_TIPOS_DA_LINHA_DO_TEMPO } from "@/lib/lead-event-types";
 
 export async function GET(
   _request: NextRequest,
@@ -12,6 +13,7 @@ export async function GET(
     .from("lead_events")
     .select("*")
     .eq("lead_id", id)
+    .not("event_type", "in", FILTRO_TIPOS_DA_LINHA_DO_TEMPO)
     .order("created_at", { ascending: false });
 
   if (error) {
