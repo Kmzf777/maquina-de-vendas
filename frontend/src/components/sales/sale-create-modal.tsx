@@ -3,12 +3,6 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import type { TeamUser, Sale } from "@/lib/types";
 import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
-import {
   Select,
   SelectContent,
   SelectItem,
@@ -17,9 +11,7 @@ import {
 } from "@/components/ui/select";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
-import { Popover, PopoverTrigger, PopoverContent } from "@/components/ui/popover";
-import { leadMatchesSearch } from "@/lib/search";
-import { ChevronDownIcon, CheckIcon } from "lucide-react";
+import { CheckIcon } from "lucide-react";
 import { BlingOrderForm } from "@/components/sales/bling-order-form";
 import {
   BlingContactResolver,
@@ -34,6 +26,15 @@ import { blingGate } from "@/lib/bling-gate";
 import { productSummary } from "@/lib/bling";
 import { divergenceFrom, type Divergence } from "@/lib/bling-divergence";
 import { CONTA_PADRAO } from "@/lib/bling-accounts";
+import { JaEraClienteToggle } from "@/components/sales/ja-era-cliente-toggle";
+import {
+  defaultsDoContato,
+  precisaPerguntarJaEraCliente,
+  salvarJaEraCliente,
+  useLeadCliente,
+} from "@/components/sales/lead-cliente";
+import { PainelLateral } from "@/components/sales/painel-lateral";
+import { LeadPicker, type LeadEscolhido } from "@/components/sales/lead-picker";
 
 /**
  * `bling_account` ainda nao esta no tipo `Sale` compartilhado — adiciona-lo
@@ -77,12 +78,6 @@ interface LeadDeal {
 interface Pipeline {
   id: string;
   name: string;
-}
-
-interface LeadOption {
-  id: string;
-  name: string | null;
-  phone: string;
 }
 
 interface SaleCreateModalProps {
@@ -209,11 +204,11 @@ export function SaleCreateModal({
   const [newDealPipeline, setNewDealPipeline] = useState("");
   const [notes, setNotes] = useState(editingSale?.notes ?? "");
 
-  const [leadPickerOpen, setLeadPickerOpen] = useState(false);
-  const [leadQuery, setLeadQuery] = useState("");
+  // Lead escolhido no seletor (modo `pickLead`) — o objeto inteiro, para o
+  // rótulo do gatilho e como reserva do pré-preenchimento.
+  const [leadEscolhido, setLeadEscolhido] = useState<LeadEscolhido | null>(null);
 
   const [users, setUsers] = useState<TeamUser[]>([]);
-  const [leads, setLeads] = useState<LeadOption[]>([]);
   const [deals, setDeals] = useState<LeadDeal[]>([]);
   const [pipelines, setPipelines] = useState<Pipeline[]>([]);
   const [saving, setSaving] = useState(false);
@@ -240,27 +235,57 @@ export function SaleCreateModal({
     total: number;
   } | null>(null);
 
+  // ── lead e "Já é cliente?" ───────────────────────────────────────────────
+  // Cadastro do lead POR ID — vale para qualquer porta de entrada (conversa,
+  // card, painel de vendas). Antes vinha da lista do `pickLead`, vazia quando o
+  // modal era aberto pela conversa, e o vendedor redigitava tudo no cadastro
+  // do Bling (call de 01/10).
+  const resolvedLeadId = selectedLeadId || leadId || "";
+  const { lead: leadCliente, atualizar: atualizarLeadCliente } = useLeadCliente(
+    isEditing ? null : resolvedLeadId,
+  );
+  // Obrigatório só quando o banco não sabe (decisão de 06/10: automático
+  // quando há evidência, o vendedor responde só na dúvida). Edição não pergunta.
+  const perguntarCliente = !isEditing && precisaPerguntarJaEraCliente(leadCliente);
+  const [respostaCliente, setRespostaCliente] = useState<boolean | null>(null);
+  const faltaRespostaCliente = perguntarCliente && respostaCliente === null;
+
+  /**
+   * Grava a resposta no lead ANTES da venda: o trigger do banco só marca
+   * "auto" em lead ainda nulo, então a resposta do vendedor precisa chegar
+   * primeiro para não ser atropelada. `false` = falhou, não registrar a venda.
+   */
+  async function gravarRespostaCliente(): Promise<boolean> {
+    if (!perguntarCliente) return true;
+    if (respostaCliente === null) {
+      setError("Responda “Já é cliente?” para registrar a venda");
+      return false;
+    }
+    setSaving(true);
+    setError(null);
+    try {
+      await salvarJaEraCliente(resolvedLeadId, respostaCliente, currentUserEmail);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Erro ao salvar “Já é cliente?”");
+      setSaving(false);
+      return false;
+    }
+    atualizarLeadCliente({ ja_era_cliente: respostaCliente, ja_era_cliente_fonte: "vendedor" });
+    return true;
+  }
+
   // ── initial data fetches ─────────────────────────────────────────────────
   useEffect(() => {
     fetch("/api/users")
       .then((r) => r.json())
       .then((d) => setUsers(Array.isArray(d) ? d : []));
 
-    if (pickLead && !isEditing) {
-      fetch("/api/leads")
-        .then((r) => r.json())
-        .then((d) => {
-          const arr = Array.isArray(d) ? d : (d?.data ?? []);
-          setLeads(arr);
-        });
-    }
-
     if (!isEditing && !lockedDealId) {
       fetch("/api/pipelines")
         .then((r) => r.json())
         .then((d) => setPipelines(Array.isArray(d) ? d : []));
     }
-  }, [pickLead, isEditing, lockedDealId]);
+  }, [isEditing, lockedDealId]);
 
   // ── fetch deals when selectedLeadId changes ──────────────────────────────
   useEffect(() => {
@@ -570,6 +595,7 @@ export function SaleCreateModal({
         );
         return;
       }
+      if (!(await gravarRespostaCliente())) return;
 
       // `/api/bling/orders` recebe `deal_id` pronto — o deal inline é criado
       // antes, e o id fica guardado para a retentativa não criar um segundo.
@@ -615,6 +641,8 @@ export function SaleCreateModal({
       return;
     }
 
+    if (!(await gravarRespostaCliente())) return;
+
     setSaving(true);
     setError(null);
 
@@ -657,10 +685,6 @@ export function SaleCreateModal({
   }
 
   // ── helpers ───────────────────────────────────────────────────────────────
-  const resolvedLeadId = selectedLeadId || leadId || "";
-  // Só existe no modo `pickLead` (é a lista carregada para o combobox); serve
-  // para pré-preencher o cadastro do contato e poupar digitação do vendedor.
-  const leadSelecionado = leads.find((l) => l.id === resolvedLeadId);
 
   /** Fecha avisando o chamador quando o pedido já foi lançado (recarrega a lista). */
   function fecharModal() {
@@ -669,46 +693,14 @@ export function SaleCreateModal({
   }
 
   return (
-    <Dialog open onOpenChange={(open) => { if (!open) fecharModal(); }}>
-      {/* Coluna flex com teto de altura: o corpo é o único trecho que rola, e
-          header/ações ficam presos nas bordas. Sem o teto, o modal cresce com
-          os campos que aparecem (novo deal, itens do Bling, avisos) e, por ser
-          centralizado com `-translate-y-1/2`, sobra para fora da viewport em
-          cima e embaixo — sem barra de rolagem para alcançar o que sumiu.
-          `dvh` em vez de `vh` porque no mobile a barra do navegador entra na
-          conta de `vh` e o modal continuaria estourando. */}
-      <DialogContent
-        showCloseButton={false}
-        className={`bg-white border border-[#dedbd6] rounded-[8px] p-0 w-full shadow-lg gap-0 flex flex-col max-h-[88dvh] ${
-          blingLayout ? "max-w-2xl" : "max-w-md"
-        }`}
-      >
-        {/* Header */}
-        <DialogHeader className="shrink-0 flex-row items-center justify-between px-5 py-4 border-b border-[#dedbd6] mb-0 gap-0">
-          <DialogTitle className="text-[15px] font-medium text-[#111111]">
-            {isEditing ? "Editar Venda" : "Registrar Venda"}
-          </DialogTitle>
-          <button
-            type="button"
-            onClick={fecharModal}
-            aria-label="Fechar"
-            className="w-7 h-7 flex items-center justify-center rounded-[4px] text-[#7b7b78] hover:bg-[#dedbd6]/60 transition-colors"
-          >
-            <svg
-              className="w-4 h-4"
-              fill="none"
-              stroke="currentColor"
-              viewBox="0 0 24 24"
-              strokeWidth={2}
-            >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                d="M6 18L18 6M6 6l12 12"
-              />
-            </svg>
-          </button>
-        </DialogHeader>
+    // Painel lateral sem overlay (call de 01/10): o `Dialog` borrava e
+    // bloqueava a conversa, e o vendedor fechava o pedido para copiar um dado
+    // do chat. O corpo é o único trecho que rola; header e ações ficam presos.
+    <PainelLateral
+      titulo={isEditing ? "Editar Venda" : "Registrar Venda"}
+      largura={blingLayout ? "lg" : "md"}
+      onFechar={fecharModal}
+    >
 
         {/* Form — fica montado (só escondido) enquanto o resolvedor de contato
             aparece, senão o vendedor perderia o pedido inteiro que já digitou. */}
@@ -717,73 +709,44 @@ export function SaleCreateModal({
           className={
             resolution || sucesso || pendingBlingUpdate
               ? "hidden"
-              : "flex min-h-0 flex-col"
+              : "flex min-h-0 flex-1 flex-col"
           }
         >
           {/* Corpo rolável. `min-h-0` é obrigatório: item de flex nasce com
               `min-height: auto`, que se recusa a encolher abaixo do conteúdo e
               anularia o `overflow-y-auto` — o teto do modal vazaria de novo. */}
-          <div className="min-h-0 overflow-y-auto p-5 space-y-4">
+          <div className="min-h-0 flex-1 overflow-y-auto p-5 space-y-4">
 
-            {/* Lead selector — searchable combobox, only in pickLead mode and not editing */}
+            {/* Seletor de lead — busca no servidor (só no modo pickLead, criando) */}
             {pickLead && !isEditing && (
               <div>
                 <label className={fieldLabel}>Lead *</label>
-                <Popover open={leadPickerOpen} onOpenChange={setLeadPickerOpen}>
-                  <PopoverTrigger asChild>
-                    <button
-                      type="button"
-                      className="flex w-full h-[37px] items-center justify-between bg-white border border-[#dedbd6] rounded-[4px] px-3 text-[14px] text-[#111111] focus:border-[#111111] focus:outline-none"
-                    >
-                      <span className={resolvedLeadId ? "" : "text-[#8a8a8a]"}>
-                        {resolvedLeadId
-                          ? (leads.find((l) => l.id === resolvedLeadId)?.name ??
-                             leads.find((l) => l.id === resolvedLeadId)?.phone ??
-                             "Lead selecionado")
-                          : "Selecione o lead"}
-                      </span>
-                      <ChevronDownIcon className="size-4 text-[#8a8a8a]" />
-                    </button>
-                  </PopoverTrigger>
-                  <PopoverContent className="p-0" portal={false}>
-                    <div className="p-2 border-b border-[#eee]">
-                      <Input
-                        autoFocus
-                        value={leadQuery}
-                        onChange={(e) => setLeadQuery(e.target.value)}
-                        placeholder="Buscar lead por nome ou telefone..."
-                        className="h-8 text-[14px]"
-                      />
-                    </div>
-                    <div className="max-h-64 overflow-y-auto p-1">
-                      {leads.filter((l) => leadMatchesSearch(leadQuery, l)).length === 0 && (
-                        <div className="px-2 py-3 text-[13px] text-[#8a8a8a]">Nenhum lead encontrado.</div>
-                      )}
-                      {leads
-                        .filter((l) => leadMatchesSearch(leadQuery, l))
-                        .slice(0, 100)
-                        .map((l) => (
-                          <button
-                            key={l.id}
-                            type="button"
-                            onClick={() => {
-                              setSelectedLeadId(l.id);
-                              setDealId("");
-                              setCreatingDeal(false);
-                              setNewDealTitle("");
-                              setNewDealPipeline("");
-                              setLeadPickerOpen(false);
-                              setLeadQuery("");
-                            }}
-                            className="flex w-full items-center justify-between gap-2 rounded-md px-2 py-1.5 text-left text-[14px] hover:bg-[#f4f2ee]"
-                          >
-                            <span className="truncate">{l.name ?? l.phone}</span>
-                            {resolvedLeadId === l.id && <CheckIcon className="size-4 shrink-0" />}
-                          </button>
-                        ))}
-                    </div>
-                  </PopoverContent>
-                </Popover>
+                <LeadPicker
+                  selecionado={leadEscolhido}
+                  onEscolher={(l) => {
+                    setSelectedLeadId(l.id);
+                    setLeadEscolhido(l);
+                    setRespostaCliente(null);
+                    setDealId("");
+                    setCreatingDeal(false);
+                    setNewDealTitle("");
+                    setNewDealPipeline("");
+                  }}
+                />
+              </div>
+            )}
+
+            {perguntarCliente && (
+              <div className="p-3 bg-[#faf9f6] border border-[#dedbd6] rounded-[4px] space-y-1">
+                <JaEraClienteToggle
+                  obrigatorio
+                  valor={respostaCliente}
+                  onEscolher={setRespostaCliente}
+                />
+                <p className="text-[11px] text-[#7b7b78]">
+                  O sistema não sabe se este lead já comprava antes de chegar. A
+                  resposta fica gravada no lead.
+                </p>
               </div>
             )}
 
@@ -1025,6 +988,12 @@ export function SaleCreateModal({
               </p>
             )}
 
+            {faltaRespostaCliente && !error && (
+              <p className="text-[11px] text-[#7b7b78]">
+                Responda “Já é cliente?” para registrar a venda.
+              </p>
+            )}
+
             {gate.message && (
               <p className="text-[12px] text-red-600">{gate.message}</p>
             )}
@@ -1040,7 +1009,12 @@ export function SaleCreateModal({
               </button>
               <button
                 type="submit"
-                disabled={saving || !gate.canSubmit || (blingMode && !orderResult?.valid)}
+                disabled={
+                  saving ||
+                  !gate.canSubmit ||
+                  (blingMode && !orderResult?.valid) ||
+                  faltaRespostaCliente
+                }
                 className="flex-1 py-2 text-[13px] font-medium text-white rounded-[4px] transition-colors bg-[#1f9d57] hover:bg-[#1b8a4c] disabled:bg-[#7b7b78]"
               >
                 {saving
@@ -1066,10 +1040,7 @@ export function SaleCreateModal({
               status={resolution.status}
               reason={resolution.reason}
               candidates={resolution.candidates}
-              defaults={{
-                nome: leadSelecionado?.name ?? "",
-                telefone: leadSelecionado?.phone ?? "",
-              }}
+              defaults={defaultsDoContato(leadCliente ?? leadEscolhido)}
               // Fallback para CONTA_PADRAO so e alcancado com zero contas
               // conectadas (`conta` nunca resolveu) — mesmo comportamento de
               // antes desta funcionalidade existir, nunca pior.
@@ -1129,7 +1100,6 @@ export function SaleCreateModal({
             </div>
           </div>
         )}
-      </DialogContent>
-    </Dialog>
+    </PainelLateral>
   );
 }

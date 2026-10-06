@@ -8,20 +8,25 @@ import { useLeadSales } from "@/hooks/use-lead-sales";
 import { useLeadQuotes } from "@/hooks/use-lead-quotes";
 import { useCurrentUserEmail } from "@/hooks/use-current-user";
 import { WhatsappWindowIndicator } from "@/components/conversas/whatsapp-window-indicator";
+import { LeadCabecalho } from "@/components/sales/lead-cabecalho";
 import { CrmPerfilTab } from "./tabs/crm-perfil-tab";
 import { CrmNotasTab } from "./tabs/crm-notas-tab";
 import { CrmCampanhasTab } from "./tabs/crm-campanhas-tab";
 import { CrmMetricasTab } from "./tabs/crm-metricas-tab";
+// Componente do P3 (linha do tempo do lead) — criado em paralelo no pacote P3.
+import { LeadTimeline } from "@/components/leads/lead-timeline";
 import type { Lead, Tag, Conversation, Pipeline, Sale } from "@/lib/types";
 import type { LeadDeal } from "@/lib/deal-rows";
 
-type TabKey = "perfil" | "notas" | "campanhas" | "metricas";
+type TabKey = "perfil" | "notas" | "campanhas" | "metricas" | "timeline";
 
-const TABS: { key: TabKey; label: string }[] = [
+const TABS: { key: TabKey; label: string; title?: string }[] = [
   { key: "perfil", label: "Perfil" },
   { key: "notas", label: "Notas" },
   { key: "campanhas", label: "Campanhas" },
   { key: "metricas", label: "Métricas" },
+  // Rótulo curto: cinco abas dividem 320 px. O título completo vai no hover.
+  { key: "timeline", label: "Histórico", title: "Linha do tempo do lead" },
 ];
 
 interface ContactDetailProps {
@@ -211,11 +216,22 @@ export function ContactDetail({
         </div>
       </div>
 
+      {/* Topo do lead estilo RD (call de 01/10): telefone, e-mail, CNPJ e
+          "Já é cliente?" sem precisar abrir a aba Perfil. */}
+      {lead && (
+        <LeadCabecalho
+          lead={lead}
+          currentUserEmail={currentUserEmail}
+          onSaveField={updateLeadField}
+        />
+      )}
+
       <div className="flex border-b border-[#dedbd6] flex-shrink-0">
         {TABS.map((tab) => (
           <button
             key={tab.key}
             onClick={() => setActiveTab(tab.key)}
+            title={tab.title}
             className={`flex-1 py-2 text-[12px] font-medium border-b-2 transition-colors ${
               activeTab === tab.key
                 ? "text-[#111111] border-[#111111]"
@@ -260,6 +276,9 @@ export function ContactDetail({
             )}
             {activeTab === "metricas" && (
               <CrmMetricasTab lead={lead} />
+            )}
+            {activeTab === "timeline" && (
+              <LeadTimeline leadId={lead.id} />
             )}
           </>
         ) : (
