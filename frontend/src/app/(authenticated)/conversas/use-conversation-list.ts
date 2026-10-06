@@ -51,6 +51,11 @@ const MAX_SINGLE_FETCHES = 10;
 // Conversa buscada que não pertence à aba ativa: ignora novos UPDATEs dela por 1 min
 // (aba de segmento não sabe o estágio do lead pela linha crua do Realtime).
 export const IGNORE_OUTSIDE_TAB_MS = 60_000;
+// Conversa desconhecida cujo fetch-by-id deu 404 (canal alheio, apagada): cache
+// negativo — sem isto cada UPDATE dela refaria a busca, a cada 3s numa rajada.
+export const NOT_FOUND_IGNORE_MS = 60_000;
+
+type FetchByIdResult = { conv: Conversation | null; notFound: boolean };
 
 type SupabaseBrowserClient = ReturnType<typeof createClient>;
 
@@ -282,16 +287,22 @@ export function useConversationList({
     [injectIntoActiveList],
   );
 
-  /** Busca avulsa de uma conversa fora da lista carregada. null = sem acesso/inexistente. */
-  const fetchConversationById = useCallback(async (id: string): Promise<Conversation | null> => {
+  /** Busca avulsa de uma conversa, distinguindo 404 (sem acesso/inexistente) de falha. */
+  const fetchConversationResult = useCallback(async (id: string): Promise<FetchByIdResult> => {
     try {
       const res = await fetch(`/api/conversations/${id}`);
-      if (!res.ok) return null;
-      return (await res.json()) as Conversation;
+      if (!res.ok) return { conv: null, notFound: res.status === 404 };
+      return { conv: (await res.json()) as Conversation, notFound: false };
     } catch {
-      return null;
+      return { conv: null, notFound: false };
     }
   }, []);
+
+  /** Busca avulsa de uma conversa fora da lista carregada. null = sem acesso/inexistente. */
+  const fetchConversationById = useCallback(
+    async (id: string): Promise<Conversation | null> => (await fetchConversationResult(id)).conv,
+    [fetchConversationResult],
+  );
 
   // Seleção derivada do cache; fallback para a cópia guardada cobre o instante em
   // que a conversa sai da lista (paridade com o `updated ?? prev` antigo).
@@ -347,9 +358,10 @@ export function useConversationList({
         void invalidateAll();
         return;
       }
-      const fetched = await Promise.all(ids.map((id) => fetchConversationById(id)));
+      const fetched = await Promise.all(ids.map((id) => fetchConversationResult(id)));
       const activeKey = conversationsQueryKey(channelId, activeTabRef.current);
-      for (const conv of fetched) {
+      for (const [i, { conv, notFound }] of fetched.entries()) {
+        if (notFound) ignoredUntil.set(ids[i], Date.now() + NOT_FOUND_IGNORE_MS);
         if (!conv || isBlockedConversationRow(conv)) continue;
         const [fresh] = applyOverrides([conv]);
         for (const query of queryClient.getQueryCache().findAll({ queryKey: ["conversations"] })) {
@@ -489,7 +501,7 @@ export function useConversationList({
       flushUnknown.cancel();
       supabase.removeChannel(realtimeChannel);
     };
-  }, [channelId, queryClient, supabase, patchList, updatePages, applyOverrides, fetchConversationById]);
+  }, [channelId, queryClient, supabase, patchList, updatePages, applyOverrides, fetchConversationResult]);
 
   return {
     conversations,

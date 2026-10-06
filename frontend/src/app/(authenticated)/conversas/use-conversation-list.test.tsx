@@ -471,3 +471,26 @@ describe("useConversationList — badge durante fluxo contínuo", () => {
     expect(server.count(isCounts)).toBeLessThanOrEqual(duringBurst + 1); // trailing único
   });
 });
+
+describe("useConversationList — conversa desconhecida que dá 404", () => {
+  it("does not fetch the same 404 id again for 60s", async () => {
+    server.db = [conv("a", 12), conv("b", 11)];
+    const { result } = setup();
+    await vi.waitFor(() => expect(result.current.conversations).toHaveLength(2));
+    const ghost = uid("f"); // canal alheio / apagada: a rota responde 404
+    const isGhost = (url: string) => url === `/api/conversations/${ghost}`;
+
+    act(() => updateEvent({ id: ghost, last_msg_at: "2026-10-06T13:00:00+00:00", unread_count: 1 }));
+    await tick(REFETCH_WAIT);
+    await vi.waitFor(() => expect(server.count(isGhost)).toBe(1));
+
+    act(() => updateEvent({ id: ghost, last_msg_at: "2026-10-06T13:01:00+00:00", unread_count: 2 }));
+    await tick(REFETCH_WAIT);
+    expect(server.count(isGhost)).toBe(1);
+
+    await tick(60_000);
+    act(() => updateEvent({ id: ghost, last_msg_at: "2026-10-06T13:02:00+00:00", unread_count: 3 }));
+    await tick(REFETCH_WAIT);
+    await vi.waitFor(() => expect(server.count(isGhost)).toBe(2));
+  });
+});
