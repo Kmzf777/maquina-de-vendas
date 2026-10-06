@@ -20,7 +20,7 @@ class _Query:
     def __init__(self, banco, tabela):
         self.banco, self.tabela = banco, tabela
         self.filtros, self.cols, self.op, self.payload = [], "*", "select", None
-        self._range = self._limit = None
+        self._range = self._limit = self._ordem = None
 
     def select(self, cols="*", **_):
         self.cols = cols
@@ -51,6 +51,10 @@ class _Query:
         self._range = (a, b)
         return self
 
+    def order(self, col, desc=False):
+        self._ordem = col
+        return self
+
     def update(self, patch):
         self.op, self.payload = "update", patch
         return self
@@ -69,6 +73,8 @@ class _Query:
             linhas.append(dict(self.payload))
             return _Resp([self.payload])
         alvo = [r for r in linhas if all(f(r) for f in self.filtros)]
+        if self.op == "select":
+            self.banco.selects.append(self.cols)
         if self.op == "update":
             for r in alvo:
                 r.update(self.payload)
@@ -76,6 +82,15 @@ class _Query:
         for col in self.banco.colunas_ausentes.get(self.tabela, ()):
             if col in self.cols:
                 raise Exception(f"column {self.tabela}.{col} does not exist")
+        if self._range is not None:
+            self.banco.paginadas.append((self.tabela, self._ordem))
+        if self._ordem is not None:
+            alvo.sort(key=lambda r: str(r.get(self._ordem) or ""))
+        elif self.banco.embaralha:
+            # Postgres sem ORDER BY não promete a mesma ordem entre duas consultas.
+            self.banco.execucoes += 1
+            if self.banco.execucoes % 2 == 0:
+                alvo.reverse()
         if self._range is not None:
             alvo = alvo[self._range[0]:self._range[1] + 1]
         if self._limit is not None:
@@ -89,6 +104,10 @@ class _Banco:
         self.ausentes: set[str] = set()
         self.colunas_ausentes: dict[str, list[str]] = {}
         self.falha_insert: set[str] = set()
+        self.selects: list[str] = []  # colunas de cada select executado, em ordem
+        self.paginadas: list[tuple[str, str | None]] = []  # (tabela, order) de cada .range()
+        self.embaralha = False
+        self.execucoes = 0
 
     def table(self, nome):
         return _Query(self, nome)
@@ -98,7 +117,7 @@ class _Banco:
 def _flags_de_coluna(monkeypatch):
     """As flags de coluna são de processo: um teste que as desliga não vaza para o próximo."""
     monkeypatch.setattr(tr._MetaAdCol, "enabled", True)
-    monkeypatch.setattr(tr._P0Col, "enabled", True)
+    monkeypatch.setattr(tr._P0Col, "falhou_em", None)
 
 
 # --- 2.1 Funil cumulativo + canceladas fora ----------------------------------------------
@@ -177,6 +196,40 @@ def test_modo_venda_nao_traz_lead_so_com_venda_cancelada(monkeypatch):
     assert out["total"]["leads"] == 1 and out["total"]["receita"] == 80.0
 
 
+def test_fetch_all_pagina_com_ordem_estavel():
+    """Sem ORDER BY a paginação por .range() perde e repete linhas entre as páginas."""
+    banco = _Banco(t=[{"id": f"{i:02d}"} for i in range(5)])
+    banco.embaralha = True
+    out = tr._fetch_all(lambda: banco.table("t").select("id"), page=2)
+    assert [r["id"] for r in out] == ["00", "01", "02", "03", "04"]
+
+
+_CHAVE_UNICA = {"meta_ad_campaigns": "ad_id", "lead_primeira_origem": "lead_id"}
+
+
+def test_toda_paginacao_do_relatorio_ordena_por_chave_unica(monkeypatch):
+    banco = _banco_colunas()
+    banco.tabelas["leads"].append({"id": "l3", "ctwa_clid": "c3", "meta_ad_id": "ad3",
+                                   "created_at": "2026-09-01T12:00:00+00:00"})
+    banco.tabelas.update(
+        meta_ad_campaigns=[{"ad_id": "ad3", "campaign_id": "cm_atac"}],
+        conversations=[], pipeline_stages=[], deals=[],
+        ad_spend=[{"id": 1, "platform": "meta", "campaign_id": "cm_atac",
+                   "campaign_name": "Atacado WA", "cost": 10.0,
+                   "date": datetime.now(tr._TZ).date().isoformat()}],
+    )
+    monkeypatch.setattr(tr, "get_supabase", lambda: banco)
+    monkeypatch.setattr(ta, "get_supabase", lambda: banco)
+    tr.traffic_report(period="all", mode="lead")
+    tr.traffic_report(period="all", mode="sale")
+    tr.campaign_leads("Google Ads", "black", period="all")
+    tr.campaign_leads("Meta Ads", "Atacado WA", period="all")
+    ta.campanhas_com_gasto()
+    tabelas = {t for t, _ in banco.paginadas}
+    assert {"leads", "sales", "meta_ad_campaigns", "lead_primeira_origem", "ad_spend"} <= tabelas
+    assert sorted({(t, o) for t, o in banco.paginadas if o != _CHAVE_UNICA.get(t, "id")}) == []
+
+
 # --- 2.2 Atribuição manual ---------------------------------------------------------------
 
 _META = [{"campaign_id": "cm_atac", "campaign_name": "Atacado WA", "cost": 500.0},
@@ -244,7 +297,7 @@ def test_fetch_leads_degrada_sem_colunas_do_p0():
     banco.colunas_ausentes = {"leads": ["campanha_manual_canal"]}
     out = tr._fetch_leads(banco, "lead", None, None)
     assert [l["id"] for l in out] == ["l1"]
-    assert tr._P0Col.enabled is False
+    assert tr._P0Col.ativo() is False
     assert tr._MetaAdCol.enabled is True  # o erro era só das colunas do P0
 
 
@@ -253,7 +306,70 @@ def test_fetch_leads_erro_generico_nao_desliga_p0():
     banco.ausentes = {"leads"}
     with pytest.raises(Exception):
         tr._fetch_leads(banco, "lead", None, None)
-    assert tr._P0Col.enabled is True
+    assert tr._P0Col.ativo() is True
+
+
+class _Relogio:
+    """Relógio monotônico de mentira: o teste anda o tempo à mão."""
+    def __init__(self, t=1000.0):
+        self.t = t
+
+    def __call__(self):
+        return self.t
+
+
+def _tentou_p0(banco):
+    return any("campanha_manual" in cols for cols in banco.selects)
+
+
+def test_p0_desligado_nao_tenta_de_novo_antes_de_5_minutos(monkeypatch):
+    relogio = _Relogio()
+    monkeypatch.setattr(tr._P0Col, "relogio", relogio)
+    banco = _Banco(leads=[_g(1)])
+    banco.colunas_ausentes = {"leads": ["campanha_manual_canal"]}
+    tr._fetch_leads(banco, "lead", None, None)
+    assert tr._P0Col.ativo() is False
+
+    relogio.t += 299
+    banco.selects.clear()
+    assert [l["id"] for l in tr._fetch_leads(banco, "lead", None, None)] == ["l1"]
+    assert not _tentou_p0(banco)
+    assert tr._P0Col.ativo() is False
+
+
+def test_p0_religa_depois_de_5_minutos_quando_a_migracao_chega(monkeypatch):
+    """O código sobe pelo deploy e a migração do P0 é aplicada à mão depois: o relatório não
+    pode ficar sem atribuição manual e "já era cliente" até o próximo restart."""
+    relogio = _Relogio()
+    monkeypatch.setattr(tr._P0Col, "relogio", relogio)
+    banco = _Banco(leads=[_g(1, campanha_manual_canal="meta", campanha_manual_id="cm_terc")])
+    banco.colunas_ausentes = {"leads": ["campanha_manual_canal"]}
+    tr._fetch_leads(banco, "lead", None, None)
+    assert tr._P0Col.ativo() is False
+
+    banco.colunas_ausentes = {}  # Rafael aplicou a 20261006
+    relogio.t += 300
+    banco.selects.clear()
+    [lead] = tr._fetch_leads(banco, "lead", None, None)
+    assert _tentou_p0(banco)
+    assert lead["campanha_manual_id"] == "cm_terc"
+    assert tr._P0Col.ativo() is True
+
+
+def test_p0_continua_faltando_depois_de_5_minutos_desliga_de_novo(monkeypatch):
+    relogio = _Relogio()
+    monkeypatch.setattr(tr._P0Col, "relogio", relogio)
+    banco = _Banco(leads=[_g(1)])
+    banco.colunas_ausentes = {"leads": ["campanha_manual_canal"]}
+    tr._fetch_leads(banco, "lead", None, None)
+
+    relogio.t += 301
+    banco.selects.clear()
+    assert [l["id"] for l in tr._fetch_leads(banco, "lead", None, None)] == ["l1"]
+    assert _tentou_p0(banco)
+    assert tr._P0Col.ativo() is False
+    relogio.t += 299  # o prazo recomeça da nova falha
+    assert tr._P0Col.ativo() is False
 
 
 # --- 2.3 Endpoints de atribuição ---------------------------------------------------------
@@ -351,6 +467,30 @@ def test_rotas_novas_exigem_admin(banco_attr):
     cliente = _app(admin=False)
     assert cliente.patch(f"/api/traffic/leads/{LEAD}/campanha", json={"remover": True}).status_code == 401
     assert cliente.get("/api/traffic/campanhas").status_code == 401
+
+
+def test_rotas_novas_recusam_vendedor_com_jwt_valido(banco_attr, monkeypatch):
+    """Token assinado de verdade (passa a validação), mas o papel não é admin → 403."""
+    import time as _t
+
+    import jwt as pyjwt
+
+    from app.config import settings
+
+    segredo = "segredo-de-teste-com-32-caracteres!!"
+    monkeypatch.setattr(settings, "supabase_jwt_secret", segredo)
+    token = pyjwt.encode({"aud": "authenticated", "exp": int(_t.time()) + 3600,
+                          "sub": "00000000-0000-4000-8000-000000000002",
+                          "email": "vendedor@cafecanastra.com",
+                          "app_metadata": {"role": "vendedor"}, "role": "authenticated"},
+                         segredo, algorithm="HS256")
+    cab = {"Authorization": f"Bearer {token}"}
+    cliente = _app(admin=False)
+    r = cliente.patch(f"/api/traffic/leads/{LEAD}/campanha", json={"remover": True}, headers=cab)
+    assert r.status_code == 403
+    assert cliente.get("/api/traffic/campanhas", headers=cab).status_code == 403
+    assert banco_attr.tabelas["lead_events"] == []
+    assert banco_attr.tabelas["leads"][0].get("campanha_manual_por") is None
 
 
 def test_campanhas_com_gasto_nos_ultimos_120_dias(banco_attr):

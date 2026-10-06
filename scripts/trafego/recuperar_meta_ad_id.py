@@ -12,7 +12,8 @@ Casamento, do mais forte ao mais fraco:
      não grava;
   2. fallback: mesmo telefone (com e sem o 9º dígito — o WhatsApp ainda entrega número antigo
      sem o 9) e o referral mais próximo ANTES de leads.created_at, até 24 h.
-Só referral de anúncio (source_type 'ad'). Só preenche nulos: o UPDATE leva
+Só referral de anúncio (source_type 'ad'); o que só casa com referral sem source_type sai no
+CSV como `sem_source_type` e não é gravado. Só preenche nulos: o UPDATE leva
 `and meta_ad_id is null`, então rodar de novo ou rodar depois de o lead mudar não sobrescreve.
 
 Uso — dry-run é o padrão (sessão read-only, escreve CSV, não altera nada):
@@ -103,14 +104,13 @@ def parse_ts(v):
     return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
 
 
-def casar(leads, referrals, janela=JANELA_FALLBACK) -> list:
-    """Uma linha por lead: status recuperado | ambiguo | sem_referral. Pura."""
-    por_clid = defaultdict(dict)   # ctwa_clid -> {source_id: primeiro received_at}
-    por_tel = defaultdict(list)    # chave de telefone -> [(received_at, source_id)]
+def _indexar(referrals) -> tuple:
+    """(ctwa_clid -> {source_id: primeiro received_at}, telefone -> [(received_at, source_id)])."""
+    por_clid = defaultdict(dict)
+    por_tel = defaultdict(list)
     for r in referrals:
         sid = str(r.get("source_id") or "").strip()
-        tipo = str(r.get("source_type") or "ad").strip().lower()
-        if not sid or tipo != "ad":
+        if not sid:
             continue
         ts = parse_ts(r.get("received_at"))
         clid = str(r.get("ctwa_clid") or "").strip()
@@ -121,29 +121,57 @@ def casar(leads, referrals, janela=JANELA_FALLBACK) -> list:
         if ts:
             for k in chaves_telefone(r.get("from_number")):
                 por_tel[k].append((ts, sid))
+    return por_clid, por_tel
+
+
+def _casar_lead(lead, indice, janela) -> dict:
+    """{status, metodo, meta_ad_id, referral_em} do lead contra um índice; {} = nada casou."""
+    por_clid, por_tel = indice
+    clid = str(lead.get("ctwa_clid") or "").strip()
+    anuncios = por_clid.get(clid, {}) if clid else {}
+    if len(anuncios) > 1:
+        return {"status": "ambiguo", "metodo": "ctwa_clid", "meta_ad_id": "|".join(sorted(anuncios))}
+    if len(anuncios) == 1:
+        sid, ts = next(iter(anuncios.items()))
+        return {"status": "recuperado", "metodo": "ctwa_clid", "meta_ad_id": sid,
+                "referral_em": ts.isoformat() if ts else ""}
+    criado = parse_ts(lead.get("created_at"))
+    if criado:
+        candidatos = {(ts, sid) for k in chaves_telefone(lead.get("phone"))
+                      for ts, sid in por_tel.get(k, ()) if criado - janela <= ts <= criado}
+        if candidatos:
+            ts, sid = max(candidatos)
+            return {"status": "recuperado", "metodo": "telefone", "meta_ad_id": sid,
+                    "referral_em": ts.isoformat()}
+    return {}
+
+
+def casar(leads, referrals, janela=JANELA_FALLBACK) -> list:
+    """Uma linha por lead: status recuperado | ambiguo | sem_source_type | sem_referral. Pura.
+
+    Só referral com source_type 'ad' recupera. O que só casa com referral SEM source_type
+    vira `sem_source_type` (anúncio candidato no CSV, para revisão; nunca é gravado). Tipo
+    diferente de 'ad' (post, ...) é ignorado."""
+    de_anuncio, sem_tipo = [], []
+    for r in referrals:
+        tipo = str(r.get("source_type") or "").strip().lower()
+        if tipo == "ad":
+            de_anuncio.append(r)
+        elif not tipo:
+            sem_tipo.append(r)
+    indice, indice_sem_tipo = _indexar(de_anuncio), _indexar(sem_tipo)
 
     out = []
     for lead in leads:
         linha = {"lead_id": lead.get("id"), "nome": lead.get("name") or "",
                  "phone": lead.get("phone") or "", "created_at": lead.get("created_at") or "",
                  "status": "sem_referral", "metodo": "", "meta_ad_id": "", "referral_em": ""}
-        clid = str(lead.get("ctwa_clid") or "").strip()
-        anuncios = por_clid.get(clid, {}) if clid else {}
-        if len(anuncios) > 1:
-            linha.update(status="ambiguo", metodo="ctwa_clid", meta_ad_id="|".join(sorted(anuncios)))
-        elif len(anuncios) == 1:
-            sid, ts = next(iter(anuncios.items()))
-            linha.update(status="recuperado", metodo="ctwa_clid", meta_ad_id=sid,
-                         referral_em=ts.isoformat() if ts else "")
-        else:
-            criado = parse_ts(lead.get("created_at"))
-            if criado:
-                candidatos = {(ts, sid) for k in chaves_telefone(lead.get("phone"))
-                              for ts, sid in por_tel.get(k, ()) if criado - janela <= ts <= criado}
-                if candidatos:
-                    ts, sid = max(candidatos)
-                    linha.update(status="recuperado", metodo="telefone", meta_ad_id=sid,
-                                 referral_em=ts.isoformat())
+        achado = _casar_lead(lead, indice, janela)
+        if not achado:
+            achado = _casar_lead(lead, indice_sem_tipo, janela)
+            if achado:
+                achado["status"] = "sem_source_type"
+        linha.update(achado)
         out.append(linha)
     return out
 
@@ -223,7 +251,8 @@ def main(argv=None, executar=None, aplicar=None) -> int:
     print(f"leads com ctwa_clid e sem meta_ad_id: {len(resultados)}")
     print(f"recuperado: {status['recuperado']} (ctwa_clid: {metodo['ctwa_clid']}, "
           f"telefone: {metodo['telefone']}; com campanha conhecida: {com_campanha})")
-    print(f"ambiguo: {status['ambiguo']}  sem_referral: {status['sem_referral']}")
+    print(f"ambiguo: {status['ambiguo']}  sem_source_type: {status['sem_source_type']}  "
+          f"sem_referral: {status['sem_referral']}")
     print(f"csv: {caminho}")
 
     if not a.aplicar:

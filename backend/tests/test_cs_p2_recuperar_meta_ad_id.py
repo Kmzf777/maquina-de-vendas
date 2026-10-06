@@ -59,6 +59,26 @@ def test_referral_que_nao_e_anuncio_e_ignorado():
     assert r["status"] == "sem_referral"
 
 
+@pytest.mark.parametrize("tipo", [None, "", "  "])
+def test_referral_sem_source_type_nao_recupera_e_conta_a_parte(tipo):
+    """A spec só aceita referral de anúncio: sem source_type não dá para afirmar que é anúncio."""
+    [r] = rec.casar([SERGINHO], [_ref(source_type=tipo)])
+    assert r["status"] == "sem_source_type"
+    assert r["metodo"] == "ctwa_clid" and r["meta_ad_id"] == AD  # para a revisão humana no CSV
+    sql, n = rec.sql_de_aplicacao([r])
+    assert (sql, n) == ("", 0)
+
+
+def test_referral_sem_source_type_pelo_telefone_tambem_conta_a_parte():
+    [r] = rec.casar([SERGINHO], [_ref(source_type=None, ctwa_clid=None)])
+    assert (r["status"], r["metodo"]) == ("sem_source_type", "telefone")
+
+
+def test_referral_de_anuncio_vence_o_sem_source_type():
+    [r] = rec.casar([SERGINHO], [REF, _ref(source_type=None, source_id="999")])
+    assert (r["status"], r["meta_ad_id"]) == ("recuperado", AD)
+
+
 def test_chaves_telefone_com_e_sem_o_nove():
     assert rec.chaves_telefone("5566997222209") == {"5566997222209", "556697222209"}
     assert rec.chaves_telefone("556697222209") == {"556697222209", "5566997222209"}
@@ -96,6 +116,7 @@ def test_main_dry_run_escreve_csv_e_nao_grava(tmp_path, capsys):
     assert (linha["status"], linha["meta_ad_id"], linha["campanha"]) == ("recuperado", AD, "Cafeterias | Vídeo")
     saida = capsys.readouterr().out
     assert "fonte: log" in saida and "recuperado: 1" in saida
+    assert "sem_source_type: 0" in saida
 
 
 def test_main_aplicar_manda_os_updates(tmp_path):
