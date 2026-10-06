@@ -146,6 +146,26 @@ def derive_channel(lead: dict[str, Any]) -> str:
     return "Sem rastreio"
 
 
+# Atribuição manual (P0: leads.campanha_manual_*). Um admin diz no /trafego de qual campanha o
+# lead veio quando o rastreio não diz — e essa resposta vence meta_ad_id, UTMs e tokens.
+_MANUAL_CHANNEL = {"meta": "Meta Ads", "google": "Google Ads"}
+
+
+def manual_attribution(lead: dict[str, Any]) -> tuple[str, str, str] | None:
+    """(canal do relatório, campaign_id, nome) da atribuição manual, ou None."""
+    channel = _MANUAL_CHANNEL.get(_s(lead.get("campanha_manual_canal")).lower())
+    cid = _s(lead.get("campanha_manual_id"))
+    if not channel or not cid:
+        return None
+    return channel, cid, _s(lead.get("campanha_manual_nome")) or cid
+
+
+def lead_channel(lead: dict[str, Any]) -> str:
+    """Canal do lead no relatório: a atribuição manual vence o rastreio (derive_channel)."""
+    manual = manual_attribution(lead)
+    return manual[0] if manual else derive_channel(lead)
+
+
 _UNATTRIBUTED = "(não atribuído)"
 
 
@@ -224,11 +244,18 @@ def build_campaign_report(
 
     for lead in leads:
         lead_id = lead.get("id")
-        channel = derive_channel(lead)
+        manual = manual_attribution(lead)
+        channel = manual[0] if manual else derive_channel(lead)
         raw_campaign = _s(lead.get("utm_campaign"))
         campaigns = campaigns_by_channel.get(channel)
         cid = None
-        if campaigns:
+        label = None
+        if manual:
+            # A resposta do admin vence anúncio e UTM. Campanha sem gasto na janela vira linha
+            # própria com o nome gravado (investimento 0), sem se misturar com o "não atribuído".
+            cid = manual[1]
+            label = campaigns[cid]["name"] if campaigns and cid in campaigns else manual[2]
+        elif campaigns:
             platform_cid = campaign_id_by_lead.get(lead_id)
             if platform_cid and platform_cid in campaigns:
                 cid = platform_cid
@@ -240,7 +267,8 @@ def build_campaign_report(
                 cid = resolved_cache[ck]
         if cid:
             key = (channel, "id:" + cid)
-            label = campaigns[cid]["name"]
+            if label is None:
+                label = campaigns[cid]["name"]
         elif campaigns:
             # Canal pago sem campanha resolvida: não se mistura com uma campanha real, mas
             # mantém o slug no rótulo quando existe — é a pista p/ corrigir o tagueamento.
@@ -453,8 +481,25 @@ class _MetaAdCol:
     enabled = True
 
 
+# Colunas do P0 (20261006_call_semanal_base.sql — migração manual). Até o Rafael aplicá-la, o
+# PostgREST rejeita o select inteiro; o relatório degrada (perde só atribuição manual e "já
+# era cliente") em vez de zerar.
+_P0_LEAD_COLS = ("campanha_manual_canal, campanha_manual_id, campanha_manual_nome, "
+                 "ja_era_cliente, ja_era_cliente_fonte")
+_P0_COL_MARKERS = ("campanha_manual", "ja_era_cliente")
+
+
+class _P0Col:
+    """Flag de processo: colunas do P0 existem? Desligada só quando o erro CITA uma delas —
+    um erro de rede não pode desligar a atribuição manual até o próximo deploy."""
+    enabled = True
+
+
 def _lead_cols() -> str:
-    return _LEAD_COLS + ", meta_ad_id" if _MetaAdCol.enabled else _LEAD_COLS
+    cols = _LEAD_COLS + ", meta_ad_id" if _MetaAdCol.enabled else _LEAD_COLS
+    return cols + ", " + _P0_LEAD_COLS if _P0Col.enabled else cols
+
+
 _DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
 
@@ -515,12 +560,26 @@ def _fetch_all(build_query, page: int = _PAGE) -> list[dict[str, Any]]:
         offset += page
 
 
+def _select_leads(fetch) -> list[dict[str, Any]]:
+    """Roda `fetch(cols)` degradando as colunas de migration ainda não aplicada."""
+    try:
+        return fetch(_lead_cols())
+    except Exception as exc:
+        if _P0Col.enabled and any(m in str(exc) for m in _P0_COL_MARKERS):
+            logger.warning("traffic_report: colunas do P0 ausentes (%s) - migration 20261006 pendente?", exc)
+            _P0Col.enabled = False
+            return _select_leads(fetch)
+        # A coluna meta_ad_id vem de migration; se ela ainda nao foi aplicada o PostgREST
+        # rejeita o select inteiro. Degrada para o conjunto base (perde so a atribuicao de
+        # campanha do Meta) em vez de zerar o relatorio.
+        if _MetaAdCol.enabled:
+            logger.warning("traffic_report: select com meta_ad_id falhou (%s) - migration pendente?", exc)
+            _MetaAdCol.enabled = False
+            return _select_leads(fetch)
+        raise
+
+
 def _fetch_leads(sb, mode: str, lo: str | None, hi: str | None) -> list[dict[str, Any]]:
-    cols = _lead_cols()
-
-    def _leads_in(chunk):
-        return _fetch_all(lambda: sb.table("leads").select(cols).in_("id", chunk))
-
     if mode == "sale":
         def _sales_q():
             q = sb.table("sales").select("lead_id, status")
@@ -531,29 +590,24 @@ def _fetch_leads(sb, mode: str, lo: str | None, hi: str | None) -> list[dict[str
             return q
         sale_ids = sorted({r["lead_id"] for r in _fetch_all(_sales_q)
                            if r.get("lead_id") and not _cancelada(r)})
-        leads: list[dict[str, Any]] = []
-        for chunk in _chunks(sale_ids):
-            leads.extend(_leads_in(chunk))
-        return leads
 
-    def _q():
-        q = sb.table("leads").select(cols)
-        if lo:
-            q = q.gte("created_at", lo)
-        if hi:
-            q = q.lte("created_at", hi)
-        return q
-    try:
+        def _por_venda(cols):
+            leads: list[dict[str, Any]] = []
+            for chunk in _chunks(sale_ids):
+                leads.extend(_fetch_all(lambda c=chunk: sb.table("leads").select(cols).in_("id", c)))
+            return leads
+        return _select_leads(_por_venda)
+
+    def _por_janela(cols):
+        def _q():
+            q = sb.table("leads").select(cols)
+            if lo:
+                q = q.gte("created_at", lo)
+            if hi:
+                q = q.lte("created_at", hi)
+            return q
         return _fetch_all(_q)
-    except Exception as exc:
-        # A coluna meta_ad_id vem de migration; se ela ainda nao foi aplicada o PostgREST
-        # rejeita o select inteiro. Degrada para o conjunto base (perde so a atribuicao de
-        # campanha do Meta) em vez de zerar o relatorio.
-        if _MetaAdCol.enabled:
-            logger.warning("traffic_report: select com meta_ad_id falhou (%s) - migration pendente?", exc)
-            _MetaAdCol.enabled = False
-            return _fetch_leads(sb, mode, lo, hi)
-        raise
+    return _select_leads(_por_janela)
 
 
 def _conversed_ids(sb, lead_ids: list[str]) -> set[str]:
@@ -701,11 +755,24 @@ def select_campaign_leads(leads: list[dict[str, Any]], channel: str, campaign: s
 
     O rotulo da linha e o nome da campanha NA PLATAFORMA, nao o utm_campaign do lead (varios
     slugs caem na mesma campanha). Entao o drill-down precisa resolver o lead do mesmo jeito
-    que o build_campaign_report resolveu — comparar com utm_campaign cru so acharia zero."""
+    que o build_campaign_report resolveu — comparar com utm_campaign cru so acharia zero.
+    A atribuicao manual vence, como em build_campaign_report."""
     campaigns = campaigns or {}
     campaign_id_by_lead = campaign_id_by_lead or {}
-    in_channel = [l for l in leads if derive_channel(l) == channel]
+    in_channel = [l for l in leads if lead_channel(l) == channel]
 
+    def _manual_label(l):
+        _, cid, nome = manual_attribution(l)
+        return campaigns[cid]["name"] if cid in campaigns else nome
+
+    auto = [l for l in in_channel if manual_attribution(l) is None]
+    auto_ids = {id(l) for l in _select_auto(auto, campaign, campaigns, campaign_id_by_lead)}
+    return [l for l in in_channel
+            if (_manual_label(l) == campaign if manual_attribution(l) else id(l) in auto_ids)]
+
+
+def _select_auto(in_channel, campaign, campaigns, campaign_id_by_lead):
+    """Leads SEM atribuição manual de uma linha — o casamento por anúncio/UTM de sempre."""
     if not campaigns:  # canal nao pago: a linha e o proprio utm_campaign
         return [l for l in in_channel if (_s(l.get("utm_campaign")) or _NO_CAMPAIGN) == campaign]
 

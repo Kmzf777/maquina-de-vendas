@@ -98,6 +98,7 @@ class _Banco:
 def _flags_de_coluna(monkeypatch):
     """As flags de coluna são de processo: um teste que as desliga não vaza para o próximo."""
     monkeypatch.setattr(tr._MetaAdCol, "enabled", True)
+    monkeypatch.setattr(tr._P0Col, "enabled", True)
 
 
 # --- 2.1 Funil cumulativo + canceladas fora ----------------------------------------------
@@ -174,3 +175,82 @@ def test_modo_venda_nao_traz_lead_so_com_venda_cancelada(monkeypatch):
     monkeypatch.setattr(tr, "get_supabase", lambda: banco)
     out = tr.traffic_report(period="all", mode="sale")
     assert out["total"]["leads"] == 1 and out["total"]["receita"] == 80.0
+
+
+# --- 2.2 Atribuição manual ---------------------------------------------------------------
+
+_META = [{"campaign_id": "cm_atac", "campaign_name": "Atacado WA", "cost": 500.0},
+         {"campaign_id": "cm_terc", "campaign_name": "Terceirização WA", "cost": 300.0}]
+_GOOGLE = [{"campaign_id": "cg_pmax", "campaign_name": "PMAX | Atacado", "cost": 200.0}]
+
+
+def _manual(canal, cid, nome):
+    return {"campanha_manual_canal": canal, "campanha_manual_id": cid, "campanha_manual_nome": nome}
+
+
+def test_atribuicao_manual_vence_meta_ad_id():
+    lead = {"id": "a", "ctwa_clid": "x", "meta_ad_id": "ad1", **_manual("meta", "cm_terc", "Terceirização WA")}
+    rep = tr.build_campaign_report([lead], set(), set(), {}, "lead", "30d",
+                                   spend_by_channel={"Meta Ads": _META},
+                                   campaign_id_by_lead={"a": "cm_atac"})
+    rows = {r["campaign"]: r for r in rep["rows"]}
+    assert rows["Terceirização WA"]["leads"] == 1
+    assert rows["Atacado WA"]["leads"] == 0
+
+
+def test_atribuicao_manual_troca_o_canal():
+    lead = {"id": "a", "utm_source": "instagram", **_manual("google", "cg_pmax", "PMAX | Atacado")}
+    rep = tr.build_campaign_report([lead], set(), set(), {}, "lead", "30d",
+                                   spend_by_channel={"Google Ads": _GOOGLE})
+    row = next(r for r in rep["rows"] if r["leads"])
+    assert (row["channel"], row["campaign"], row["investimento"]) == ("Google Ads", "PMAX | Atacado", 200.0)
+    assert "Orgânico" not in rep["channel_subtotals"]
+
+
+def test_atribuicao_manual_campanha_sem_gasto_na_janela_usa_nome_gravado():
+    lead = {"id": "a", **_manual("meta", "cm_velha", "Campanha de julho")}
+    rep = tr.build_campaign_report([lead], set(), set(), {}, "lead", "30d",
+                                   spend_by_channel={"Meta Ads": _META})
+    row = next(r for r in rep["rows"] if r["leads"])
+    assert (row["channel"], row["campaign"], row["investimento"]) == ("Meta Ads", "Campanha de julho", 0.0)
+
+
+def test_atribuicao_manual_com_canal_invalido_e_ignorada():
+    lead = {"id": "a", "gclid": "g", "utm_campaign": "black", **_manual("tiktok", "x", "X")}
+    assert tr.manual_attribution(lead) is None
+    assert tr.lead_channel(lead) == "Google Ads"
+
+
+def test_drilldown_respeita_atribuicao_manual():
+    campaigns = tr._index_campaigns(_META)
+    manual = {"id": "m", "utm_source": "instagram", **_manual("meta", "cm_terc", "Terceirização WA")}
+    auto = {"id": "x", "ctwa_clid": "c", "meta_ad_id": "ad"}
+    sel = tr.select_campaign_leads([manual, auto], "Meta Ads", "Terceirização WA", campaigns, {"x": "cm_terc"})
+    assert [l["id"] for l in sel] == ["m", "x"]
+    # o anúncio do lead manual aponta para outra campanha: a resposta do admin vence
+    assert tr.select_campaign_leads([manual], "Meta Ads", "Atacado WA", campaigns, {"m": "cm_atac"}) == []
+
+
+def test_drilldown_manual_em_campanha_sem_gasto():
+    manual = {"id": "m", **_manual("meta", "cm_velha", "Campanha de julho")}
+    assert [l["id"] for l in tr.select_campaign_leads(
+        [manual], "Meta Ads", "Campanha de julho", tr._index_campaigns(_META), {})] == ["m"]
+    assert [l["id"] for l in tr.select_campaign_leads(
+        [manual], "Meta Ads", "Campanha de julho", {}, {})] == ["m"]
+
+
+def test_fetch_leads_degrada_sem_colunas_do_p0():
+    banco = _Banco(leads=[_g(1)])
+    banco.colunas_ausentes = {"leads": ["campanha_manual_canal"]}
+    out = tr._fetch_leads(banco, "lead", None, None)
+    assert [l["id"] for l in out] == ["l1"]
+    assert tr._P0Col.enabled is False
+    assert tr._MetaAdCol.enabled is True  # o erro era só das colunas do P0
+
+
+def test_fetch_leads_erro_generico_nao_desliga_p0():
+    banco = _Banco(leads=[_g(1)])
+    banco.ausentes = {"leads"}
+    with pytest.raises(Exception):
+        tr._fetch_leads(banco, "lead", None, None)
+    assert tr._P0Col.enabled is True
