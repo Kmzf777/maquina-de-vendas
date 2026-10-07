@@ -8,6 +8,7 @@ import { ChatList } from "@/components/conversas/chat-list";
 import { ChatView, type SiblingConversationSummary } from "@/components/conversas/chat-view";
 import { ContactDetail } from "@/components/conversas/contact-detail";
 import { setActiveConversation } from "@/lib/active-conversation";
+import { useMediaQuery } from "@/hooks/use-media-query";
 import {
   conversationsListUrl,
   type ConversationsPage,
@@ -15,6 +16,15 @@ import {
 import { ConversasQueryProvider } from "./query-provider";
 import { useConversationList } from "./use-conversation-list";
 import type { Conversation, Channel, Tag, Lead } from "@/lib/types";
+
+/**
+ * Ponto de corte do painel de venda/orçamento ACOPLADO (coluna ao lado do
+ * chat, com a lista de conversas recolhida). Conta: menu 220 + painel "lg"
+ * 672 (42rem) + chat mínimo ~360 = 1252 px → 1280 (o `xl` do Tailwind) deixa o
+ * chat com ≥ 388 px. Abaixo disso o painel volta a sobrepor o chat, como nas
+ * outras telas do CRM.
+ */
+const QUERY_PAINEL_ACOPLADO = "(min-width: 1280px)";
 
 export default function ConversasPage() {
   return (
@@ -36,6 +46,10 @@ function ConversasContent() {
   const [togglingAi, setTogglingAi] = useState(false);
   const [togglingFollowup, setTogglingFollowup] = useState(false);
   const [mobileView, setMobileView] = useState<"list" | "chat" | "contact">("list");
+  const telaLarga = useMediaQuery(QUERY_PAINEL_ACOPLADO);
+  // Painel de venda/orçamento aberto como coluna: a lista recolhe para o chat
+  // não ficar espremido (o ContactDetail avisa ao abrir/fechar/trocar conversa).
+  const [painelAcopladoAberto, setPainelAcopladoAberto] = useState(false);
 
   // Lista paginada + contadores + seleção + tempo real (ver use-conversation-list.ts).
   const {
@@ -394,6 +408,9 @@ function ConversasContent() {
 
       {/* Desktop: side-by-side panels */}
       <div className="hidden md:flex flex-1 overflow-hidden">
+        {/* Recolhida (não desmontada) com o painel acoplado aberto: busca,
+            filtro e rolagem da lista estão lá quando o painel fecha. */}
+        <div data-slot="coluna-lista" className={painelAcopladoAberto ? "hidden" : "contents"}>
         <ChatList
           conversations={conversations}
           channels={channels}
@@ -413,6 +430,7 @@ function ConversasContent() {
           loadingMore={isFetchingNextPage}
           onLoadMore={handleLoadMore}
         />
+        </div>
         {selectedConversation ? (
           <>
             <ChatView
@@ -436,6 +454,8 @@ function ConversasContent() {
               leadTags={selectedLeadTags}
               onTagToggle={handleTagToggle}
               onLeadUpdate={handleLeadUpdate}
+              painelAcoplado={telaLarga}
+              onPainelAcopladoChange={setPainelAcopladoAberto}
             />
           </>
         ) : (
