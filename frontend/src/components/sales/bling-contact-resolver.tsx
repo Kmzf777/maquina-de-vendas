@@ -92,6 +92,9 @@ export function BlingContactResolver({
   const [tocado, setTocado] = useState(false);
   const [enviando, setEnviando] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
+  // Contato vinculado, mas o Bling recusou atualizar o cadastro por um campo
+  // que o vendedor não tem como corrigir aqui. Não bloqueia: só pede ciência.
+  const [aviso, setAviso] = useState<string | null>(null);
 
   const montado = buildContactPayload(form, leadId);
   const campo = (chave: keyof ContactForm) => (
@@ -162,6 +165,11 @@ export function BlingContactResolver({
       return;
     }
     setEnviando(false);
+    const corpo = await res.json().catch(() => ({}));
+    if (typeof corpo?.aviso === "string" && corpo.aviso.trim()) {
+      setAviso(corpo.aviso);
+      return;
+    }
     onResolved();
   }
 
@@ -353,6 +361,19 @@ export function BlingContactResolver({
 
       {erro && <p className="text-[12px] text-[#c41c1c] whitespace-pre-line">{erro}</p>}
 
+      {aviso && (
+        <div className="p-3 border border-[#e8c66a] bg-[#fdf8ea] rounded-[4px] space-y-2">
+          <p className="text-[12px] text-[#6b5310]">{aviso}</p>
+          <button
+            type="button"
+            onClick={onResolved}
+            className="w-full py-2 text-[13px] font-medium text-white rounded-[4px] bg-[#1f9d57] hover:bg-[#1b8a4c] transition-colors"
+          >
+            Seguir com o pedido
+          </button>
+        </div>
+      )}
+
       <div className="flex flex-wrap items-center gap-2">
         <button
           type="button"
@@ -375,7 +396,7 @@ export function BlingContactResolver({
           </button>
         )}
 
-        {cadastrando && (
+        {cadastrando && !aviso && (
           <button
             type="button"
             onClick={cadastrar}
