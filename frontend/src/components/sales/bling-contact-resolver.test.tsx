@@ -22,7 +22,7 @@ beforeEach(() => {
     const url = String(input);
     const method = init?.method ?? "GET";
     chamadas.push({ url, method, body: init?.body ? JSON.parse(String(init.body)) : null });
-    if (url.startsWith("/api/cep/")) return respostaCep(url);
+    if (url.startsWith("https://viacep.com.br/")) return respostaCep(url);
     if (url === "/api/bling/contacts") return resposta(200, { bling_contact_id: 1 });
     return resposta(200, {});
   }) as unknown as typeof fetch;
@@ -61,5 +61,75 @@ describe("BlingContactResolver — endereço", () => {
       ),
     ).toBeTruthy();
     expect(chamadas.some((c) => c.url === "/api/bling/contacts")).toBe(false);
+  });
+});
+
+describe("BlingContactResolver — busca de CEP", () => {
+  const FRUTAL = {
+    cep: "38200-000",
+    logradouro: "Avenida Brasil",
+    bairro: "Centro",
+    localidade: "Frutal",
+    uf: "MG",
+  };
+
+  it("ao sair do CEP com 8 dígitos preenche logradouro, bairro, município e UF", async () => {
+    respostaCep = async () => resposta(200, FRUTAL);
+    abrir();
+    digitar("CEP", "38200-000");
+    fireEvent.blur(screen.getByPlaceholderText("CEP"));
+
+    await waitFor(() =>
+      expect((screen.getByPlaceholderText("Município") as HTMLInputElement).value).toBe("Frutal"),
+    );
+    expect((screen.getByPlaceholderText("Logradouro") as HTMLInputElement).value).toBe(
+      "Avenida Brasil",
+    );
+    expect((screen.getByPlaceholderText("Bairro") as HTMLInputElement).value).toBe("Centro");
+    expect((screen.getByPlaceholderText("UF") as HTMLInputElement).value).toBe("MG");
+    expect(chamadas.some((c) => c.url === "https://viacep.com.br/ws/38200000/json/")).toBe(true);
+  });
+
+  it("não sobrescreve o que o vendedor já digitou", async () => {
+    respostaCep = async () => resposta(200, FRUTAL);
+    abrir();
+    digitar("Logradouro", "Rua do Cliente");
+    digitar("CEP", "38200000");
+    fireEvent.blur(screen.getByPlaceholderText("CEP"));
+
+    await waitFor(() =>
+      expect((screen.getByPlaceholderText("Município") as HTMLInputElement).value).toBe("Frutal"),
+    );
+    expect((screen.getByPlaceholderText("Logradouro") as HTMLInputElement).value).toBe(
+      "Rua do Cliente",
+    );
+  });
+
+  it("CEP incompleto não consulta", () => {
+    abrir();
+    digitar("CEP", "3820");
+    fireEvent.blur(screen.getByPlaceholderText("CEP"));
+    expect(chamadas.some((c) => c.url.startsWith("https://viacep.com.br/"))).toBe(false);
+  });
+
+  it("CEP inexistente não preenche nem impede o cadastro", async () => {
+    respostaCep = async () => resposta(200, { erro: "true" });
+    const { onResolved } = abrir();
+    digitar("CEP", "99999999");
+    fireEvent.blur(screen.getByPlaceholderText("CEP"));
+    await waitFor(() =>
+      expect(chamadas.some((c) => c.url.startsWith("https://viacep.com.br/"))).toBe(true),
+    );
+    expect((screen.getByPlaceholderText("Município") as HTMLInputElement).value).toBe("");
+
+    digitar("Logradouro", "Rua A");
+    digitar("Município", "Frutal");
+    digitar("UF", "MG");
+    fireEvent.click(screen.getByRole("button", { name: "Cadastrar e lançar o pedido" }));
+    await waitFor(() => expect(onResolved).toHaveBeenCalled());
+    const envio = chamadas.find((c) => c.url === "/api/bling/contacts");
+    expect(envio?.body).toMatchObject({
+      endereco: { geral: { cep: "99999999", endereco: "Rua A", municipio: "Frutal", uf: "MG" } },
+    });
   });
 });

@@ -12,14 +12,16 @@
  * A montagem e a validação do cadastro moram em `@/lib/bling-contact-form`.
  */
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { BuildingIcon, UserIcon } from "lucide-react";
 import {
   blankContactForm,
   buildContactPayload,
+  cepDigits,
   type ContactForm,
 } from "@/lib/bling-contact-form";
 import { blingErrorMessage } from "@/lib/bling-error";
+import { buscarCep, preencherEndereco } from "@/lib/cep";
 import { formatDocument } from "@/lib/documento";
 
 export interface BlingContactCandidate {
@@ -95,6 +97,27 @@ export function BlingContactResolver({
   const campo = (chave: keyof ContactForm) => (
     e: React.ChangeEvent<HTMLInputElement>,
   ) => setForm((atual) => ({ ...atual, [chave]: e.target.value }));
+
+  // CEP da última consulta disparada: resposta atrasada de um CEP que o
+  // vendedor já trocou não pode preencher o endereço do CEP novo.
+  const cepConsultado = useRef<string | null>(null);
+
+  async function completarPeloCep(valor: string) {
+    const cep = cepDigits(valor);
+    if (cep.length !== 8 || cep === cepConsultado.current) return;
+    cepConsultado.current = cep;
+    const achado = await buscarCep(cep);
+    if (cepConsultado.current !== cep) return;
+    if (!achado) {
+      // Falha/timeout/CEP inexistente: não preenche e não bloqueia nada — e
+      // libera uma nova tentativa no próximo blur.
+      cepConsultado.current = null;
+      return;
+    }
+    setForm((atual) =>
+      cepDigits(atual.cep) === cep ? preencherEndereco(atual, achado) : atual,
+    );
+  }
 
   async function confirmar(contactId: number) {
     setEnviando(true);
@@ -281,6 +304,7 @@ export function BlingContactResolver({
                 <input
                   value={form.cep}
                   onChange={campo("cep")}
+                  onBlur={(e) => void completarPeloCep(e.target.value)}
                   placeholder="CEP"
                   inputMode="numeric"
                   className={input}
