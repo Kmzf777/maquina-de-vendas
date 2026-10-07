@@ -208,6 +208,15 @@ describe("quoteSaveOutcome", () => {
     ).toEqual({ kind: "error", message: "Campo obrigatorio. parcelas[0].valor" });
   });
 
+  it("422 com fields mostra os motivos campo a campo no lugar da frase genérica", () => {
+    const out = quoteSaveOutcome(422, {
+      message: "Não foi possível salvar.",
+      detail: "ocorreram problemas com sua validação",
+      fields: [{ campo: "E-mail", mensagem: "e-mail inválido" }],
+    });
+    expect(out).toEqual({ kind: "error", message: "O Bling recusou:\n• E-mail: e-mail inválido" });
+  });
+
   it("corpo vazio ainda produz mensagem com o codigo HTTP", () => {
     const out = quoteSaveOutcome(500, {});
     expect(out.kind).toBe("error");

@@ -19,6 +19,7 @@ import {
   buildContactPayload,
   type ContactForm,
 } from "@/lib/bling-contact-form";
+import { blingErrorMessage } from "@/lib/bling-error";
 import { formatDocument } from "@/lib/documento";
 
 export interface BlingContactCandidate {
@@ -131,11 +132,9 @@ export function BlingContactResolver({
 
     if (!res || !res.ok) {
       const corpo = await res?.json().catch(() => ({}));
-      // 422/409 do Bling vêm com a mensagem original — é ela que diz o que fazer.
-      setErro(
-        [corpo?.message, corpo?.detail].filter(Boolean).join(" ") ||
-          "Não foi possível cadastrar o cliente no Bling.",
-      );
+      // Recusa do Bling: `fields` diz campo a campo o que corrigir; sem ele,
+      // a mensagem original (message + detail) como antes.
+      setErro(blingErrorMessage(corpo, "Não foi possível cadastrar o cliente no Bling."));
       setEnviando(false);
       return;
     }
@@ -315,7 +314,7 @@ export function BlingContactResolver({
         )}
       </div>
 
-      {erro && <p className="text-[12px] text-[#c41c1c]">{erro}</p>}
+      {erro && <p className="text-[12px] text-[#c41c1c] whitespace-pre-line">{erro}</p>}
 
       <div className="flex flex-wrap items-center gap-2">
         <button

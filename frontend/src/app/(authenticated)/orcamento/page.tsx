@@ -9,6 +9,7 @@ import { useQuotes, type QuotesFilters } from "@/hooks/use-quotes";
 import { useCurrentUserEmail } from "@/hooks/use-current-user";
 import { useBlingStatus } from "@/hooks/use-bling-status";
 import { contasDisponiveis, precisaSeletor } from "@/lib/bling-accounts";
+import { blingErrorMessage } from "@/lib/bling-error";
 import type { Quote } from "@/lib/types";
 
 /**
@@ -175,10 +176,14 @@ export default function OrcamentoPage() {
         // 409 `already_converted` acontece de verdade com duas abas abertas: a
         // outra ja converteu. Recarregar mostra a linha no estado certo, entao
         // o vendedor ve o que aconteceu em vez de so uma mensagem.
+        // 422: recusa do Bling — `fields` traz o motivo campo a campo; antes
+        // caía em `body.error` e o vendedor via só "validation".
         alert(
           body.error === "already_converted"
             ? "Este orçamento já foi convertido em venda."
-            : body.error || "Não foi possível converter o orçamento.",
+            : body.error === "validation"
+              ? blingErrorMessage(body, "O Bling recusou o pedido.")
+              : body.error || "Não foi possível converter o orçamento.",
         );
         recarregar();
         return;

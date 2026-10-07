@@ -706,7 +706,9 @@ export function QuoteCreateModal({
             </div>
           )}
 
-          {error && <p className="mt-4 text-[12px] text-[#c41c1c]">{error}</p>}
+          {error && (
+            <p className="mt-4 text-[12px] text-[#c41c1c] whitespace-pre-line">{error}</p>
+          )}
           {gate.message && (
             <p className="mt-4 text-[12px] text-[#c41c1c]">{gate.message}</p>
           )}

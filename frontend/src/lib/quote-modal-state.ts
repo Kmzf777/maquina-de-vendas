@@ -12,6 +12,7 @@
  * (não há runner de DOM no projeto): o que está aqui é testado, o componente é
  * casca de renderização.
  */
+import { blingErrorMessage } from "@/lib/bling-error";
 import type { OrderLine, OrderPayloadResult } from "@/lib/bling-order-state";
 import type { QuoteDiscount } from "@/lib/quote-state";
 import type { BlingContactCandidate } from "@/components/sales/bling-contact-resolver";
@@ -203,10 +204,11 @@ export function quoteSaveOutcome(
     // A mensagem original do Bling é a que diz o que corrigir (422); o código
     // HTTP entra só quando o corpo não trouxe nada, para o vendedor ter o que
     // relatar em vez de "erro".
-    message:
-      [texto(body.message), texto(body.detail)].filter(Boolean).join(" ") ||
-      texto(body.error) ||
-      `Não foi possível salvar o orçamento (HTTP ${status}).`,
+    // Com `fields`, o motivo campo a campo substitui a frase genérica.
+    message: blingErrorMessage(
+      body,
+      texto(body.error) ?? `Não foi possível salvar o orçamento (HTTP ${status}).`,
+    ),
   };
 }
 

@@ -25,6 +25,7 @@ import { useBlingStatus } from "@/hooks/use-bling-status";
 import { blingGate } from "@/lib/bling-gate";
 import { productSummary } from "@/lib/bling";
 import { divergenceFrom, type Divergence } from "@/lib/bling-divergence";
+import { blingErrorMessage } from "@/lib/bling-error";
 import { CONTA_PADRAO } from "@/lib/bling-accounts";
 import { JaEraClienteToggle } from "@/components/sales/ja-era-cliente-toggle";
 import {
@@ -376,11 +377,9 @@ export function SaleCreateModal({
       }
 
       if (res.status === 422) {
-        // Mensagem original do Bling — é ela que diz o que corrigir.
-        setError(
-          [body.message, body.detail].filter(Boolean).join(" ") ||
-            "O Bling recusou o pedido."
-        );
+        // Motivo do Bling campo a campo (`fields`) ou, sem ele, a mensagem
+        // original — é ela que diz o que corrigir.
+        setError(blingErrorMessage(body, "O Bling recusou o pedido."));
         return;
       }
 
@@ -492,9 +491,7 @@ export function SaleCreateModal({
 
       if (res.status === 422) {
         // Mensagem original do Bling — é ela que diz por que recusou.
-        const message =
-          [body.message, body.detail].filter(Boolean).join(" ") ||
-          "O Bling recusou a alteração.";
+        const message = blingErrorMessage(body, "O Bling recusou a alteração.");
         setPendingBlingUpdate({ message, payload, total });
         return;
       }
@@ -992,7 +989,7 @@ export function SaleCreateModal({
           <div className="shrink-0 border-t border-[#dedbd6] px-5 py-4 space-y-2">
             {/* Error */}
             {error && (
-              <p className="text-[12px] text-red-600">{error}</p>
+              <p className="text-[12px] text-red-600 whitespace-pre-line">{error}</p>
             )}
 
             {/* Por que o botão está desabilitado */}
@@ -1099,7 +1096,9 @@ export function SaleCreateModal({
             <p className="text-[13px] text-[#111111]">
               O Bling recusou a alteração:
             </p>
-            <p className="text-[12px] text-red-600">{pendingBlingUpdate.message}</p>
+            <p className="text-[12px] text-red-600 whitespace-pre-line">
+              {pendingBlingUpdate.message}
+            </p>
             <p className="text-[12px] text-[#7b7b78]">
               Você pode salvar essa alteração só no CRM. A venda ficará marcada
               como divergente do Bling até alguém revisar.
