@@ -24,7 +24,7 @@ from dataclasses import dataclass, field
 import redis.asyncio as aioredis
 
 from app.bling import config
-from app.bling.errors import BlingValidationError
+from app.bling.errors import TRANSIENT, BlingValidationError
 from app.bling.sync import _to_e164_br, map_contact
 from app.config import settings
 from app.db.supabase import get_supabase
@@ -403,6 +403,89 @@ def _upsert_mirror(row: dict, account: str) -> None:
      .upsert(linha, on_conflict="account,id").execute())
 
 
+# Campos do PUT que nunca voltam no corpo: `id` vai no caminho.
+_SOMENTE_LEITURA = frozenset({"id"})
+# "0000-00-00" e o vazio de data do Bling; devolve-lo no PUT arrisca recusa por
+# data invalida num campo que o vendedor nem ve no CRM.
+_DATA_VAZIA = "0000-00-00"
+
+
+def _preenchido(valor) -> str | None:
+    if not isinstance(valor, str):
+        return None
+    valor = valor.strip()
+    return valor or None
+
+
+def _sem_data_vazia(valor):
+    if isinstance(valor, dict):
+        return {k: _sem_data_vazia(v) for k, v in valor.items() if v != _DATA_VAZIA}
+    if isinstance(valor, list):
+        return [_sem_data_vazia(v) for v in valor]
+    return valor
+
+
+def _tem_contato_digitado(dados: dict) -> bool:
+    geral = ((dados.get("endereco") or {}).get("geral")) or {}
+    return any(_preenchido(dados.get(c)) for c in ("email", "telefone", "celular")) or \
+        any(_preenchido(v) for v in geral.values())
+
+
+def _corpo_do_put(atual: dict, dados: dict) -> dict:
+    """Contato completo do Bling com o que o vendedor digitou por cima.
+
+    O PUT /contatos/{id} do Bling v3 SUBSTITUI o contato inteiro — campo
+    omitido e apagado. Por isso o corpo parte do GET (tudo, menos `id`) e so os
+    campos PREENCHIDOS no formulario sao sobrescritos: campo em branco no CRM
+    nunca apaga nada no Bling. No endereco, so `endereco.geral` e tocado, campo
+    a campo; `complemento` (que o formulario nao tem) e `endereco.cobranca`
+    ficam como estavam.
+    """
+    corpo = {k: v for k, v in atual.items() if k not in _SOMENTE_LEITURA}
+    for campo in ("email", "telefone", "celular"):
+        valor = _preenchido(dados.get(campo))
+        if valor:
+            corpo[campo] = valor
+    novo_geral = ((dados.get("endereco") or {}).get("geral")) or {}
+    preenchidos = {k: _preenchido(v) for k, v in novo_geral.items() if _preenchido(v)}
+    if preenchidos:
+        endereco = dict(corpo.get("endereco") or {})
+        endereco["geral"] = {**(endereco.get("geral") or {}), **preenchidos}
+        corpo["endereco"] = endereco
+    return _sem_data_vazia(corpo)
+
+
+async def _atualizar_existente(client, contact_id: int, dados: dict) -> dict | None:
+    """Leva ao contato existente o e-mail/telefone/endereco digitados.
+
+    Devolve o contato como ficou no Bling (para o espelho), ou None quando nem
+    o GET foi possivel. Recusa de validacao do PUT PROPAGA (com `fields`: o
+    vendedor corrige); erro transitorio so loga — a venda nao pode travar
+    porque o Bling piscou, e o vinculo segue mesmo assim.
+    """
+    try:
+        atual = (await client.get(f"/contatos/{contact_id}")).get("data") or {}
+    except TRANSIENT as exc:
+        logger.warning("[BLING] contato %s: GET para atualizar falhou (transitorio), "
+                       "vinculando sem atualizar: %s", contact_id, exc)
+        return None
+    corpo = _corpo_do_put(atual, dados)
+    if corpo == _sem_data_vazia({k: v for k, v in atual.items()
+                                 if k not in _SOMENTE_LEITURA}):
+        return atual
+    try:
+        await client.put(f"/contatos/{contact_id}", corpo)
+    except TRANSIENT as exc:
+        logger.warning("[BLING] contato %s: PUT com os dados do vendedor falhou "
+                       "(transitorio), vinculando sem atualizar: %s", contact_id, exc)
+        return atual
+    alterados = sorted(c for c in ("email", "telefone", "celular", "endereco")
+                       if corpo.get(c) != atual.get(c))
+    logger.info("[BLING] contato %s atualizado com o digitado no CRM: %s",
+                contact_id, ", ".join(alterados))
+    return {**corpo, "id": contact_id}
+
+
 async def create_contact(client, lead: dict, dados: dict,
                           account: str = config.DEFAULT_ACCOUNT) -> int:
     """Cria (ou reaproveita) o contato no Bling e devolve o id.
@@ -411,6 +494,9 @@ async def create_contact(client, lead: dict, dados: dict,
     endereco{geral{...}}. `client` ja e um `BlingClient` desta `account` — a
     chamada HTTP cai na conta certa sozinha; aqui so precisamos repassar a conta
     para o espelho e para o vinculo do lead.
+
+    Se o documento JA existe no Bling, vincula e leva ao contato o e-mail,
+    telefone e endereco que o vendedor preencheu (ver `_atualizar_existente`).
     """
     doc = doc_digits(dados.get("numeroDocumento"))
     if not is_valid_document(doc):
@@ -441,6 +527,7 @@ async def create_contact(client, lead: dict, dados: dict,
         # catastrofica, no ponto exato que existe para impedir duplicata.
         existentes = [c for c in (vivo.get("data") or [])
                       if doc_digits(c.get("numeroDocumento")) == doc]
+        no_bling: dict | None = None
         if existentes:
             if len(existentes) > 1:
                 # O ERP ja tem duplicata para este documento. Vincular ao primeiro
@@ -454,6 +541,11 @@ async def create_contact(client, lead: dict, dados: dict,
             contact_id = int(existentes[0]["id"])
             logger.info("[BLING] contato %s ja existia para doc %s — vinculando",
                         contact_id, doc)
+            # O vendedor digitou e-mail/telefone/endereco: vale o que ele
+            # digitou (decisao do dono). Antes, so vinculava e descartava — e o
+            # pedido sai com `contato.id`, ou seja, com o endereco velho.
+            if _tem_contato_digitado(dados):
+                no_bling = await _atualizar_existente(client, contact_id, dados)
         else:
             payload = {
                 "nome": dados.get("nome") or lead.get("name") or "",
@@ -469,7 +561,10 @@ async def create_contact(client, lead: dict, dados: dict,
             contact_id = int((criado.get("data") or {})["id"])
             logger.info("[BLING] contato %s criado para doc %s", contact_id, doc)
 
-        await asyncio.to_thread(_upsert_mirror, {
+        # Quando o contato existente foi lido do Bling, o espelho recebe ele
+        # inteiro (como ficou depois do PUT, ou como estava se o PUT falhou);
+        # senao, o recorte do formulario, como sempre foi.
+        espelho = {**no_bling, "id": contact_id} if no_bling else {
             "id": contact_id,
             "nome": dados.get("nome") or lead.get("name") or "",
             "tipo": dados.get("tipo"),
@@ -479,7 +574,8 @@ async def create_contact(client, lead: dict, dados: dict,
             "email": dados.get("email"),
             "situacao": "A",
             "endereco": dados.get("endereco"),
-        }, account)
+        }
+        await asyncio.to_thread(_upsert_mirror, espelho, account)
         try:
             await asyncio.to_thread(_link, lead["id"], contact_id, account)
         except Exception as exc:

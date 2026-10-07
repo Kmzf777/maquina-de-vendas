@@ -897,3 +897,243 @@ def test_espelho_de_contato_usa_chave_composta(monkeypatch):
     contacts._upsert_mirror({"id": 5, "nome": "X"}, "secundaria")
     assert capturado["on_conflict"] == "account,id"
     assert capturado["row"]["account"] == "secundaria"
+
+
+# ==========================================================================
+# Contato que JA existe no Bling recebe o que o vendedor digitou (PUT)
+# ==========================================================================
+# GET /contatos/{id} do Bling v3 — o PUT substitui o contato INTEIRO, entao o
+# corpo enviado precisa carregar tudo isto de volta.
+_CONTATO_BLING = {
+    "id": 17702865922,
+    "nome": "D&M CAFES LTDA",
+    "codigo": "C-77",
+    "situacao": "A",
+    "numeroDocumento": "29.860.598/0001-70",
+    "telefone": "(34) 3423-0000",
+    "celular": "",
+    "fantasia": "D&M",
+    "tipo": "J",
+    "indicadorIe": 1,
+    "ie": "0012345670011",
+    "email": "antigo@dm.com.br",
+    "emailNotaFiscal": "nfe@dm.com.br",
+    "endereco": {
+        "geral": {"endereco": "Rua Velha", "cep": "38200-000", "bairro": "Centro",
+                  "municipio": "Frutal", "uf": "MG", "numero": "10",
+                  "complemento": "Sala 2"},
+        "cobranca": {"endereco": "Rua da Cobranca", "cep": "38200-001",
+                     "bairro": "Centro", "municipio": "Frutal", "uf": "MG",
+                     "numero": "99", "complemento": ""},
+    },
+    "vendedor": {"id": 15596},
+    "dadosAdicionais": {"dataNascimento": "0000-00-00", "sexo": "", "naturalidade": ""},
+    "financeiro": {"limiteCredito": 0, "condicaoPagamento": "30", "categoria": {"id": 0}},
+    "pais": {"nome": ""},
+    "tiposContato": [{"id": 1, "descricao": "Cliente"}],
+    "pessoasContato": [],
+}
+
+
+class _ClienteComContato:
+    """Bling falso: a busca por documento acha o contato; GET por id devolve o
+    contato completo; PUT grava (ou levanta `erro_put`)."""
+
+    def __init__(self, contato=None, erro_put=None):
+        self.contato = dict(contato or _CONTATO_BLING)
+        self.erro_put = erro_put
+        self.gets = []
+        self.puts = []
+        self.posts = []
+
+    async def get(self, path, params=None):
+        self.gets.append(path)
+        if path == "/contatos":
+            return {"data": [{"id": self.contato["id"], "nome": self.contato["nome"],
+                              "numeroDocumento": self.contato["numeroDocumento"]}]}
+        assert path == f"/contatos/{self.contato['id']}"
+        return {"data": self.contato}
+
+    async def put(self, path, json=None):
+        self.puts.append((path, json))
+        if self.erro_put:
+            raise self.erro_put
+        return {}
+
+    async def post(self, path, json=None):
+        self.posts.append(json)
+        return {"data": {"id": 1}}
+
+
+def _prepara(monkeypatch):
+    sb = FakeSupabase()
+    monkeypatch.setattr(ct, "get_supabase", lambda: sb)
+    monkeypatch.setattr(ct, "_lock", _fake_lock)
+    return sb
+
+
+def _espelho(sb):
+    return [q.filters["upsert"] for q in sb.queries
+            if q.name == "bling_contacts" and "upsert" in q.filters]
+
+
+def test_existente_recebe_email_telefone_e_endereco_digitados(monkeypatch):
+    sb = _prepara(monkeypatch)
+    client = _ClienteComContato()
+
+    out = asyncio.run(ct.create_contact(client, {"id": "L1"}, {
+        "nome": "D&M", "numeroDocumento": "29860598000170", "email": "novo@dm.com.br",
+        "celular": "(34) 99876-5432",
+        "endereco": {"geral": {"endereco": "Av. Nova", "numero": "200", "bairro": "",
+                               "cep": "38200100", "municipio": "Frutal", "uf": "MG"}},
+    }))
+
+    assert out == 17702865922
+    assert client.posts == []
+    assert len(client.puts) == 1
+    path, corpo = client.puts[0]
+    assert path == "/contatos/17702865922"
+    assert "id" not in corpo, "PUT nao leva o id no corpo"
+    assert corpo["email"] == "novo@dm.com.br"
+    assert corpo["celular"] == "(34) 99876-5432"
+    geral = corpo["endereco"]["geral"]
+    assert geral["endereco"] == "Av. Nova"
+    assert geral["numero"] == "200"
+    assert geral["cep"] == "38200100"
+    # Bairro em branco no formulario NAO apaga o do Bling; complemento e
+    # cobranca nem aparecem no formulario e ficam como estavam.
+    assert geral["bairro"] == "Centro"
+    assert geral["complemento"] == "Sala 2"
+    assert corpo["endereco"]["cobranca"] == _CONTATO_BLING["endereco"]["cobranca"]
+    # O resto do contato volta inteiro — campo omitido seria apagado no Bling.
+    for campo in ("nome", "codigo", "fantasia", "ie", "indicadorIe", "emailNotaFiscal",
+                  "vendedor", "financeiro", "tiposContato", "telefone", "situacao",
+                  "numeroDocumento", "tipo"):
+        assert corpo[campo] == _CONTATO_BLING[campo], campo
+
+
+def test_existente_campos_em_branco_nao_apagam_nada(monkeypatch):
+    _prepara(monkeypatch)
+    client = _ClienteComContato()
+
+    asyncio.run(ct.create_contact(client, {"id": "L1"}, {
+        "nome": "D&M", "numeroDocumento": "29860598000170", "email": "novo@dm.com.br",
+        "telefone": "", "celular": "   ",
+        "endereco": {"geral": {"endereco": "", "numero": "", "bairro": "", "cep": "",
+                               "municipio": "", "uf": ""}},
+    }))
+
+    _path, corpo = client.puts[0]
+    assert corpo["telefone"] == "(34) 3423-0000"
+    assert corpo["endereco"] == _CONTATO_BLING["endereco"]
+
+
+def test_existente_data_zerada_nao_viaja_no_put(monkeypatch):
+    """"0000-00-00" e o vazio do Bling para data; devolver isso no PUT e pedir
+    recusa por data invalida num campo que o vendedor nem ve."""
+    _prepara(monkeypatch)
+    client = _ClienteComContato()
+
+    asyncio.run(ct.create_contact(client, {"id": "L1"}, {
+        "nome": "D&M", "numeroDocumento": "29860598000170", "email": "novo@dm.com.br"}))
+
+    _path, corpo = client.puts[0]
+    assert "0000-00-00" not in str(corpo)
+
+
+def test_existente_sem_nada_novo_nao_faz_put(monkeypatch):
+    _prepara(monkeypatch)
+    client = _ClienteComContato()
+
+    asyncio.run(ct.create_contact(client, {"id": "L1"}, {
+        "nome": "D&M", "numeroDocumento": "29860598000170", "email": "antigo@dm.com.br"}))
+
+    assert client.puts == [], "mesmo e-mail do Bling: nada a atualizar"
+
+
+def test_existente_sem_contato_digitado_nem_consulta(monkeypatch):
+    _prepara(monkeypatch)
+    client = _ClienteComContato()
+
+    asyncio.run(ct.create_contact(client, {"id": "L1"}, {
+        "nome": "D&M", "numeroDocumento": "29860598000170"}))
+
+    assert client.gets == ["/contatos"]
+    assert client.puts == []
+
+
+def test_existente_espelho_recebe_o_contato_atualizado(monkeypatch):
+    sb = _prepara(monkeypatch)
+    client = _ClienteComContato()
+
+    asyncio.run(ct.create_contact(client, {"id": "L1"}, {
+        "nome": "D&M", "numeroDocumento": "29860598000170", "email": "novo@dm.com.br",
+        "endereco": {"geral": {"cep": "38200100", "endereco": "Av. Nova",
+                               "municipio": "Frutal", "uf": "MG"}}}))
+
+    linha = _espelho(sb)[-1]
+    assert linha["id"] == 17702865922
+    assert linha["email"] == "novo@dm.com.br"
+    assert linha["fantasia"] == "D&M"
+    assert linha["vendedor_id"] == 15596
+    assert linha["endereco"]["endereco"] == "Av. Nova"
+    assert linha["endereco"]["complemento"] == "Sala 2"
+
+
+def test_existente_put_recusado_propaga_com_fields(monkeypatch):
+    sb = _prepara(monkeypatch)
+    recusa = BlingValidationError(
+        "Não foi possível salvar o contato", status=400, payload={"error": {
+            "fields": [{"msg": "O CEP informado é inválido", "element": "cep"}]}})
+    client = _ClienteComContato(erro_put=recusa)
+
+    with pytest.raises(BlingValidationError) as exc:
+        asyncio.run(ct.create_contact(client, {"id": "L1"}, {
+            "nome": "D&M", "numeroDocumento": "29860598000170", "email": "novo@dm.com.br",
+            "endereco": {"geral": {"cep": "00000000", "endereco": "Av",
+                                   "municipio": "Frutal", "uf": "MG"}}}))
+
+    assert exc.value.fields == [{"campo": "CEP", "mensagem": "O CEP informado é inválido"}]
+    # Recusado: nao vincula — o vendedor corrige e tenta de novo.
+    assert not any(q.name == "lead_bling_contacts" and "upsert" in q.filters
+                   for q in sb.queries)
+
+
+def test_existente_put_transitorio_vincula_mesmo_assim_e_loga(monkeypatch, caplog):
+    from app.bling.errors import BlingServerError
+    sb = _prepara(monkeypatch)
+    client = _ClienteComContato(erro_put=BlingServerError("PUT /contatos/1: HTTP 503"))
+
+    with caplog.at_level("WARNING", logger="app.bling.contacts"):
+        out = asyncio.run(ct.create_contact(client, {"id": "L1"}, {
+            "nome": "D&M", "numeroDocumento": "29860598000170",
+            "email": "novo@dm.com.br"}))
+
+    assert out == 17702865922
+    assert any(q.name == "lead_bling_contacts" and
+               q.filters.get("upsert", {}).get("bling_contact_id") == 17702865922
+               for q in sb.queries)
+    avisos = [r.getMessage() for r in caplog.records if r.levelname == "WARNING"]
+    assert any("17702865922" in a for a in avisos)
+    assert not any("novo@dm.com.br" in a for a in avisos)
+    # O Bling nao mudou: o espelho fica com o que o Bling tem, nao com o digitado.
+    assert _espelho(sb)[-1]["email"] == "antigo@dm.com.br"
+
+
+def test_existente_get_transitorio_vincula_mesmo_assim(monkeypatch):
+    from app.bling.errors import BlingRateLimitError
+    sb = _prepara(monkeypatch)
+
+    class _GetFalha(_ClienteComContato):
+        async def get(self, path, params=None):
+            if path != "/contatos":
+                raise BlingRateLimitError("429")
+            return await super().get(path, params)
+
+    client = _GetFalha()
+    out = asyncio.run(ct.create_contact(client, {"id": "L1"}, {
+        "nome": "D&M", "numeroDocumento": "29860598000170", "email": "novo@dm.com.br"}))
+
+    assert out == 17702865922
+    assert client.puts == []
+    assert any(q.name == "lead_bling_contacts" and "upsert" in q.filters for q in sb.queries)
