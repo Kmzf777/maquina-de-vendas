@@ -140,3 +140,26 @@ describe("MessageBubble — reação que veio junto de texto", () => {
     expect(screen.getByText(/Reagiu com/)).toBeTruthy();
   });
 });
+
+/**
+ * Com o painel de venda/orçamento acoplado o chat estreita (~390–700 px). A
+ * bolha tem de QUEBRAR a linha — e-mail, endereço e links sem espaço inclusive
+ * — em vez de vazar e ser cortada. `break-words` (overflow-wrap: break-word)
+ * não entra no cálculo do min-content do item flex; `anywhere` entra, e o
+ * `min-w-0` deixa a bolha encolher dentro da linha flex.
+ */
+describe("MessageBubble — quebra de linha com o chat estreito", () => {
+  const longa = "cliente.com.um.email.bem.comprido.sem.espaco@dominio-muito-longo.com.br";
+
+  it.each([
+    ["recebida", "user"],
+    ["enviada", "assistant"],
+  ] as const)("bolha %s quebra palavra longa em qualquer ponto e pode encolher", (_, role) => {
+    renderBubble({ role, sent_by: role === "user" ? "user" : "agent", content: longa });
+    const texto = screen.getByText(longa);
+    const bolha = texto.closest("div.rounded-\\[8px\\]") as HTMLElement;
+    expect(bolha).toBeTruthy();
+    expect(bolha.className).toContain("[overflow-wrap:anywhere]");
+    expect(bolha.className).toContain("min-w-0");
+  });
+});

@@ -9,6 +9,7 @@ import { useLeadQuotes } from "@/hooks/use-lead-quotes";
 import { useCurrentUserEmail } from "@/hooks/use-current-user";
 import { WhatsappWindowIndicator } from "@/components/conversas/whatsapp-window-indicator";
 import { LeadCabecalho } from "@/components/sales/lead-cabecalho";
+import { PainelAcopladoContext } from "@/components/sales/painel-lateral";
 import { CrmPerfilTab } from "./tabs/crm-perfil-tab";
 import { CrmNotasTab } from "./tabs/crm-notas-tab";
 import { CrmCampanhasTab } from "./tabs/crm-campanhas-tab";
@@ -43,6 +44,13 @@ interface ContactDetailProps {
   onToggleFollowup?: () => void | Promise<void>;
   onLeadUpdate?: (leadId: string, patch: Partial<Lead>) => void;
   onDealUpdate?: (dealId: string, patch: Record<string, unknown>) => Promise<void>;
+  /**
+   * Só em /conversas, tela larga: o painel de venda/orçamento abre como coluna
+   * do layout (no lugar deste detalhe) em vez de sobreposto ao chat.
+   */
+  painelAcoplado?: boolean;
+  /** Avisa a página quando um painel ACOPLADO abre/fecha (ela recolhe a lista). */
+  onPainelAcopladoChange?: (aberto: boolean) => void;
 }
 
 export function ContactDetail({
@@ -56,6 +64,8 @@ export function ContactDetail({
   onToggleAi,
   onLeadUpdate,
   onDealUpdate,
+  painelAcoplado = false,
+  onPainelAcopladoChange,
 }: ContactDetailProps) {
   const [activeTab, setActiveTab] = useState<TabKey>("perfil");
   const [deals, setDeals] = useState<LeadDeal[]>([]);
@@ -79,6 +89,21 @@ export function ContactDetail({
   }
   const currentUserEmail = useCurrentUserEmail();
   const lead = conversation.leads as Lead | undefined | null;
+
+  // Modo do painel (acoplado × sobreposto) fixado na ABERTURA: se a janela
+  // cruzar o ponto de corte com o painel aberto, trocar de modo trocaria a
+  // árvore do PainelLateral e remontaria o formulário no meio do pedido.
+  const painelAberto = !!lead && (showCreateSale || !!editingSale || showCreateQuote);
+  const [modoNaAbertura, setModoNaAbertura] = useState<boolean | null>(null);
+  if (painelAberto && modoNaAbertura === null) setModoNaAbertura(painelAcoplado);
+  if (!painelAberto && modoNaAbertura !== null) setModoNaAbertura(null);
+  const acoplado = painelAberto && (modoNaAbertura ?? painelAcoplado);
+  useEffect(() => {
+    if (!acoplado || !onPainelAcopladoChange) return;
+    onPainelAcopladoChange(true);
+    return () => onPainelAcopladoChange(false);
+  }, [acoplado, onPainelAcopladoChange]);
+
   const { sales, refetch: refetchSales } = useLeadSales(lead?.id);
   const { quotes, refetch: refetchQuotes } = useLeadQuotes(lead?.id);
   const channel = conversation.channels;
@@ -167,7 +192,13 @@ export function ContactDetail({
   }
 
   return (
-    <div className="w-full md:w-[320px] bg-white border-l-0 md:border-l border-[#dedbd6] flex flex-col h-full">
+    <>
+    {/* Com o painel acoplado, o detalhe cede a coluna a ele (só escondido, não
+        desmontado: aba aberta e edições em curso continuam lá ao fechar). */}
+    <div
+      data-slot="detalhe-contato"
+      className={acoplado ? "hidden" : "w-full md:w-[320px] bg-white border-l-0 md:border-l border-[#dedbd6] flex flex-col h-full"}
+    >
       {onBack && (
         <div className="md:hidden border-b border-[#dedbd6] px-4 py-3 flex flex-col gap-3 flex-shrink-0 bg-[#faf9f6]">
           <div className="flex items-center gap-3">
@@ -303,6 +334,7 @@ export function ContactDetail({
           </div>
         )}
       </div>
+    </div>
 
       {showCreateDeal && lead && (
         <DealCreateModal
@@ -313,6 +345,10 @@ export function ContactDetail({
           onCreate={handleCreateDeal}
         />
       )}
+      {/* Fora do <div> do detalhe: acoplado, o painel é um irmão dele no flex
+          da página, ou seja, uma coluna ao lado do chat. Sobreposto, vai para o
+          portal do Sheet e a posição aqui não importa. */}
+      <PainelAcopladoContext value={acoplado}>
       {(showCreateSale || editingSale) && lead && (
         <SaleCreateModal
           leadId={lead.id}
@@ -332,6 +368,7 @@ export function ContactDetail({
           onSaved={() => { refetchQuotes(); setShowCreateQuote(false); }}
         />
       )}
-    </div>
+      </PainelAcopladoContext>
+    </>
   );
 }

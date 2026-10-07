@@ -86,8 +86,11 @@ export function ChatHeader({
     await onMarkRead?.();
   }
 
+  // `@container`: o rótulo "Finalizar Conversa" segue a largura do CABEÇALHO,
+  // não a da tela — com o painel de venda acoplado em /conversas o chat fica
+  // estreito numa tela larga, e o rótulo espremia o nome do lead.
   return (
-    <div className="border-b border-[#dedbd6] bg-[#faf9f6] px-4 py-3 flex items-center gap-3 flex-shrink-0">
+    <div className="@container border-b border-[#dedbd6] bg-[#faf9f6] px-4 py-3 flex items-center gap-3 flex-shrink-0">
       {/* Mobile back button */}
       {onBack && (
         <button
@@ -160,10 +163,12 @@ export function ChatHeader({
               >
                 <path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
               </svg>
-              <span className="hidden sm:inline">Finalizar Conversa</span>
+              <span className="hidden @xl:inline">Finalizar Conversa</span>
             </button>
           </TooltipTrigger>
-          <TooltipContent side="bottom" className="sm:hidden">
+          {/* Sem classe responsiva: o tooltip vai para um portal, fora do
+              @container, e a container query nunca casaria lá. */}
+          <TooltipContent side="bottom">
             Finalizar Conversa
           </TooltipContent>
         </Tooltip>

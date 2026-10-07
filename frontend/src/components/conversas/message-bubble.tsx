@@ -310,7 +310,10 @@ function MessageBubbleImpl({ message, isGrouped, conversationId, onReply, onReac
       {replyBtn}
       {reactBtn}
       <div
-        className={`relative px-3 py-2 text-[14px] max-w-[75%] rounded-[8px] ${
+        // `min-w-0` + `overflow-wrap:anywhere`: com o painel de venda acoplado o
+        // chat estreita, e e-mail/endereço/link sem espaço precisam QUEBRAR a
+        // linha em vez de vazar a bolha e ser cortados (herdado pelos filhos).
+        className={`relative min-w-0 [overflow-wrap:anywhere] px-3 py-2 text-[14px] max-w-[75%] rounded-[8px] ${
           isFromMe
             ? "bg-[#111111] text-white ml-auto"
             : "bg-white border border-[#dedbd6] text-[#111111]"
