@@ -57,7 +57,7 @@ describe("buildContactPayload", () => {
         endereco: "Av. Ipiranga",
         numero: "1200",
         bairro: "Centro",
-        cep: "90000-000",
+        cep: "90000000",
         municipio: "Porto Alegre",
         uf: "RS",
       },
@@ -179,5 +179,73 @@ describe("buildContactPayload", () => {
       }), "L1");
     expect(out.valid).toBe(true);
     expect(out.payload.email).toBe("compras@cafeteria.com");
+  });
+});
+
+describe("buildContactPayload — endereço", () => {
+  const BASE = { nome: "Fulano", documento: "12345678909", email: "a@b.com" };
+  const ENDERECO_OK = {
+    cep: "38.200-000",
+    logradouro: "Rua A",
+    municipio: "Frutal",
+    uf: "mg",
+  };
+
+  it("endereço todo em branco continua opcional", () => {
+    const out = buildContactPayload(blankContactForm(BASE), "L1");
+    expect(out.valid).toBe(true);
+    expect(out.payload.endereco).toBeUndefined();
+  });
+
+  it("CEP viaja só com dígitos", () => {
+    const out = buildContactPayload(blankContactForm({ ...BASE, ...ENDERECO_OK }), "L1");
+    expect(out.valid).toBe(true);
+    expect(out.payload.endereco?.geral.cep).toBe("38200000");
+    expect(out.payload.endereco?.geral.uf).toBe("MG");
+  });
+
+  it("qualquer campo de endereço preenchido exige CEP, UF, município e logradouro", () => {
+    const out = buildContactPayload(blankContactForm({ ...BASE, numero: "12" }), "L1");
+    expect(out.valid).toBe(false);
+    expect(out.errors).toEqual({
+      cep: "Informe o CEP",
+      uf: "Informe a UF",
+      municipio: "Informe o município",
+      logradouro: "Informe o logradouro",
+    });
+  });
+
+  it("só o bairro preenchido também dispara a exigência", () => {
+    const out = buildContactPayload(blankContactForm({ ...BASE, bairro: "Centro" }), "L1");
+    expect(out.valid).toBe(false);
+    expect(out.errors.cep).toBe("Informe o CEP");
+  });
+
+  it("CEP precisa de 8 dígitos", () => {
+    for (const cep of ["3820000", "382000000", "abc"]) {
+      const out = buildContactPayload(blankContactForm({ ...BASE, ...ENDERECO_OK, cep }), "L1");
+      expect(out.valid).toBe(false);
+      expect(out.errors.cep).toBe("CEP deve ter 8 dígitos");
+    }
+  });
+
+  it("UF precisa ser uma das 27 siglas", () => {
+    const out = buildContactPayload(blankContactForm({ ...BASE, ...ENDERECO_OK, uf: "XX" }), "L1");
+    expect(out.valid).toBe(false);
+    expect(out.errors.uf).toBe("UF inválida");
+    for (const uf of ["ac", "DF", "to", "SP", "rs"]) {
+      expect(
+        buildContactPayload(blankContactForm({ ...BASE, ...ENDERECO_OK, uf }), "L1").errors.uf,
+      ).toBeUndefined();
+    }
+  });
+
+  it("espaço em branco não conta como preenchido", () => {
+    const out = buildContactPayload(
+      blankContactForm({ ...BASE, cep: "  ", logradouro: " ", uf: " " }),
+      "L1",
+    );
+    expect(out.valid).toBe(true);
+    expect(out.payload.endereco).toBeUndefined();
   });
 });

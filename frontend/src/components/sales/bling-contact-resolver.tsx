@@ -145,6 +145,16 @@ export function BlingContactResolver({
   const erroNome = tocado ? montado.errors.nome : undefined;
   const erroDoc = tocado ? montado.errors.documento : undefined;
   const erroEmail = tocado ? montado.errors.email : undefined;
+  // Endereço: uma linha só, na ordem do formulário — os campos são estreitos
+  // demais para uma mensagem embaixo de cada um.
+  const errosEndereco = tocado
+    ? [
+        montado.errors.cep,
+        montado.errors.logradouro,
+        montado.errors.municipio,
+        montado.errors.uf,
+      ].filter(Boolean)
+    : [];
 
   return (
     <div className="space-y-4">
@@ -309,6 +319,9 @@ export function BlingContactResolver({
                   className={`${input} uppercase`}
                 />
               </div>
+              {errosEndereco.length > 0 && (
+                <p className="text-[11px] text-[#c41c1c]">{errosEndereco.join(" · ")}</p>
+              )}
             </div>
           </div>
         )}

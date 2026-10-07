@@ -63,8 +63,27 @@ export interface ContactPayload {
 
 export interface ContactPayloadResult {
   valid: boolean;
-  errors: { nome?: string; documento?: string; email?: string };
+  errors: {
+    nome?: string;
+    documento?: string;
+    email?: string;
+    cep?: string;
+    uf?: string;
+    municipio?: string;
+    logradouro?: string;
+  };
   payload: ContactPayload;
+}
+
+/** As 27 unidades da federação — o Bling recusa qualquer outra sigla. */
+export const UFS = [
+  "AC", "AL", "AP", "AM", "BA", "CE", "DF", "ES", "GO", "MA", "MT", "MS", "MG", "PA",
+  "PB", "PR", "PE", "PI", "RJ", "RN", "RS", "RO", "RR", "SC", "SP", "SE", "TO",
+] as const;
+
+/** Só os dígitos do CEP ("38.200-000" → "38200000"). */
+export function cepDigits(valor: string | null | undefined): string {
+  return (valor ?? "").replace(/\D/g, "");
 }
 
 export function blankContactForm(defaults: Partial<ContactForm> = {}): ContactForm {
@@ -146,15 +165,27 @@ export function buildContactPayload(
 
   // O endereço é opcional; só viaja se o vendedor preencheu alguma coisa, senão
   // o Bling receberia um bloco de strings vazias e gravaria endereço em branco.
+  // Mas, começado, tem que estar completo: o Bling recusa endereço pela metade
+  // (CEP inválido, UF desconhecida, município faltando) com uma frase genérica
+  // que o vendedor não sabe corrigir — melhor apontar o campo aqui.
   const geral: ContactAddress = {
     endereco: limpo(form.logradouro),
     numero: limpo(form.numero),
     bairro: limpo(form.bairro),
-    cep: limpo(form.cep),
+    cep: cepDigits(form.cep),
     municipio: limpo(form.municipio),
     uf: limpo(form.uf).toUpperCase(),
   };
-  if (Object.values(geral).some((v) => v)) payload.endereco = { geral };
+  const algumEndereco = Object.values(geral).some((v) => v) || limpo(form.cep) !== "";
+  if (algumEndereco) {
+    if (!limpo(form.cep)) errors.cep = "Informe o CEP";
+    else if (geral.cep.length !== 8) errors.cep = "CEP deve ter 8 dígitos";
+    if (!geral.uf) errors.uf = "Informe a UF";
+    else if (!(UFS as readonly string[]).includes(geral.uf)) errors.uf = "UF inválida";
+    if (!geral.municipio) errors.municipio = "Informe o município";
+    if (!geral.endereco) errors.logradouro = "Informe o logradouro";
+    payload.endereco = { geral };
+  }
 
   return { valid: Object.keys(errors).length === 0, errors, payload };
 }
