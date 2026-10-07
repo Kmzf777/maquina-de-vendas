@@ -469,6 +469,11 @@ async def _atualizar_existente(client, contact_id: int, dados: dict) -> dict | N
         logger.warning("[BLING] contato %s: GET para atualizar falhou (transitorio), "
                        "vinculando sem atualizar: %s", contact_id, exc)
         return None
+    if not isinstance(atual, dict) or not atual:
+        # Sem o contato completo nao ha como montar o PUT sem apagar campos.
+        logger.warning("[BLING] contato %s: GET sem o contato completo, vinculando "
+                       "sem atualizar", contact_id)
+        return None
     corpo = _corpo_do_put(atual, dados)
     if corpo == _sem_data_vazia({k: v for k, v in atual.items()
                                  if k not in _SOMENTE_LEITURA}):
