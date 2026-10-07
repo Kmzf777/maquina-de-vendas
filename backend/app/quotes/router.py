@@ -64,7 +64,7 @@ from pydantic import BaseModel, Field
 from app.bling import contacts
 from app.bling.client import BlingClient
 from app.bling.errors import (
-    TRANSIENT, BlingError, BlingUnknownAccount, BlingValidationError,
+    TRANSIENT, BlingError, BlingUnknownAccount, BlingValidationError, corpo_da_recusa,
 )
 from app.bling.orders import (_dec, _money, build_installments, create_order,
                               item_total, parse_terms)
@@ -375,10 +375,7 @@ def _contato_nao_resolvido(resolucao) -> JSONResponse:
 
 
 def _erro_de_validacao(exc: BlingValidationError) -> JSONResponse:
-    return JSONResponse({
-        "error": "validation", "message": str(exc),
-        "detail": exc.description, "type": exc.type,
-    }, status_code=422)
+    return JSONResponse(corpo_da_recusa(exc), status_code=422)
 
 
 def _numeros_do_corpo(body: QuoteIn, itens: list[dict]) -> dict:

@@ -21,6 +21,7 @@ import httpx
 from app.bling import auth, config, ratelimit
 from app.bling.errors import (
     BlingAuthError, BlingRateLimitError, BlingServerError, BlingValidationError,
+    resumo_da_recusa_para_log,
 )
 
 logger = logging.getLogger(__name__)
@@ -190,6 +191,17 @@ class BlingClient:
             except Exception:  # noqa: BLE001
                 pass
             err = (body or {}).get("error") or {}
+            if not isinstance(err, dict):
+                err = {}
+            # Uma linha por recusa, com o motivo campo a campo. Sem isto a
+            # recusa so existia na tela do vendedor (e, la, so a frase
+            # generica). Nada do corpo ENVIADO entra aqui, e o `msg` do Bling
+            # sai com documento/e-mail/telefone mascarados.
+            logger.warning(
+                "[BLING] recusa %s %s: HTTP %s type=%s campos=[%s]",
+                method, path, status, err.get("type") or "-",
+                resumo_da_recusa_para_log(body),
+            )
             raise BlingValidationError(
                 err.get("message") or f"{method} {path}: HTTP {status}",
                 type_=err.get("type") or "",

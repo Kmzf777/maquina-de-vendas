@@ -1128,3 +1128,121 @@ def test_router_expoe_as_rotas_esperadas():
     assert "/api/bling/catalog" in rotas
     assert "/api/bling/orders" in rotas
     assert "/api/bling/status" in rotas
+
+
+# ==========================================================================
+# Motivo real da recusa (`error.fields`) chega ao frontend em `fields`
+# ==========================================================================
+_RECUSA_COM_CAMPOS = {"error": {
+    "type": "VALIDATION_ERROR",
+    "message": "Não foi possível salvar o contato",
+    "description": "O contato não pode ser salvo pois ocorreram problemas com sua validação.",
+    "fields": [
+        {"code": 49, "msg": "O CEP informado é inválido", "element": "cep",
+         "namespace": "CONTATO.ENDERECO.GERAL"},
+        {"code": 3, "msg": "número inválido", "element": "numeroDocumento"},
+    ],
+}}
+_CAMPOS_ESPERADOS = [
+    {"campo": "CEP", "mensagem": "O CEP informado é inválido"},
+    {"campo": "CPF/CNPJ", "mensagem": "número inválido"},
+]
+
+
+def _recusa():
+    return BlingValidationError(
+        "Não foi possível salvar o contato", type_="VALIDATION_ERROR",
+        description="O contato não pode ser salvo pois ocorreram problemas com sua validação.",
+        status=400, payload=_RECUSA_COM_CAMPOS,
+    )
+
+
+def test_criar_contato_endpoint_devolve_fields_da_recusa(monkeypatch):
+    import json
+    monkeypatch.setattr(br, "_load_lead", lambda _id: {"id": "L1", "name": "Cliente"})
+
+    async def fake_create_contact(client, lead, dados, account):
+        raise _recusa()
+
+    monkeypatch.setattr(br.contacts, "create_contact", fake_create_contact)
+
+    resp = asyncio.run(br.create_contact_endpoint(br.ContactIn(
+        lead_id="L1", nome="Cliente Ltda", numeroDocumento="11222333000181",
+        email="cliente@empresa.com",
+    )))
+
+    corpo = json.loads(resp.body)
+    assert resp.status_code == 400
+    assert corpo["fields"] == _CAMPOS_ESPERADOS
+    assert corpo["message"] == "Não foi possível salvar o contato"
+    assert corpo["detail"].startswith("O contato não pode ser salvo")
+    assert corpo["type"] == "VALIDATION_ERROR"
+
+
+def test_criar_pedido_devolve_fields_da_recusa(monkeypatch):
+    import json
+    monkeypatch.setattr(br, "_load_lead", lambda _id: {"id": "L1"})
+    monkeypatch.setattr(br, "get_supabase", lambda: FakeSupabase(ESPELHO_PRODUTOS))
+
+    async def fake_resolve(lead, account):
+        return Resolution("linked", 555)
+
+    async def fake_create(*a, **k):
+        raise _recusa()
+
+    monkeypatch.setattr(br.contacts, "resolve", fake_resolve)
+    monkeypatch.setattr(br, "create_order", fake_create)
+    monkeypatch.setattr(br, "_seller_id_for", lambda _email, _account: None)
+
+    resp = asyncio.run(br.create_order_endpoint(br.OrderIn(
+        lead_id="L1", deal_id="D1", sold_at="2026-08-18",
+        items=[br.OrderItemIn(bling_product_id=1, quantidade=1, valor_unitario=10.0)],
+        payment=br.PaymentIn(method_id=45, terms=[0]),
+    )))
+
+    corpo = json.loads(resp.body)
+    assert resp.status_code == 422
+    assert corpo["fields"] == _CAMPOS_ESPERADOS
+    assert corpo["type"] == "VALIDATION_ERROR"
+
+
+def test_atualizar_pedido_devolve_fields_da_recusa(monkeypatch):
+    import json
+    monkeypatch.setattr(br, "_load_lead", lambda _id: {"id": "L1"})
+    monkeypatch.setattr(br, "get_supabase", lambda: FakeSupabase(ESPELHO_PRODUTOS))
+
+    async def fake_resolve(lead, account):
+        return Resolution("linked", 555)
+
+    async def fake_update(*a, **k):
+        raise _recusa()
+
+    monkeypatch.setattr(br.contacts, "resolve", fake_resolve)
+    monkeypatch.setattr(br, "update_order", fake_update)
+    monkeypatch.setattr(br, "_seller_id_for", lambda _email, _account: None)
+
+    resp = asyncio.run(br.update_order_endpoint(1, br.OrderIn(
+        lead_id="L1", sold_at="2026-08-18",
+        items=[br.OrderItemIn(bling_product_id=1, quantidade=1, valor_unitario=10.0)],
+        payment=br.PaymentIn(method_id=45, terms=[0]),
+    )))
+
+    assert resp.status_code == 422
+    assert json.loads(resp.body)["fields"] == _CAMPOS_ESPERADOS
+
+
+def test_recusa_sem_fields_devolve_lista_vazia(monkeypatch):
+    import json
+    monkeypatch.setattr(br, "_load_lead", lambda _id: {"id": "L1", "name": "Cliente"})
+
+    async def fake_create_contact(client, lead, dados, account):
+        raise BlingValidationError("documento invalido", status=422)
+
+    monkeypatch.setattr(br.contacts, "create_contact", fake_create_contact)
+
+    resp = asyncio.run(br.create_contact_endpoint(br.ContactIn(
+        lead_id="L1", nome="Cliente Ltda", numeroDocumento="11222333000181",
+        email="cliente@empresa.com",
+    )))
+
+    assert json.loads(resp.body)["fields"] == []

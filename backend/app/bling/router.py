@@ -33,7 +33,9 @@ from fastapi.responses import JSONResponse, RedirectResponse
 from pydantic import BaseModel, Field, field_validator
 
 from app.bling import auth, config, contacts, jobs
-from app.bling.errors import TRANSIENT, BlingError, BlingUnknownAccount, BlingValidationError
+from app.bling.errors import (
+    TRANSIENT, BlingError, BlingUnknownAccount, BlingValidationError, corpo_da_recusa,
+)
 from app.bling.orders import create_order, update_order
 from app.config import settings
 from app.db.supabase import get_supabase
@@ -396,10 +398,7 @@ async def create_order_endpoint(body: OrderIn):
             out = await create_order(client, **kwargs)
     except BlingValidationError as exc:
         # Repetir payload invalido nunca conserta — nao vai para a fila.
-        return JSONResponse({
-            "error": "validation", "message": str(exc),
-            "detail": exc.description, "type": exc.type,
-        }, status_code=422)
+        return JSONResponse(corpo_da_recusa(exc), status_code=422)
     except TRANSIENT as exc:
         # `account=` PRECISA ir aqui. A conta oficial do job e a da LINHA, nao a
         # do payload — `_handle_create_order` descarta a do payload de proposito,
@@ -483,10 +482,7 @@ async def update_order_endpoint(order_id: int, body: OrderIn):
     except BlingValidationError as exc:
         # Repetir a mesma alteracao recusada nunca conserta — nao vira retentativa.
         # Quem chama decide se salva local e marca divergencia.
-        return JSONResponse({
-            "error": "validation", "message": str(exc),
-            "detail": exc.description, "type": exc.type,
-        }, status_code=422)
+        return JSONResponse(corpo_da_recusa(exc), status_code=422)
     except TRANSIENT as exc:
         # Sem job: o PUT e seguro de reenviar (nao ha duplicacao possivel como
         # no POST), entao o proprio vendedor tentando salvar de novo basta.
@@ -516,8 +512,7 @@ async def create_contact_endpoint(body: ContactIn):
         async with BlingClient(account=conta.key) as client:
             contact_id = await contacts.create_contact(client, lead, dados, account=conta.key)
     except BlingValidationError as exc:
-        return JSONResponse({"error": "validation", "message": str(exc),
-                             "detail": exc.description}, status_code=exc.status)
+        return JSONResponse(corpo_da_recusa(exc), status_code=exc.status)
     except BlingError as exc:
         # Antes so BlingValidationError era pega. Com multi-conta,
         # BlingNotConfigured/BlingAuthError/BlingServerError deixam de ser

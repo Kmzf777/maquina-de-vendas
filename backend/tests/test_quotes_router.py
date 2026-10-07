@@ -18,6 +18,7 @@ O e-mail obrigatório do `ContactIn` também é testado aqui (e não em
 exige desde o commit `1d973c30`, mas barreira de navegador não é barreira.
 """
 import inspect
+import json
 from decimal import Decimal
 
 import pytest
@@ -276,6 +277,25 @@ async def test_criar_devolve_422_quando_o_bling_recusa_e_nada_e_gravado(db, monk
     assert resp.status_code == 422
     assert "parcelas invalidas" in resp.body.decode()
     assert db["inserted"] is None
+
+
+async def test_criar_422_repassa_fields_da_recusa(db, monkeypatch):
+    """O motivo real (`error.fields` do Bling) chega ao vendedor em `fields`."""
+    async def fake_create(client, **kwargs):
+        raise BlingValidationError(
+            "Não foi possível salvar", type_="VALIDATION_ERROR", description="generica",
+            payload={"error": {"fields": [{"msg": "inválido", "element": "cep"}]}})
+
+    monkeypatch.setattr(qr, "create_proposal", fake_create)
+
+    resp = await qr.create_quote_endpoint(corpo())
+
+    dados = json.loads(resp.body)
+    assert resp.status_code == 422
+    assert dados["fields"] == [{"campo": "CEP", "mensagem": "inválido"}]
+    assert dados["message"] == "Não foi possível salvar"
+    assert dados["detail"] == "generica"
+    assert dados["type"] == "VALIDATION_ERROR"
 
 
 async def test_criar_devolve_502_quando_o_bling_esta_fora(db, monkeypatch):
@@ -548,6 +568,21 @@ async def test_falha_ao_criar_o_pedido_nao_converte_nem_toca_na_situacao(db, mon
     assert resp.status_code == 422
     assert db["ordem"] == []
     assert db["updates"] == [], "sem venda não há conversão"
+
+
+async def test_converter_422_repassa_fields_da_recusa(db, monkeypatch):
+    monkeypatch.setattr(qr, "_load_quote", lambda _id: dict(QUOTE_RASCUNHO))
+
+    async def explode(client, **kwargs):
+        raise BlingValidationError("x", payload={"error": {"fields": [
+            {"msg": "obrigatório", "element": "municipio"}]}})
+
+    monkeypatch.setattr(qr, "create_order", explode)
+
+    resp = await qr.convert_quote_endpoint("Q1")
+
+    assert resp.status_code == 422
+    assert json.loads(resp.body)["fields"] == [{"campo": "Município", "mensagem": "obrigatório"}]
 
 
 async def test_converter_repassa_itens_e_parcelas_do_orcamento(db, monkeypatch):
