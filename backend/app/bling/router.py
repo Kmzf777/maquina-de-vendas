@@ -508,9 +508,11 @@ async def create_contact_endpoint(body: ContactIn):
     # campo do contato -- `contacts.create_contact` so espera nome,
     # numeroDocumento, tipo, email, telefone, celular, endereco.
     dados = body.model_dump(exclude={"lead_id", "account"}, exclude_none=True)
+    avisos: list[str] = []
     try:
         async with BlingClient(account=conta.key) as client:
-            contact_id = await contacts.create_contact(client, lead, dados, account=conta.key)
+            contact_id = await contacts.create_contact(client, lead, dados,
+                                                       account=conta.key, avisos=avisos)
     except BlingValidationError as exc:
         return JSONResponse(corpo_da_recusa(exc), status_code=exc.status)
     except BlingError as exc:
@@ -519,7 +521,12 @@ async def create_contact_endpoint(body: ContactIn):
         # teoricos aqui: uma conta valida mas ainda sem token (nunca passou
         # pelo OAuth) cai exatamente neste caminho. Sem isto, 500 opaco.
         return JSONResponse({"error": "bling", "message": str(exc)}, status_code=502)
-    return {"bling_contact_id": contact_id, "account": conta.key}
+    resposta = {"bling_contact_id": contact_id, "account": conta.key}
+    if avisos:
+        # Nao bloqueante: o contato foi vinculado, so a atualizacao no Bling
+        # ficou para tras. O resolver mostra e deixa o vendedor seguir.
+        resposta["aviso"] = " ".join(avisos)
+    return resposta
 
 
 @router.post("/contacts/link")

@@ -649,7 +649,7 @@ def test_atualizar_pedido_repassa_a_conta_para_resolve_seller_e_update_order(mon
 def test_criar_contato_endpoint_sucesso_devolve_bling_contact_id_e_conta(monkeypatch):
     monkeypatch.setattr(br, "_load_lead", lambda _id: {"id": "L1", "name": "Cliente"})
 
-    async def fake_create_contact(client, lead, dados, account):
+    async def fake_create_contact(client, lead, dados, account, **_k):
         return 4321
 
     monkeypatch.setattr(br.contacts, "create_contact", fake_create_contact)
@@ -670,7 +670,7 @@ def test_criar_contato_endpoint_repassa_a_conta_do_corpo(monkeypatch):
 
     capturado = {}
 
-    async def fake_create_contact(client, lead, dados, account):
+    async def fake_create_contact(client, lead, dados, account, **_k):
         capturado["account"] = account
         assert "account" not in dados, "account e roteamento, nao campo do Bling"
         return 4321
@@ -702,7 +702,7 @@ def test_criar_contato_endpoint_erro_bling_generico_devolve_502_em_vez_de_500(mo
     a conta 2 pode existir configurada e ainda nao ter token nenhum."""
     monkeypatch.setattr(br, "_load_lead", lambda _id: {"id": "L1", "name": "Cliente"})
 
-    async def fake_create_contact(client, lead, dados, account):
+    async def fake_create_contact(client, lead, dados, account, **_k):
         raise BlingServerError("bling fora do ar")
 
     monkeypatch.setattr(br.contacts, "create_contact", fake_create_contact)
@@ -721,7 +721,7 @@ def test_criar_contato_endpoint_validacao_preserva_status_e_mensagem(monkeypatch
     # a ordem dos except importa.
     monkeypatch.setattr(br, "_load_lead", lambda _id: {"id": "L1", "name": "Cliente"})
 
-    async def fake_create_contact(client, lead, dados, account):
+    async def fake_create_contact(client, lead, dados, account, **_k):
         raise BlingValidationError("documento invalido", status=422)
 
     monkeypatch.setattr(br.contacts, "create_contact", fake_create_contact)
@@ -1161,7 +1161,7 @@ def test_criar_contato_endpoint_devolve_fields_da_recusa(monkeypatch):
     import json
     monkeypatch.setattr(br, "_load_lead", lambda _id: {"id": "L1", "name": "Cliente"})
 
-    async def fake_create_contact(client, lead, dados, account):
+    async def fake_create_contact(client, lead, dados, account, **_k):
         raise _recusa()
 
     monkeypatch.setattr(br.contacts, "create_contact", fake_create_contact)
@@ -1235,7 +1235,7 @@ def test_recusa_sem_fields_devolve_lista_vazia(monkeypatch):
     import json
     monkeypatch.setattr(br, "_load_lead", lambda _id: {"id": "L1", "name": "Cliente"})
 
-    async def fake_create_contact(client, lead, dados, account):
+    async def fake_create_contact(client, lead, dados, account, **_k):
         raise BlingValidationError("documento invalido", status=422)
 
     monkeypatch.setattr(br.contacts, "create_contact", fake_create_contact)
@@ -1246,3 +1246,39 @@ def test_recusa_sem_fields_devolve_lista_vazia(monkeypatch):
     )))
 
     assert json.loads(resp.body)["fields"] == []
+
+
+def test_criar_contato_endpoint_repassa_aviso_nao_bloqueante(monkeypatch):
+    import json
+    monkeypatch.setattr(br, "_load_lead", lambda _id: {"id": "L1", "name": "Cliente"})
+
+    async def fake_create_contact(client, lead, dados, account, avisos=None):
+        avisos.append("Cliente vinculado, mas o Bling não aceitou atualizar o cadastro: x. "
+                      "Corrija direto no Bling.")
+        return 77
+
+    monkeypatch.setattr(br.contacts, "create_contact", fake_create_contact)
+
+    resp = asyncio.run(br.create_contact_endpoint(br.ContactIn(
+        lead_id="L1", nome="Cliente Ltda", numeroDocumento="11222333000181",
+        email="cliente@empresa.com",
+    )))
+
+    assert resp["bling_contact_id"] == 77
+    assert resp["aviso"].startswith("Cliente vinculado, mas o Bling não aceitou")
+
+
+def test_criar_contato_endpoint_sem_aviso_nao_leva_a_chave(monkeypatch):
+    monkeypatch.setattr(br, "_load_lead", lambda _id: {"id": "L1", "name": "Cliente"})
+
+    async def fake_create_contact(client, lead, dados, account, avisos=None):
+        return 77
+
+    monkeypatch.setattr(br.contacts, "create_contact", fake_create_contact)
+
+    resp = asyncio.run(br.create_contact_endpoint(br.ContactIn(
+        lead_id="L1", nome="Cliente Ltda", numeroDocumento="11222333000181",
+        email="cliente@empresa.com",
+    )))
+
+    assert resp == {"bling_contact_id": 77, "account": "default"}

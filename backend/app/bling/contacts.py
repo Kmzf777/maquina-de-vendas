@@ -24,7 +24,7 @@ from dataclasses import dataclass, field
 import redis.asyncio as aioredis
 
 from app.bling import config
-from app.bling.errors import TRANSIENT, BlingValidationError
+from app.bling.errors import TRANSIENT, BlingValidationError, elementos_da_recusa
 from app.bling.sync import _to_e164_br, map_contact
 from app.config import settings
 from app.db.supabase import get_supabase
@@ -455,13 +455,51 @@ def _corpo_do_put(atual: dict, dados: dict) -> dict:
     return _sem_data_vazia(corpo)
 
 
-async def _atualizar_existente(client, contact_id: int, dados: dict) -> dict | None:
+_CAMPOS_SIMPLES_DO_FORMULARIO = ("nome", "email", "telefone", "celular")
+
+
+def _digitados(dados: dict) -> set[str]:
+    """Elements do Bling que o vendedor PREENCHEU neste envio do formulario."""
+    geral = ((dados.get("endereco") or {}).get("geral")) or {}
+    return ({c for c in _CAMPOS_SIMPLES_DO_FORMULARIO if _preenchido(dados.get(c))}
+            | {k for k, v in geral.items() if _preenchido(v)})
+
+
+def _recusa_e_do_vendedor(exc: BlingValidationError, dados: dict) -> bool:
+    """A recusa do PUT tem ALGUM campo que o vendedor digitou agora?
+
+    So nesse caso ela volta para a tela: ele tem o que corrigir. Recusa em campo
+    que veio do proprio cadastro do Bling (data zerada, IE estranha, telefone
+    antigo que ele deixou em branco, CEP da cobranca) nao tem conserto no CRM.
+    """
+    digitados = _digitados(dados)
+    for element, namespace in elementos_da_recusa(exc.payload):
+        if "COBRANCA" in namespace.upper():
+            continue  # o formulario so mexe no endereco geral
+        if element.rsplit(".", 1)[-1] in digitados:
+            return True
+    return False
+
+
+def _aviso_da_recusa(exc: BlingValidationError) -> str:
+    motivos = "; ".join(
+        f"{f['campo']}: {f['mensagem']}" if f["campo"] else f["mensagem"]
+        for f in exc.fields
+    ) or " ".join(p for p in (str(exc), exc.description) if p)
+    return (f"Cliente vinculado, mas o Bling não aceitou atualizar o cadastro: "
+            f"{motivos}. Corrija direto no Bling.")
+
+
+async def _atualizar_existente(client, contact_id: int, dados: dict,
+                               avisos: list[str] | None = None) -> dict | None:
     """Leva ao contato existente o e-mail/telefone/endereco digitados.
 
     Devolve o contato como ficou no Bling (para o espelho), ou None quando nem
-    o GET foi possivel. Recusa de validacao do PUT PROPAGA (com `fields`: o
-    vendedor corrige); erro transitorio so loga — a venda nao pode travar
-    porque o Bling piscou, e o vinculo segue mesmo assim.
+    o GET foi possivel. Recusa de validacao do PUT em campo que o vendedor
+    digitou PROPAGA (com `fields`: ele corrige); recusa so em campo que veio do
+    Bling, ou sem `fields`, NAO trava — vincula como antes, loga e devolve um
+    aviso em `avisos`. Erro transitorio so loga — a venda nao pode travar
+    porque o Bling piscou.
     """
     try:
         atual = (await client.get(f"/contatos/{contact_id}")).get("data") or {}
@@ -480,6 +518,17 @@ async def _atualizar_existente(client, contact_id: int, dados: dict) -> dict | N
         return atual
     try:
         await client.put(f"/contatos/{contact_id}", corpo)
+    except BlingValidationError as exc:
+        if _recusa_e_do_vendedor(exc, dados):
+            raise
+        # So o NOME dos campos no log — o `msg` pode repetir dado do cliente.
+        elementos = [e or "?" for e, _ns in elementos_da_recusa(exc.payload)]
+        logger.warning("[BLING] contato %s: Bling recusou o PUT em campo(s) que o "
+                       "vendedor nao digitou (%s) — vinculando sem atualizar",
+                       contact_id, ", ".join(elementos) or "sem fields")
+        if avisos is not None:
+            avisos.append(_aviso_da_recusa(exc))
+        return atual
     except TRANSIENT as exc:
         logger.warning("[BLING] contato %s: PUT com os dados do vendedor falhou "
                        "(transitorio), vinculando sem atualizar: %s", contact_id, exc)
@@ -492,7 +541,8 @@ async def _atualizar_existente(client, contact_id: int, dados: dict) -> dict | N
 
 
 async def create_contact(client, lead: dict, dados: dict,
-                          account: str = config.DEFAULT_ACCOUNT) -> int:
+                          account: str = config.DEFAULT_ACCOUNT,
+                          avisos: list[str] | None = None) -> int:
     """Cria (ou reaproveita) o contato no Bling e devolve o id.
 
     `dados` vem do modal: nome, numeroDocumento, tipo, email, telefone, celular,
@@ -502,6 +552,8 @@ async def create_contact(client, lead: dict, dados: dict,
 
     Se o documento JA existe no Bling, vincula e leva ao contato o e-mail,
     telefone e endereco que o vendedor preencheu (ver `_atualizar_existente`).
+    Aviso nao bloqueante para o vendedor (recusa que ele nao tem como corrigir)
+    entra em `avisos`, se quem chama passar a lista.
     """
     doc = doc_digits(dados.get("numeroDocumento"))
     if not is_valid_document(doc):
@@ -550,7 +602,7 @@ async def create_contact(client, lead: dict, dados: dict,
             # digitou (decisao do dono). Antes, so vinculava e descartava — e o
             # pedido sai com `contato.id`, ou seja, com o endereco velho.
             if _tem_contato_digitado(dados):
-                no_bling = await _atualizar_existente(client, contact_id, dados)
+                no_bling = await _atualizar_existente(client, contact_id, dados, avisos)
         else:
             payload = {
                 "nome": dados.get("nome") or lead.get("name") or "",

@@ -1137,3 +1137,113 @@ def test_existente_get_transitorio_vincula_mesmo_assim(monkeypatch):
     assert out == 17702865922
     assert client.puts == []
     assert any(q.name == "lead_bling_contacts" and "upsert" in q.filters for q in sb.queries)
+
+
+# --------------------------------------------------------------------------
+# PUT recusado: so trava se a recusa for em campo que o vendedor digitou
+# --------------------------------------------------------------------------
+def _recusa_put(fields=None):
+    erro = {"type": "VALIDATION_ERROR", "message": "Não foi possível salvar o contato"}
+    if fields is not None:
+        erro["fields"] = fields
+    return BlingValidationError("Não foi possível salvar o contato", status=400,
+                                type_="VALIDATION_ERROR", payload={"error": erro})
+
+
+def _vinculou(sb, contact_id=17702865922):
+    return any(q.name == "lead_bling_contacts" and
+               q.filters.get("upsert", {}).get("bling_contact_id") == contact_id
+               for q in sb.queries)
+
+
+_DADOS_DM = {"nome": "D&M", "numeroDocumento": "29860598000170", "email": "novo@dm.com.br",
+             "endereco": {"geral": {"cep": "38200100", "endereco": "Av. Nova",
+                                    "municipio": "Frutal", "uf": "MG"}}}
+
+
+def test_put_recusado_em_campo_nao_digitado_vincula_com_aviso_e_log(monkeypatch, caplog):
+    sb = _prepara(monkeypatch)
+    client = _ClienteComContato(erro_put=_recusa_put([
+        {"code": 9, "msg": "Data de nascimento inválida", "element": "dataNascimento",
+         "namespace": "CONTATO.DADOSADICIONAIS"}]))
+    avisos = []
+
+    with caplog.at_level("WARNING", logger="app.bling.contacts"):
+        out = asyncio.run(ct.create_contact(client, {"id": "L1"}, dict(_DADOS_DM),
+                                            avisos=avisos))
+
+    assert out == 17702865922
+    assert _vinculou(sb)
+    assert avisos == [
+        "Cliente vinculado, mas o Bling não aceitou atualizar o cadastro: "
+        "dataNascimento: Data de nascimento inválida. Corrija direto no Bling."
+    ]
+    linhas = [r.getMessage() for r in caplog.records if r.levelname == "WARNING"]
+    assert any("17702865922" in l and "dataNascimento" in l for l in linhas)
+    for l in linhas:
+        assert "novo@dm.com.br" not in l and "29860598000170" not in l and "D&M" not in l
+    # O Bling nao mudou: espelho com o que esta la.
+    assert _espelho(sb)[-1]["email"] == "antigo@dm.com.br"
+
+
+def test_put_recusado_sem_fields_vincula_com_aviso(monkeypatch):
+    sb = _prepara(monkeypatch)
+    client = _ClienteComContato(erro_put=_recusa_put())
+    avisos = []
+
+    out = asyncio.run(ct.create_contact(client, {"id": "L1"}, dict(_DADOS_DM), avisos=avisos))
+
+    assert out == 17702865922
+    assert _vinculou(sb)
+    assert len(avisos) == 1
+    assert avisos[0].startswith("Cliente vinculado, mas o Bling não aceitou atualizar o cadastro: ")
+    assert "Não foi possível salvar o contato" in avisos[0]
+    assert avisos[0].endswith("Corrija direto no Bling.")
+
+
+def test_put_recusado_em_telefone_que_o_vendedor_nao_digitou_nao_trava(monkeypatch):
+    """`telefone` e campo do formulario, mas NESTE envio veio em branco: o valor
+    recusado e o antigo do Bling, que o vendedor nao tem como corrigir aqui."""
+    sb = _prepara(monkeypatch)
+    client = _ClienteComContato(erro_put=_recusa_put([
+        {"msg": "Telefone inválido", "element": "telefone"}]))
+
+    out = asyncio.run(ct.create_contact(client, {"id": "L1"}, dict(_DADOS_DM), avisos=[]))
+
+    assert out == 17702865922
+    assert _vinculou(sb)
+
+
+def test_put_recusado_no_cep_de_cobranca_nao_trava(monkeypatch):
+    """O formulario so mexe no endereco geral; CEP de cobranca e do Bling."""
+    sb = _prepara(monkeypatch)
+    client = _ClienteComContato(erro_put=_recusa_put([
+        {"msg": "O CEP informado é inválido", "element": "cep",
+         "namespace": "CONTATO.ENDERECO.COBRANCA"}]))
+
+    asyncio.run(ct.create_contact(client, {"id": "L1"}, dict(_DADOS_DM), avisos=[]))
+
+    assert _vinculou(sb)
+
+
+def test_put_recusado_em_cep_digitado_propaga_mesmo_com_outro_campo_junto(monkeypatch):
+    sb = _prepara(monkeypatch)
+    client = _ClienteComContato(erro_put=_recusa_put([
+        {"msg": "Data inválida", "element": "dataNascimento"},
+        {"msg": "O CEP informado é inválido", "element": "cep",
+         "namespace": "CONTATO.ENDERECO.GERAL"}]))
+
+    with pytest.raises(BlingValidationError) as exc:
+        asyncio.run(ct.create_contact(client, {"id": "L1"}, dict(_DADOS_DM), avisos=[]))
+
+    assert {"campo": "CEP", "mensagem": "O CEP informado é inválido"} in exc.value.fields
+    assert not _vinculou(sb)
+
+
+def test_aviso_e_opcional_para_quem_chama(monkeypatch):
+    sb = _prepara(monkeypatch)
+    client = _ClienteComContato(erro_put=_recusa_put())
+
+    out = asyncio.run(ct.create_contact(client, {"id": "L1"}, dict(_DADOS_DM)))
+
+    assert out == 17702865922 and _vinculou(sb)

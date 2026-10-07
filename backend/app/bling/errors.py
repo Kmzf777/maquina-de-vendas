@@ -131,6 +131,16 @@ def campos_da_recusa(payload) -> list[dict]:
     return saida
 
 
+def elementos_da_recusa(payload) -> list[tuple[str, str]]:
+    """`(element, namespace)` cru de cada item de `error.fields` — para decidir
+    DE QUEM e o campo recusado (ex.: `cep` do endereco geral x da cobranca)."""
+    saida = []
+    for item in _itens_brutos(payload):
+        namespace = item.get("namespace")
+        saida.append((_element(item), namespace if isinstance(namespace, str) else ""))
+    return saida
+
+
 # Para o LOG: o `msg` do Bling as vezes repete o valor recusado ("O CPF
 # 123.456.789-09 e invalido"). E-mail e qualquer sequencia longa de digitos
 # (documento, telefone, CEP) sao mascarados — o log precisa do motivo, nao do
