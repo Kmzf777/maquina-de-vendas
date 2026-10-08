@@ -79,6 +79,11 @@ async def _bling_webhook_tick() -> None:
     await bling_webhook_tick()
 
 
+async def _valeria_repasse_tick() -> None:
+    from app.button_flow.valeria_repasse import varrer
+    await varrer()
+
+
 # (nome, tipo, fn, intervalo/fallback em segundos)
 TASK_SPECS = [
     ("broadcasts", "event", _broadcasts_tick, 60),
@@ -93,6 +98,8 @@ TASK_SPECS = [
     # travou às 21h29 UTC, no meio do dia da conta) — o que inflava o ROAS do /trafego.
     # O upsert é idempotente por (plataforma, campanha, dia), então reconferir sai barato.
     ("ad-spend-sync", "periodic", _ad_spend_sync_tick, 10800),
+    # Repasse automático de quem mostrou intenção e parou (desligado por padrão).
+    ("valeria_repasse_parados", "periodic", _valeria_repasse_tick, 600),
     ("bling-sync", "periodic", _bling_sync_tick, 86400),
     ("bling-jobs", "periodic", _bling_jobs_tick, 30),
     # "event": o receiver publica no event bus ao gravar o webhook — o
