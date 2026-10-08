@@ -49,7 +49,9 @@ causa de uma edição de copy. Leitura falhou → 503 com o número da migration
 ── Um router, dois fluxos (`?flow_id=`) ─────────────────────────────────────
 Toda rota aceita `flow_id` (`valeria_botoes_v1` default | `valeria_botoes_v2`) e
 resolve o registry por `_registry`; qualquer outro valor é 400. Sem o parâmetro a
-resposta é a de sempre, byte a byte — a v1 não ganha nem perde chave. A v2 acrescenta:
+resposta é a da v1 de antes, com UMA adição: cada canal de `/channels` ganha
+`flow_id` (o fluxo de botões que o perfil dele roda; None = LLM). Nenhuma chave da
+v1 sumiu nem mudou de valor. A v2 acrescenta:
   • `cards` em cada nó (corpo editável; a chave de gravação é `card:<nó>:<id>`,
     `valeria_content.chave_do_card`, e o atalho `card:<id>` vale quando o id é
     único no fluxo);
@@ -800,16 +802,16 @@ async def api_delete_conteudo(node_id: str, flow_id: str = _flow_id_query()):
         historico = _versionar(node_id, voltando, rotulos_atuais,
                                linha.get("rotulos_antigos") or [], r)
         try:
-            tabela = get_supabase().table(_TABELA)
+            consulta = get_supabase().table(_TABELA)
             if historico:
                 (
-                    tabela.update({"corpo": None, "rotulos": None,
+                    consulta.update({"corpo": None, "rotulos": None,
                                    "rotulos_antigos": historico})
                     .eq("flow_id", r.FLOW_ID).eq("node_id", node_id).execute()
                 )
             else:
                 (
-                    tabela.delete()
+                    consulta.delete()
                     .eq("flow_id", r.FLOW_ID).eq("node_id", node_id).execute()
                 )
         except Exception as exc:

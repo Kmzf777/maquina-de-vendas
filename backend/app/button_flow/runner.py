@@ -18,11 +18,13 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from app.agent.tools import SUPERVISOR_NAME, SUPERVISOR_PHONE
 from app.agent_profiles.service import get_agent_profile
 from app.button_flow import config, effects, engine, flows
+from app.button_flow import valeria_registry, valeria_registry_v2
+from app.button_flow.valeria_engine import _encerrado
 from app.conversations.service import (
     get_conversation,
     get_history,
@@ -159,14 +161,51 @@ def fluxo_da_conversa(conversation: dict, channel: dict) -> str | None:
 # outro número, e não tem registry compatível com o `node` de nenhum dos dois.
 FLUXOS_VALERIA = frozenset({"valeria_botoes_v1", "valeria_botoes_v2"})
 
+# Idade máxima do `flow_state` para a conversa ainda contar como "em andamento". Fixa
+# e não `config.janela_retoma_dias()`: aquela chave é da Recuperação (env
+# RECUPERACAO_JANELA_RETOMA_DIAS) e mexer nela não pode mudar o despacho da ValerIA.
+_DIAS_EM_ANDAMENTO = 7
+
+
+def _registry_do_fluxo(flow_id: str):
+    """(nós, terminais) do registry da ValerIA `flow_id`."""
+    r = valeria_registry_v2 if flow_id == valeria_registry_v2.FLOW_ID else valeria_registry
+    return r.NOS, r.TERMINAIS
+
+
+def _em_andamento(estado: dict, flow_id: str) -> bool:
+    """True quando a conversa está MESMO no meio do fluxo `flow_id`.
+
+    O `flow_state` nunca é limpo: sem esta régua, todo lead que um dia tocou na v1
+    ficaria na v1 para sempre depois de o canal virar v2 — e a comparação v1 × v2
+    mediria a base antiga, não o fluxo novo. Então são duas condições:
+      • o `node` gravado é um nó, ou um terminal que NÃO encerra, DESSE registry —
+        a régua é `valeria_engine._encerrado` (só `T_ADIAR`, que pergunta o prazo,
+        é terminal vivo); nó que o registry não conhece não é andamento;
+      • o `updated_at` é legível e tem no máximo `_DIAS_EM_ANDAMENTO` dias. Ausente
+        ou corrompido conta como "não está em andamento": na dúvida vale o perfil.
+    """
+    node = estado.get("node")
+    nos, terminais = _registry_do_fluxo(flow_id)
+    if not isinstance(node, str) or (node not in nos and node not in terminais):
+        return False
+    if _encerrado(node, nos, terminais):
+        return False
+    quando = _parse_iso(estado.get("updated_at"))
+    if quando is None:
+        return False
+    return datetime.now(timezone.utc) - quando <= timedelta(days=_DIAS_EM_ANDAMENTO)
+
 
 def fluxo_efetivo(conversation: dict, channel: dict) -> str | None:
     """O fluxo que atende ESTE inbound: o da conversa em andamento vence o do perfil.
 
     Trocar o perfil do canal de v1 para v2 (ou de volta) não pode reiniciar quem
     está no meio do atendimento: o `flow_state.flow` gravado é a memória de qual
-    registry entende o `node` salvo. Só vale entre os fluxos da ValerIA, e só
-    quando o perfil ainda aponta para UM deles (perfil desligado → None continua None).
+    registry entende o `node` salvo. Só vale entre os fluxos da ValerIA, só quando o
+    perfil ainda aponta para UM deles (perfil desligado → None continua None) e só
+    quando a conversa está de fato no meio do fluxo (`_em_andamento`): desfecho
+    encerrado ou estado velho seguem o perfil.
 
     Devolve None exatamente quando `fluxo_da_conversa` devolve None: a pergunta "é
     de ALGUM fluxo de botões?" (`_optout_deterministico_cabe`) não muda por aqui.
@@ -176,7 +215,8 @@ def fluxo_efetivo(conversation: dict, channel: dict) -> str | None:
         return fluxo
     estado = (conversation or {}).get("flow_state")
     gravado = estado.get("flow") if isinstance(estado, dict) else None
-    if gravado in FLUXOS_VALERIA and gravado != fluxo and config.enabled(gravado):
+    if (gravado in FLUXOS_VALERIA and gravado != fluxo and config.enabled(gravado)
+            and _em_andamento(estado, gravado)):
         return gravado
     return fluxo
 
