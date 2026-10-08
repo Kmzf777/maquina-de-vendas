@@ -307,10 +307,12 @@ def test_vk_vendedor_handoff_do_ramo(ramo, terminal):
     assert d.repasse_motivo == 'clicou "Falar com vendedor"'
 
 
-def test_vk_sem_ramo_no_estado_nao_herda_entrada():
-    """VK tem ramo "entrada" no registry: sem ramo no estado, não há handoff de ramo."""
+def test_vk_sem_ramo_no_estado_vai_para_o_joao():
+    """VK tem ramo "entrada" no registry: sem ramo no estado, não há handoff de ramo,
+    e quem pediu vendedor vai ao João (T_HUMANO não manda nada nem atribui ninguém)."""
     d = _decidir("VK", _clique("vendedor"), _est("VK", ramo=None))
-    assert d.proximo_no == "T_HUMANO"
+    assert d.proximo_no == "T_HANDOFF"
+    assert d.repasse_motivo == 'clicou "Falar com vendedor"'
 
 
 def test_vk_quero_kit_vai_para_t_kit_com_motivo():
@@ -438,15 +440,32 @@ def test_pergunta_na_exportacao_vai_para_arthur():
     assert d.proximo_no == "T_HANDOFF_ARTHUR"
 
 
-def test_pergunta_sem_ramo_vai_para_humano():
+def test_pergunta_sem_ramo_vai_para_o_joao():
+    """Sem ramo, a pergunta real vai ao João (atende tudo menos exportação):
+    T_HUMANO não manda mensagem nem atribui vendedor — o lead ficava no silêncio."""
     d = _decidir("N0", _tc("PERGUNTA", "vocês têm loja física?"), _est("N0", ramo=None))
-    assert d.proximo_no == "T_HUMANO"
+    assert d.proximo_no == "T_HANDOFF"
+    assert d.efeitos.handoff is True
     assert d.repasse_motivo == "PERGUNTA: vocês têm loja física?"
 
 
-def test_vendedor_sem_ramo_vai_para_humano():
+def test_vendedor_sem_ramo_vai_para_o_joao():
     d = _decidir("N0", _tc("VENDEDOR", "quero um atendente"), _est("N0", ramo=None))
+    assert d.proximo_no == "T_HANDOFF"
+    assert d.repasse_motivo == "VENDEDOR: quero um atendente"
+
+
+@pytest.mark.parametrize("classe", ["PERGUNTA", "VENDEDOR"])
+def test_pergunta_e_vendedor_em_consumo_vao_para_o_joao(classe):
+    d = _decidir("C1", _tc(classe, "dá pra comprar 1 pacote?"), _est("C1", ramo=None))
+    assert d.proximo_no == "T_HANDOFF"
+    assert d.repasse_motivo == f"{classe}: dá pra comprar 1 pacote?"
+
+
+def test_segundo_ruido_em_consumo_continua_humano():
+    d = _decidir("C1", _tc("RUIDO", "?"), _est("C1", ramo=None, ruidos=1))
     assert d.proximo_no == "T_HUMANO"
+    assert d.repasse_motivo == motor.MOTIVO_RUIDO
 
 
 def test_vk_pergunta_usa_ramo_do_estado():
@@ -527,9 +546,9 @@ def test_vo_faq_preco_reenvia_tabela():
     assert d.vitrine == "tabela"
 
 
-def test_vo_sem_ramo_vai_para_humano():
+def test_vo_sem_ramo_vai_para_o_joao():
     d = _decidir("VO", _tc("PERGUNTA", "oi?"), _est("VO", ramo=None))
-    assert d.proximo_no == "T_HUMANO"
+    assert d.proximo_no == "T_HANDOFF"
 
 
 # ── 8. Texto puro (classificador não rodou) ─────────────────────────────────
@@ -565,9 +584,9 @@ def test_faq_em_t_adiar_responde_e_reoferece_os_prazos():
     assert d.efeitos.recontato_dias is None
 
 
-def test_preco_em_consumo_vai_para_humano():
+def test_preco_em_consumo_vai_para_o_joao():
     d = _decidir("C1", _tc("FAQ", "quanto custa?", faq_id="preco"), _est("C1", ramo=None))
-    assert d.proximo_no == "T_HUMANO"
+    assert d.proximo_no == "T_HANDOFF"
     assert d.repasse_motivo == "PERGUNTA: quanto custa?"
 
 

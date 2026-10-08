@@ -61,6 +61,8 @@ class DecisaoV2(v1.Decisao):
 
 ID_HUMANO = v1.ID_HUMANO
 ID_OPTOUT = v1.ID_OPTOUT
+# Vendedor de quem não tem ramo com vendedor próprio (ver `_Ctx.handoff`).
+ID_HANDOFF_PADRAO = r.HANDOFF_DO_RAMO["atacado"]
 VITRINES = frozenset(r.VITRINE_DO_RAMO.values())
 MOTIVO_RUIDO = "sem resposta a botões (2 mensagens não entendidas)"
 _PREFIXO_CARD = "card:"
@@ -240,9 +242,18 @@ class _Ctx:
         return DecisaoV2(proximo_no=vitrine, vitrine="tabela",
                          mensagem=Mensagem(corpo=r.CORPO_ACOES, botoes=no.botoes), **extra)
 
-    def handoff(self, motivo: str, **extra) -> DecisaoV2:
-        """Handoff do ramo; sem ramo com vendedor, T_HUMANO (spec §7.2)."""
-        destino = r.HANDOFF_DO_RAMO.get(self.ramo or "", ID_HUMANO)
+    def handoff(self, motivo: str, *, sem_vendedor: str = ID_HANDOFF_PADRAO,
+                **extra) -> DecisaoV2:
+        """Handoff do ramo; ramo sem vendedor próprio (ou sem ramo) → `sem_vendedor`.
+
+        O padrão é o João (`T_HANDOFF`), que atende tudo menos exportação: quem
+        fez uma pergunta real ou pediu vendedor antes de ter ramo (N0, C1) ia
+        para `T_HUMANO`, que não manda mensagem nem atribui vendedor — o lead
+        ficava no silêncio. Decisão de produto de 08/10/2026, que diverge da
+        spec §7.2 ("PERGUNTA/VENDEDOR em N0 → T_HUMANO"). Só o esgotamento de
+        RUIDO continua indo a `T_HUMANO` (ver `ruido`).
+        """
+        destino = r.HANDOFF_DO_RAMO.get(self.ramo or "", sem_vendedor)
         return self.ir_para(destino, repasse_motivo=motivo, **extra)
 
     def faq(self, faq_id: str, retorno: str, **extra) -> DecisaoV2:
@@ -388,5 +399,6 @@ class _Ctx:
             extra = {"vitrine": "acoes"} if self.no_atual in VITRINES else {}
             return DecisaoV2(proximo_no=self.no_atual, mensagem=mensagem,
                              marcar_nudge=True, memoria={"ruidos": n}, **extra)
-        return self.handoff(MOTIVO_RUIDO, memoria={"ruidos": n})
+        # Sem ramo, texto que ninguém entendeu NÃO é pergunta: segue T_HUMANO.
+        return self.handoff(MOTIVO_RUIDO, sem_vendedor=ID_HUMANO, memoria={"ruidos": n})
 
