@@ -43,3 +43,19 @@ def test_google_email_gmail_sem_pontos():
 def test_email_invalido_vira_none():
     assert meta_email_hash("sem-arroba") is None
     assert google_email_hash(None) is None
+
+
+def test_celular_sem_o_nono_digito_ganha_o_9():
+    """wa_id do WhatsApp costuma vir sem o 9 (55 + DDD + 8 dígitos); o celular de verdade tem.
+    Sem o 9 o hash não casa com o telefone da conta na plataforma."""
+    assert normalize_br_phone("553492009777") == "5534992009777"
+    assert normalize_br_phone("3482009777") == "5534982009777"
+    assert normalize_br_phone("+55 34 6200-9777") == "5534962009777"
+    assert meta_phone_hash("553492009777") == _h("5534992009777")
+    assert google_phone_hash("553492009777") == _h("+5534992009777")
+
+
+def test_fixo_com_8_digitos_nao_ganha_o_9():
+    assert normalize_br_phone("553432009777") == "553432009777"
+    assert normalize_br_phone("(34) 3200-9777") == "553432009777"
+    assert normalize_br_phone("553452009777") == "553452009777"

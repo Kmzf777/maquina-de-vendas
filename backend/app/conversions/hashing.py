@@ -17,7 +17,11 @@ def _sha256(s: str) -> str:
 
 
 def normalize_br_phone(phone: str | None) -> str | None:
-    """Dígitos com DDI 55. Aceita máscara, '+', zero de tronco. Menos de 10 dígitos → None."""
+    """Dígitos com DDI 55. Aceita máscara, '+', zero de tronco. Menos de 10 dígitos → None.
+
+    Celular sem o nono dígito (55 + DDD + 8 dígitos começando em 6–9) ganha o '9': o `wa_id` do
+    WhatsApp costuma vir sem ele, mas o telefone cadastrado na conta Meta/Google tem — sem o 9 o
+    hash simplesmente não casa. Fixo (8 dígitos começando em 2–5) fica como está."""
     if not phone:
         return None
     d = _NAO_DIGITO.sub("", phone).lstrip("0")
@@ -25,6 +29,8 @@ def normalize_br_phone(phone: str | None) -> str | None:
         return None
     if not d.startswith("55") or len(d) <= 11:
         d = "55" + d
+    if len(d) == 12 and d[4] in "6789":
+        d = d[:4] + "9" + d[4:]
     return d
 
 

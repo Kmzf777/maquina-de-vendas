@@ -72,11 +72,51 @@ def test_send_ok(monkeypatch):
 
     def handler(req: httpx.Request):
         seen["url"] = str(req.url)
+        seen["auth"] = req.headers.get("Authorization")
         return httpx.Response(200, json={"events_received": 1, "fbtrace_id": "T"})
 
     r = meta.send(ROW, LEAD, transport=httpx.MockTransport(handler))
     assert r.ok and not r.permanent
-    assert "/DS1/events" in seen["url"] and "access_token=TOK" in seen["url"]
+    assert "/DS1/events" in seen["url"]
+    # Token no header, nunca na URL: o httpx loga a URL inteira em INFO (vazou em produção).
+    assert "access_token" not in seen["url"] and "TOK" not in seen["url"]
+    assert seen["auth"] == "Bearer TOK"
+
+
+def test_send_200_sem_json_ainda_e_sucesso(monkeypatch):
+    """A Meta aceitou (200): o evento foi registrado. Corpo estranho não pode virar falha —
+    a falha seria retentada e a Meta não deduplica."""
+    _env(monkeypatch)
+    t = httpx.MockTransport(lambda req: httpx.Response(200, text="<html>ok</html>"))
+    r = meta.send(ROW, LEAD, transport=t)
+    assert r.ok and r.response == {"raw": "<html>ok</html>"}
+
+
+@pytest.mark.parametrize("exc", [httpx.ReadTimeout("t"), httpx.WriteTimeout("t"),
+                                 httpx.RemoteProtocolError("t"), httpx.ReadError("t")])
+def test_resposta_que_nao_chegou_e_ambigua_e_nao_reenvia(monkeypatch, exc):
+    """O request pode ter chegado e a Meta não deduplica: reenviar duplicaria o evento.
+    Vira `erro` (permanente) com instrução de conferir no Gerenciador de Eventos."""
+    _env(monkeypatch)
+
+    def handler(req):
+        raise exc
+
+    r = meta.send(ROW, LEAD, transport=httpx.MockTransport(handler))
+    assert not r.ok and r.permanent and not r.auth_error
+    assert r.error == "resposta da Meta não chegou — conferir no Gerenciador de Eventos antes de reenviar"
+
+
+@pytest.mark.parametrize("exc", [httpx.ConnectError("t"), httpx.ConnectTimeout("t"), httpx.PoolTimeout("t")])
+def test_falha_de_conexao_e_transitoria(monkeypatch, exc):
+    """Sem conexão o request não saiu: pode tentar de novo."""
+    _env(monkeypatch)
+
+    def handler(req):
+        raise exc
+
+    r = meta.send(ROW, LEAD, transport=httpx.MockTransport(handler))
+    assert not r.ok and not r.permanent
 
 
 def test_send_400_e_permanente(monkeypatch):
@@ -100,11 +140,20 @@ def test_send_auth_e_permissao_sao_transitorios(monkeypatch):
     for status in (401, 403):
         t = httpx.MockTransport(lambda req, s=status: httpx.Response(s, json={"error": {"message": "x", "code": 1}}))
         r = meta.send(ROW, LEAD, transport=t)
-        assert not r.ok and not r.permanent, status
+        assert not r.ok and not r.permanent and r.auth_error, status
     for code in (190, 102, 10, 200, 299, 4, 17, 32, 341, 613):
         t = httpx.MockTransport(lambda req, c=code: httpx.Response(400, json={"error": {"message": "x", "type": "OAuthException", "code": c}}))
         r = meta.send(ROW, LEAD, transport=t)
         assert not r.ok and not r.permanent, code
+        # token/permissão disparam o disjuntor do sender; limite de taxa não
+        assert r.auth_error == (code in (190, 102, 10) or 200 <= code <= 299), code
+
+
+def test_erro_de_validacao_nao_e_auth(monkeypatch):
+    _env(monkeypatch)
+    for status in (400, 429, 500):
+        t = httpx.MockTransport(lambda req, s=status: httpx.Response(s, json={"error": {"message": "x", "code": 100}}))
+        assert not meta.send(ROW, LEAD, transport=t).auth_error, status
 
 
 def test_send_is_transient_da_meta_e_respeitado(monkeypatch):

@@ -33,6 +33,14 @@ _TIMEOUT = 15.0
 # inválido/vencido (190, 102), permissão negada (10, 200–299) — gerar token novo resolve — e
 # limites/indisponibilidade (2, 4, 17, 32, 341, 613). Ficam no backoff em vez de virar `erro`.
 _TRANSIENT_CODES = {2, 4, 10, 17, 32, 102, 190, 341, 613}
+# Dentre esses, os de credencial (token inválido/vencido, permissão negada): disparam o disjuntor
+# do sender (`SendResult.auth_error`) — 200–299 também são permissão.
+_AUTH_CODES = {10, 102, 190}
+# O request saiu e a resposta não voltou: a Meta pode ter registrado o evento, e ela NÃO
+# deduplica neste produto. Reenviar sozinho duplicaria a conversão — vira `erro` para conferência.
+# (ConnectError/ConnectTimeout/PoolTimeout = não conectou, o request não saiu: segue transitório.)
+_AMBIGUOUS_ERRORS = (httpx.ReadTimeout, httpx.WriteTimeout, httpx.ReadError, httpx.RemoteProtocolError)
+AMBIGUOUS_MSG = "resposta da Meta não chegou — conferir no Gerenciador de Eventos antes de reenviar"
 
 
 def _truthy(name: str) -> bool:
@@ -105,13 +113,32 @@ def _error_message(resp: httpx.Response) -> str:
         return f"HTTP {resp.status_code}: {resp.text[:300]}"
 
 
-def _transient_graph_error(body: Any) -> bool:
+def _graph_code(body: Any) -> tuple[Any, dict]:
     err = (body.get("error") if isinstance(body, dict) else None) or {}
     if not isinstance(err, dict):
-        return False
-    code = err.get("code")
+        return None, {}
+    return err.get("code"), err
+
+
+def _transient_graph_error(body: Any) -> bool:
+    code, err = _graph_code(body)
     return bool(err.get("is_transient")) or code in _TRANSIENT_CODES \
         or (isinstance(code, int) and 200 <= code <= 299)
+
+
+def _auth_graph_error(status: int, body: Any) -> bool:
+    code, _err = _graph_code(body)
+    return status in (401, 403) or code in _AUTH_CODES or (isinstance(code, int) and 200 <= code <= 299)
+
+
+def _ok_body(resp: httpx.Response) -> dict[str, Any]:
+    """Corpo de um 200. A Meta já aceitou: corpo que não é JSON não pode virar falha (a falha
+    seria retentada, e a Meta não deduplica)."""
+    try:
+        body = resp.json()
+        return body if isinstance(body, dict) else {"raw": body}
+    except ValueError:
+        return {"raw": resp.text[:500]}
 
 
 def send(row: dict[str, Any], lead: dict[str, Any], *, transport: httpx.BaseTransport | None = None) -> SendResult:
@@ -124,16 +151,21 @@ def send(row: dict[str, Any], lead: dict[str, Any], *, transport: httpx.BaseTran
     # consome a linha, então o mesmo evento real sairia de novo a cada 6 h. Não chama a Meta.
     if _truthy("CONVERSIONS_TEST_MODE") and not _test_code():
         return SendResult(ok=False, permanent=False, error=_TEST_MODE_SEM_CODIGO)
-    version = os.getenv("META_CAPI_API_VERSION") or "v25.0"
-    url = f"{GRAPH}/{version}/{os.getenv('META_CAPI_DATASET_ID')}/events"
-    payload = build_payload(build_event(row, lead, waba_id=os.getenv("META_WABA_ID")))
+    version = (os.getenv("META_CAPI_API_VERSION") or "").strip() or "v25.0"
+    url = f"{GRAPH}/{version}/{os.getenv('META_CAPI_DATASET_ID', '').strip()}/events"
+    payload = build_payload(build_event(row, lead, waba_id=os.getenv("META_WABA_ID", "").strip()))
+    # Token no header, nunca na URL: o httpx loga a URL completa em INFO e a exceção de rede a
+    # repete — `access_token=` na query vazava para o log do worker.
+    headers = {"Authorization": f"Bearer {os.getenv('META_CAPI_ACCESS_TOKEN', '').strip()}"}
     try:
         with httpx.Client(timeout=_TIMEOUT, transport=transport) as client:
-            resp = client.post(url, params={"access_token": os.getenv("META_CAPI_ACCESS_TOKEN")}, json=payload)
+            resp = client.post(url, headers=headers, json=payload)
+    except _AMBIGUOUS_ERRORS:
+        return SendResult(ok=False, permanent=True, error=AMBIGUOUS_MSG)
     except httpx.HTTPError as exc:
         return SendResult(ok=False, permanent=False, error=f"rede: {exc}")
     if resp.status_code == 200:
-        return SendResult(ok=True, response=resp.json())
+        return SendResult(ok=True, response=_ok_body(resp))
     body = None
     try:
         body = resp.json()
@@ -141,4 +173,5 @@ def send(row: dict[str, Any], lead: dict[str, Any], *, transport: httpx.BaseTran
         pass
     permanent = 400 <= resp.status_code < 500 and resp.status_code not in (401, 403, 429) \
         and not _transient_graph_error(body)
-    return SendResult(ok=False, permanent=permanent, error=_error_message(resp), response=body)
+    return SendResult(ok=False, permanent=permanent, error=_error_message(resp), response=body,
+                      auth_error=_auth_graph_error(resp.status_code, body))
