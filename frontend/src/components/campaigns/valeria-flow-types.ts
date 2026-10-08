@@ -65,7 +65,7 @@ export interface BotaoFluxo {
 
 /**
  * Um card do carrossel da v2. Só o `corpo` é editável, e ele grava pela chave
- * `card:<id>` (contrato C7). O corpo traz marcadores `{preco:<nome do produto>}` que o
+ * canônica `card:<nó>:<id>` que o servidor manda em `chave`. O corpo traz marcadores `{preco:<nome do produto>}` que o
  * backend troca pelo preço do catálogo NO ENVIO; o limite da Meta (160 caracteres, no
  * máximo 2 quebras de linha) vale DEPOIS dessa troca — por isso o `PUT` pode voltar 422
  * com um texto que, cru, parecia caber.
@@ -249,7 +249,7 @@ export type SalvarConteudo = (nodeId: string, patch: ConteudoUpdate) => Promise<
 
 /**
  * O que um `PUT`/`DELETE` bem-sucedido devolve. Para nó, terminal e reservado é o
- * `_item_json` mesclado; para `card:<id>` e para os textos da v2 a forma é a do
+ * `_item_json` mesclado; para `card:<nó>:<id>` e para os textos da v2 a forma é a do
  * serializador do backend, e o painel só precisa saber que DEU CERTO (não-nulo).
  */
 export type ItemGravado = ItemFluxo | CardFluxo | TextoFluxo;

@@ -53,7 +53,7 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { FlowIdValeria, PainelCanaisProps } from "./valeria-flow-types";
+import type { PainelCanaisProps } from "./valeria-flow-types";
 import { FLOW_V1, mensagemDeErro, queryDoFluxo, versaoCurta } from "./valeria-flow-shared";
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -87,6 +87,11 @@ export interface CanalDoFluxo {
   perfil_compartilhado: boolean;
   /** Nomes dos outros canais naquele perfil. Podem vir NULL — o router não filtra. */
   compartilhado_com: (string | null)[];
+  /**
+   * O fluxo de botões que este canal roda HOJE (`gate._fluxo_de` sobre o perfil),
+   * `null` quando atende por LLM. É a fonte do selo v1/v2.
+   */
+  flow_id?: string | null;
   atende_este_fluxo: boolean;
 }
 
@@ -128,22 +133,6 @@ export function listarNomes(nomes: string[]): string {
   if (nomes.length === 0) return "";
   if (nomes.length === 1) return nomes[0];
   return `${nomes.slice(0, -1).join(", ")} e ${nomes[nomes.length - 1]}`;
-}
-
-/**
- * O canal atende pela versão ESCOLHIDA no seletor?
- *
- * Quando o backend respondeu pela mesma versão que foi pedida, vale o
- * `atende_este_fluxo` dele, como sempre. Quando respondeu por OUTRA (um backend de
- * antes do contrato C7 ignora `?flow_id=` e calcula contra a v1), aquele booleano é a
- * resposta para a pergunta errada: aí vale o `flow_id` gravado no perfil de botões. Só
- * a igualdade exata, de propósito — a regra de default de `runner._fluxo_de` (`flow_id`
- * nulo cai em outro fluxo) nunca produz uma versão da ValerIA, então não precisa ser
- * copiada para cá.
- */
-export function atendeEstaVersao(canal: CanalDoFluxo, respondidoPor: string, pedido: FlowIdValeria): boolean {
-  if (respondidoPor === pedido) return Boolean(canal.atende_este_fluxo);
-  return canal.perfil?.kind === "button_flow" && canal.perfil.flow_id === pedido;
 }
 
 /** Como os irmãos são chamados na frase: os nomes, ou o genérico se vierem nulos. */
@@ -233,11 +222,7 @@ export function ValeriaFlowChannels({ flowId }: PainelCanaisProps) {
   }
 
   const emVoo = ativando !== null;
-  const respondidoPor = dados?.flow_id ?? flowId;
-  const canais = (dados?.canais ?? []).map((canal) => ({
-    ...canal,
-    atende_este_fluxo: atendeEstaVersao(canal, respondidoPor, flowId),
-  }));
+  const canais = dados?.canais ?? [];
   const desligado = dados !== null && !dados.ligado;
 
   return (
@@ -409,7 +394,11 @@ function LinhaCanal({
     canal.perfil?.kind === "button_flow" && !canal.atende_este_fluxo;
   // A versão da ValerIA de Botões que o canal segue HOJE, qualquer que seja a versão
   // aberta no seletor: é o que o operador precisa ver antes de trocar v1 por v2.
-  const versao = canal.perfil?.kind === "button_flow" ? versaoCurta(canal.perfil.flow_id) : null;
+  // O `flow_id` do canal (o fluxo efetivo, calculado pelo router); sem ele, o do perfil
+  // de botões.
+  const versao = versaoCurta(
+    canal.flow_id !== undefined ? canal.flow_id : canal.perfil?.kind === "button_flow" ? canal.perfil.flow_id : null,
+  );
 
   // A borda esquerda carrega o estado: tinta = já atende por este fluxo, âmbar =
   // perfil acoplado a outro canal, transparente = nada a notar.

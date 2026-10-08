@@ -435,14 +435,17 @@ describe("ValeriaFlowChannels — versão do fluxo", () => {
     expect(chamadas.find((c) => c.method === "POST")?.body).toEqual({ channel_id: "c-v1", flow_id: V2 });
   });
 
-  it("se o backend responder pela v1, decide 'atende este fluxo' pelo flow_id do perfil", async () => {
-    // Backend antigo: ignora `?flow_id=` e calcula `atende_este_fluxo` contra a v1.
-    instalarFetch([corpo([NA_V1, NA_V2], true)]);
-    render(<ValeriaFlowChannels flowId={V2} />);
-    await waitFor(() => expect(screen.getByText("Comercial")).toBeTruthy());
-
-    expect(within(linha("Vitrine")).getByText("Atende por este fluxo")).toBeTruthy();
-    expect(within(linha("Comercial")).queryByText("Atende por este fluxo")).toBeNull();
-    expect(botao(linha("Comercial"), "Ativar")).toBeTruthy();
+  it("o selo vem do `flow_id` do CANAL quando o router o manda, e cai no do perfil sem ele", async () => {
+    await montar(true, [
+      // O perfil diz v1, o canal (fluxo efetivo do router) diz v2: vale o do canal.
+      { ...NA_V1, flow_id: V2 },
+      // Sem o campo no canal: o do perfil de botões.
+      { ...NA_V2, flow_id: undefined },
+      // LLM: o router manda `flow_id: null`, e não há selo.
+      { ...CANAL_SOZINHO, flow_id: null },
+    ]);
+    expect(within(linha("Comercial")).getByTitle("Versão do fluxo de botões deste canal").textContent).toBe("v2");
+    expect(within(linha("Vitrine")).getByTitle("Versão do fluxo de botões deste canal").textContent).toBe("v2");
+    expect(within(linha("Suporte")).queryByTitle("Versão do fluxo de botões deste canal")).toBeNull();
   });
 });

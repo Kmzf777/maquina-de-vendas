@@ -50,7 +50,9 @@
  * O `GET ?flow_id=valeria_botoes_v2` tem a forma da v1 e mais duas coisas (contrato C7
  * do plano `2026-10-08-valeria-botoes-v2-vitrine.md`):
  *   • `cards` nas vitrines (`tela: "carrossel"`). Cada card grava SOZINHO, pela chave
- *     `card:<id>`, então tem caixa, contador e Salvar próprios dentro da tela do nó.
+ *     canônica `card:<nó>:<id>` que o servidor manda em `chave` (o atalho `card:<id>`
+ *     é 400 quando o id existe em duas vitrines), então tem caixa, contador e Salvar
+ *     próprios dentro da tela do nó.
  *     O contador conta o `{preco:…}` como o preço que vai sair, não como o marcador cru,
  *     porque o limite de 160 do backend é medido DEPOIS dessa troca — e o 422 que ele
  *     devolve quando passa aparece no próprio card. O tamanho NÃO bloqueia o Salvar
@@ -496,14 +498,26 @@ export function ValeriaFlowEditor({ dados, salvar, restaurar, salvando, erro }: 
   // O servidor devolve o item já mesclado e a casca o recoloca em `dados`; por isso o
   // rascunho é DESCARTADO no sucesso, em vez de virar o novo valor local — dois donos
   // do mesmo texto divergem na primeira gravação parcial.
+  // Trocar de tela esquece qual card foi recusado: a recusa que ainda estiver em `erro`
+  // volta para o rodapé em vez de ficar presa a um card que não é mais o assunto.
+  function selecionar(id: string) {
+    setCardRecusado(null);
+    setSelecionadoId(id);
+  }
+
+  // Toda gravação que NÃO é de card zera `cardRecusado` antes de sair: a recusa que ela
+  // trouxer é do corpo ou dos rótulos, e tem de aparecer no rodapé, não no card que
+  // falhou antes.
   async function aoSalvar() {
     if (!patch || problemas.length || salvando) return;
+    setCardRecusado(null);
     const salvo = await salvar(item.id, patch);
     if (salvo) descartar(item.id);
   }
 
   async function aoRestaurar() {
     if (salvando) return;
+    setCardRecusado(null);
     const restaurado = await restaurar(item.id);
     if (restaurado) descartar(item.id);
   }
@@ -542,7 +556,7 @@ export function ValeriaFlowEditor({ dados, salvar, restaurar, salvando, erro }: 
               // Clicar no ramo em que o operador JÁ está não mexe na seleção: ele
               // perderia a tela aberta (e o rascunho em foco) por um clique sem efeito.
               onClick={() => {
-                if (candidato.chave !== grupo.chave) setSelecionadoId(candidato.itens[0].id);
+                if (candidato.chave !== grupo.chave) selecionar(candidato.itens[0].id);
               }}
               className={`flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-[4px] px-2 py-1.5 text-[12px] transition-colors lg:w-full lg:justify-between ${
                 ativo
@@ -574,7 +588,7 @@ export function ValeriaFlowEditor({ dados, salvar, restaurar, salvando, erro }: 
               key={candidato.id}
               type="button"
               aria-current={ativo ? "true" : undefined}
-              onClick={() => setSelecionadoId(candidato.id)}
+              onClick={() => selecionar(candidato.id)}
               className={`flex shrink-0 flex-col items-start gap-0.5 whitespace-nowrap border-l-2 px-2 py-1.5 text-left text-[12px] transition-colors lg:w-full lg:rounded-r-[4px] ${
                 ativo
                   ? "border-[#111111] bg-[#faf9f6] font-medium text-[#111111]"
@@ -770,7 +784,8 @@ function Contador({
 
 /**
  * Os cards do carrossel (v2). Cada um com caixa, contador, Salvar e Restaurar PRÓPRIOS:
- * o card grava pela chave `card:<id>`, separado do corpo e dos botões do nó.
+ * o card grava pela chave canônica `card:<nó>:<id>` (a `chave` do servidor, ou
+ * `chaveDoCard`), separado do corpo e dos botões do nó.
  */
 function CardsDoNo({
   no,

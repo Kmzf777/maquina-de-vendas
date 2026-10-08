@@ -708,6 +708,51 @@ describe("v2 — cards do carrossel", () => {
     expect(campoCard("classico").value).toBe("Clássico novo {preco:Clássico 250g}");
   });
 
+  it("a recusa de um card não gruda nele: o erro seguinte, do corpo do nó, sai no rodapé", async () => {
+    const recusaCard = "o card tem 171 caracteres depois de resolver os preços";
+    const recusaNo = "o corpo não pode ficar vazio";
+    const salvar = vi.fn<PainelFluxoProps["salvar"]>(async () => null);
+    const restaurar = vi.fn<PainelFluxoProps["restaurar"]>(async () => null);
+    const props = { dados: FLUXO_V2, salvar, restaurar, salvando: null };
+    const { rerender } = render(<ValeriaFlowEditor {...props} erro={null} />);
+    irParaAtacado(/VA · Vitrine atacado/);
+
+    // 1. O card é recusado: a mensagem aparece DENTRO dele.
+    fireEvent.change(campoCard("classico"), { target: { value: "Clássico longo" } });
+    fireEvent.click(screen.getByRole("button", { name: "Salvar card classico" }));
+    await vi.waitFor(() => expect(salvar).toHaveBeenCalledTimes(1));
+    rerender(<ValeriaFlowEditor {...props} erro={recusaCard} />);
+    expect(within(screen.getByTestId("card-classico")).getByText(recusaCard)).toBeTruthy();
+
+    // 2. Depois o operador salva o CORPO do nó, e é ele que volta recusado.
+    fireEvent.change(screen.getByLabelText("Texto da tela"), { target: { value: "olha os cafés" } });
+    fireEvent.click(botaoSalvar());
+    await vi.waitFor(() => expect(salvar).toHaveBeenCalledTimes(2));
+    rerender(<ValeriaFlowEditor {...props} erro={recusaNo} />);
+
+    // A recusa nova não pode aparecer no card que falhou ANTES — e aparece no rodapé.
+    expect(within(screen.getByTestId("card-classico")).queryByText(recusaNo)).toBeNull();
+    expect(screen.getByText(recusaNo)).toBeTruthy();
+  });
+
+  it("trocar de tela esquece qual card foi recusado", async () => {
+    const recusa = "o card tem 171 caracteres depois de resolver os preços";
+    const salvar = vi.fn<PainelFluxoProps["salvar"]>(async () => null);
+    const props = { dados: FLUXO_V2, salvar, restaurar: vi.fn(async () => null), salvando: null };
+    const { rerender } = render(<ValeriaFlowEditor {...props} erro={null} />);
+    irParaAtacado(/VA · Vitrine atacado/);
+    fireEvent.change(campoCard("classico"), { target: { value: "Clássico longo" } });
+    fireEvent.click(screen.getByRole("button", { name: "Salvar card classico" }));
+    await vi.waitFor(() => expect(salvar).toHaveBeenCalled());
+
+    // Vai para outra tela e volta, com a recusa ainda em `erro` (a casca só a limpa na
+    // próxima gravação): o rodapé mostra a mensagem em vez de escondê-la atrás de um
+    // card que já não é o assunto.
+    irPara(/^Entrada/);
+    rerender(<ValeriaFlowEditor {...props} erro={recusa} />);
+    expect(screen.getByText(recusa)).toBeTruthy();
+  });
+
   it("restaura o card editado pelo DELETE da chave dele", () => {
     const restaurar = vi.fn<PainelFluxoProps["restaurar"]>(async () => null);
     const editado = { ...VA, cards: [{ ...CARD_SUAVE, corpo: "Outro texto" }] };

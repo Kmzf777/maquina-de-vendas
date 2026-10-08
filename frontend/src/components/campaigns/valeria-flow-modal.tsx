@@ -79,9 +79,14 @@
  * (o contêiner dos editores fica sempre na mesma posição, só os atributos mudam): é
  * isso que faz o React PRESERVAR o estado dos editores enquanto a outra versão carrega.
  *
- * Um backend de antes do C7 ignora `?flow_id=` e responde a v1. Mostrar aquilo como v2
- * faria cada `PUT` gravar `?flow_id=valeria_botoes_v2` em ids da v1 — então a resposta
- * cujo `flow_id` não é o pedido vira erro na faixa, e não editor.
+ * A resposta cujo `flow_id` não é o pedido vira erro na faixa, e não editor. Não é a
+ * corrida de "resposta velha depois da troca de versão" — essa já está fechada pelo
+ * `AbortController` e pelo `pedido` capturado no efeito, que arquiva cada resposta na
+ * versão que a pediu. É o deploy: frontend e API sobem em containers separados, e na
+ * janela em que o frontend novo fala com a API velha, ela IGNORA `?flow_id=` no `GET` e
+ * no `PUT`. Sem esta trava a tela mostraria a v1 com o rótulo "v2", e cada "Salvar"
+ * gravaria em cima do texto da v1 que está em produção. Mesma coisa se um proxy voltar
+ * a perder a query (era o estado das rotas do Next antes deste seletor).
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -259,7 +264,8 @@ export function ValeriaFlowModal({ open, onClose }: { open: boolean; onClose: ()
     fetch(`/api/valeria-flow${queryDoFluxo(pedido)}`, { signal: controller.signal, cache: "no-store" })
       .then(async (r) => { const json = await r.json().catch(() => ({})); if (!r.ok) throw new Error(mensagemDeErro(json, "Não foi possível carregar o fluxo de botões.")); return json as FluxoResposta; })
       .then((json) => {
-        // Backend de antes do C7: ignorou `?flow_id=` e respondeu outra versão.
+        // A API ignorou `?flow_id=` (deploy pela metade, proxy sem a query): editar isto
+        // como v2 gravaria em cima da v1 de produção. Cabeçalho do módulo.
         if (pedido !== FLOW_V1 && json.flow_id !== pedido) throw new Error(`O backend respondeu o fluxo ${json.flow_id ?? "(sem flow_id)"} quando foi pedido ${pedido}: ele ainda não serve esta versão.`);
         setPorFluxo((atual) => ({ ...atual, [pedido]: json })); setErro(null); setCarregando(false);
       })
