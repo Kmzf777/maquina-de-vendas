@@ -104,7 +104,8 @@ def build_candidates(*, lead: dict[str, Any], entradas: list[dict[str, Any]], sa
                      now: datetime) -> list[dict[str, Any]]:
     """Linhas candidatas de UM lead (puro). Regras da §5 da spec:
 
-    - `lead` é o próprio clique: um evento por clique, só na plataforma dele;
+    - `lead` é o próprio clique: um evento por clique, só na plataforma dele — e só no Google (a Meta
+      não recebe `lead`: o sinal de lead dela é o repasse, `qualified`);
     - qualificado/oportunidade/venda vão para o clique atribuído (o mais recente da plataforma
       antes do evento, dentro da janela clique→evento);
     - já era cliente → só venda; venda cancelada não entra;
@@ -143,6 +144,8 @@ def build_candidates(*, lead: dict[str, Any], entradas: list[dict[str, Any]], sa
         if not stage_allowed(stage, ja_cliente) or event_at > now:
             continue  # futuro (orçamento datado para amanhã): entra numa rodada seguinte
         for platform in PLATFORMS:
+            if stage == "lead" and platform == "meta":
+                continue  # a Meta já conta a conversa; LeadSubmitted só no repasse (ver meta.py)
             if own_click is not None:
                 click = own_click if own_click.platform == platform else None
             else:

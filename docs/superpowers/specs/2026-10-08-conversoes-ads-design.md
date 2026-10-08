@@ -37,14 +37,17 @@ um clique de anúncio, com valor, para que (a) a medição no Gerenciador/Google
 instantâneo, não CTWA).
 - `action_source: "business_messaging"`, `messaging_channel: "whatsapp"`,
   `user_data: {whatsapp_business_account_id, ctwa_clid, ph[]}`.
-- Eventos padrão aceitos: `LeadSubmitted`, `QualifiedLead`, `InitiateCheckout`, `Purchase` (entre
-  outros). Nome customizado não.
+- Eventos padrão aceitos: `LeadSubmitted`, `InitiateCheckout`, `Purchase` (entre outros; não usamos
+  `QualifiedLead`). Nome customizado não.
 - Destino: dataset ligado ao WABA (criado uma vez pela Dataset API). Token de system user com
   `whatsapp_business_management` + `whatsapp_business_manage_events`.
 - `event_time` no máximo **7 dias** antes do envio; um evento fora da janela derruba o request
   inteiro. A Meta não deduplica nesse produto — a dedup é nossa.
-- Otimização garantida pela doc: Purchase. Otimizar CTWA para `QualifiedLead` — **verificar no
-  Gerenciador** (ver §12).
+- Otimização: a meta "Maximizar o número de leads por mensagens" otimiza em eventos de lead enviados
+  pela API (mín. 10 eventos de lead ou compra em 30 dias, marcados em até 7 dias do clique). Por isso
+  o `LeadSubmitted` vai no **repasse ao vendedor** (`qualified`), não no clique: mandar um por clique
+  viraria "maximizar conversas", que a Meta já conta sozinha. `QualifiedLead` não está confirmado como
+  evento de otimização em CTWA e não é usado. **Confirmar no Gerenciador** (ver §12).
 
 **Google — Data Manager API** (desde 15/06/2026 o `UploadClickConversions` da Google Ads API recusa
 developer tokens que não o usavam; vale para nós).
@@ -75,8 +78,8 @@ developer tokens que não o usavam; vale para nós).
 
 | Etapa | Fonte (varredura) | Hora do evento | Meta | Google |
 |---|---|---|---|---|
-| `lead` | `lead_events` `entrada` com `ctwa_clid` ou `gclid` | `occurred_at` | `LeadSubmitted` | ação LEAD |
-| `qualified` | `leads.metadata.handoff.at` preenchido | `handoff.at` | `QualifiedLead` | ação QUALIFIED |
+| `lead` | `lead_events` `entrada` com `ctwa_clid` ou `gclid` | `occurred_at` | não enviado (a Meta já conta a conversa) | ação LEAD |
+| `qualified` | `leads.metadata.handoff.at` preenchido | `handoff.at` | `LeadSubmitted` | ação QUALIFIED |
 | `opportunity` | 1º entre `quotes.status in ('enviado','aprovado','convertido')` (`quoted_at`) e entrada do deal em `proposta_enviada` (`lead_events` `etapa`) | o que vier primeiro | `InitiateCheckout` | ação OPPORTUNITY |
 | `purchase` | `sales` com `status <> 'cancelada'` | `sold_at` | `Purchase` | ação PURCHASE |
 
@@ -137,7 +140,7 @@ create table ad_conversion_values (
 );
 ```
 
-- `event_id` = `{stage}:{click_id_hash8}:{lead_id}` para funil, `purchase:{sale_id}` para venda.
+- `event_id` = `{stage}:{lead_id}:{sha256(click_id)[:12]}` para funil, `purchase:{sale_id}` para venda.
 - **Leads:** colunas novas `gbraid`, `wbraid` + `TRACKING_COLUMNS`, `lp_webhook` e o trigger de
   `entrada` passam a considerá-las.
 - **Aposentado:** `conversion_events` (vazia) fica no banco sem uso — o script de mesclagem a referencia;
@@ -226,8 +229,10 @@ Roteiro passo a passo em `docs/setup/conversoes-ads.md`:
 
 ## 12. Verificações pendentes (antes do passo 3)
 
-- Se o Gerenciador oferece `QualifiedLead` do dataset como meta de otimização em campanha CTWA. Se
-  não, a Meta recebe os eventos para medição e otimiza por Purchase quando houver volume.
+- Se a meta "Maximizar o número de leads por mensagens" aparece para a conta e passa a otimizar nos
+  `LeadSubmitted` do repasse (precisa de ≥10 eventos de lead ou compra em 30 dias). `QualifiedLead`
+  não é usado. Se a meta não aparecer, a Meta recebe os eventos para medição e otimiza por Purchase
+  quando houver volume.
 - Se a conta Google exige algum aceite/termo para a Data Manager API.
 
 ## 13. Testes

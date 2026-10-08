@@ -6,6 +6,12 @@ Versão padrão v25.0: existe, não expira até 2028 e não é a recém-lançada
 CTWA não usa pixel nem `fbc`: a Meta casa o evento pelo `ctwa_clid` + WABA. Um evento por
 request de propósito: um único evento fora da janela de 7 dias derruba o lote inteiro, e o
 volume (dezenas por dia) não justifica lote.
+
+Mapa de etapas: a meta de desempenho "Maximizar o número de leads por mensagens" otimiza em
+eventos de lead (`LeadSubmitted`). O nosso sinal de lead de verdade é o repasse ao vendedor
+(`qualified`), não o clique: mandar `LeadSubmitted` a cada conversa iniciada faria a Meta otimizar
+"conversas", que ela já conta sozinha. Por isso `lead` não tem evento aqui, e `QualifiedLead` não
+é usado (não confirmado como evento de otimização em CTWA).
 """
 import os
 from typing import Any
@@ -18,8 +24,7 @@ from app.conversions.types import SendResult
 
 GRAPH = "https://graph.facebook.com"
 EVENT_NAMES = {
-    "lead": "LeadSubmitted",
-    "qualified": "QualifiedLead",
+    "qualified": "LeadSubmitted",
     "opportunity": "InitiateCheckout",
     "purchase": "Purchase",
 }

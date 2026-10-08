@@ -31,21 +31,31 @@ def _by_key(rows):
 
 # ── build_candidates (puro) ──────────────────────────────────────────────────
 
-def test_lead_com_clique_gera_evento_lead_com_valor():
-    rows = build_candidates(lead=_lead(), entradas=ENTRADAS, sales=[], opportunity_at=None, values=VALUES, now=NOW)
-    assert _keys(rows) == ["meta:lead:C1"]
+GENTRADAS = [{"occurred_at": CLICK.isoformat(), "metadata": {"gclid": "G1", "campanha_nome": "Search"}}]
+
+
+def test_lead_com_clique_google_gera_evento_lead_com_valor():
+    rows = build_candidates(lead=_lead(ctwa_clid=None), entradas=GENTRADAS, sales=[], opportunity_at=None,
+                            values=VALUES, now=NOW)
+    assert _keys(rows) == ["google:lead:G1"]
     r = rows[0]
-    assert r["platform"] == "meta" and r["stage"] == "lead" and r["value"] == 5.0
-    assert r["segment"] == "atacado" and r["campaign_name"] == "Atacado | WA"
-    assert r["event_at"] == CLICK.isoformat() and r["click_id_type"] == "ctwa_clid"
+    assert r["platform"] == "google" and r["stage"] == "lead" and r["value"] == 5.0
+    assert r["segment"] == "atacado" and r["campaign_name"] == "Search"
+    assert r["event_at"] == CLICK.isoformat() and r["click_id_type"] == "gclid"
     assert r["click_at"] == CLICK.isoformat() and r["lead_id"] == "L1" and r["sale_id"] is None
     assert r["status"] == "pendente" and r["currency"] == "BRL"
+
+
+def test_clique_meta_nao_gera_evento_lead():
+    # A Meta já conta a conversa; só o repasse (qualified) vira LeadSubmitted.
+    rows = build_candidates(lead=_lead(), entradas=ENTRADAS, sales=[], opportunity_at=None, values=VALUES, now=NOW)
+    assert rows == []
 
 
 def test_repasse_valido_gera_qualified():
     lead = _lead(metadata={"handoff": {"at": (CLICK + timedelta(hours=3)).isoformat(), "motivo": "lead qualificado"}})
     rows = build_candidates(lead=lead, entradas=ENTRADAS, sales=[], opportunity_at=None, values=VALUES, now=NOW)
-    assert _keys(rows) == ["meta:lead:C1", "meta:qualified:C1"]
+    assert _keys(rows) == ["meta:qualified:C1"]
     q = _by_key(rows)["meta:qualified:C1"]
     assert q["value"] == 80.0 and q["event_at"] == (CLICK + timedelta(hours=3)).isoformat()
 
@@ -53,13 +63,13 @@ def test_repasse_valido_gera_qualified():
 def test_repasse_de_fallback_nao_gera_qualified():
     lead = _lead(metadata={"handoff": {"at": CLICK.isoformat(), "motivo": "IA temporariamente indisponível — x"}})
     rows = build_candidates(lead=lead, entradas=ENTRADAS, sales=[], opportunity_at=None, values=VALUES, now=NOW)
-    assert _keys(rows) == ["meta:lead:C1"]
+    assert rows == []
 
 
 def test_repasse_antes_do_clique_nao_tem_clique_atribuido():
     lead = _lead(metadata={"handoff": {"at": (CLICK - timedelta(hours=1)).isoformat(), "motivo": "lead qualificado"}})
     rows = build_candidates(lead=lead, entradas=ENTRADAS, sales=[], opportunity_at=None, values=VALUES, now=NOW)
-    assert _keys(rows) == ["meta:lead:C1"]
+    assert rows == []
 
 
 def test_oportunidade_e_venda():
@@ -67,7 +77,7 @@ def test_oportunidade_e_venda():
              {"id": "S2", "lead_id": "L1", "sold_at": (CLICK + timedelta(days=1)).isoformat(), "value": 99, "status": "cancelada"}]
     rows = build_candidates(lead=_lead(), entradas=ENTRADAS, sales=sales,
                             opportunity_at=CLICK + timedelta(hours=20), values=VALUES, now=NOW)
-    assert _keys(rows) == ["meta:lead:C1", "meta:opportunity:C1", "meta:purchase:S1"]
+    assert _keys(rows) == ["meta:opportunity:C1", "meta:purchase:S1"]
     p = _by_key(rows)["meta:purchase:S1"]
     assert p["value"] == 180.0 and p["sale_id"] == "S1" and p["event_id"] == "purchase:S1"
     assert _by_key(rows)["meta:opportunity:C1"]["value"] == 300.0
@@ -76,7 +86,7 @@ def test_oportunidade_e_venda():
 def test_venda_cancelada_com_caixa_diferente_tambem_sai():
     sales = [{"id": "S1", "lead_id": "L1", "sold_at": (CLICK + timedelta(days=1)).isoformat(), "value": 99, "status": "Cancelada"}]
     rows = build_candidates(lead=_lead(), entradas=ENTRADAS, sales=sales, opportunity_at=None, values=VALUES, now=NOW)
-    assert _keys(rows) == ["meta:lead:C1"]
+    assert rows == []
 
 
 def test_venda_fora_da_janela_meta_nao_entra_mas_google_entra():
@@ -97,7 +107,7 @@ def test_ja_era_cliente_so_venda():
 
 
 def test_segmento_geral_sem_valor_configurado_vai_none():
-    rows = build_candidates(lead=_lead(stage="pending"), entradas=ENTRADAS, sales=[], opportunity_at=None, values=VALUES, now=NOW)
+    rows = build_candidates(lead=_lead(stage="pending", ctwa_clid=None), entradas=GENTRADAS, sales=[], opportunity_at=None, values=VALUES, now=NOW)
     assert rows[0]["segment"] == "geral" and rows[0]["value"] is None
 
 
@@ -122,10 +132,10 @@ def test_google_clique_com_mais_de_90_dias_nao_entra_mesmo_com_venda_recente():
 
 def test_lead_sem_entrada_usa_fallback():
     rows = build_candidates(lead=_lead(), entradas=[], sales=[], opportunity_at=None, values=VALUES, now=NOW)
-    assert _keys(rows) == ["meta:lead:C1"]
+    assert rows == []
 
 
-def test_um_evento_lead_por_clique_e_so_na_plataforma_do_clique():
+def test_evento_lead_so_para_clique_google_meta_nao_recebe():
     c2 = CLICK + timedelta(days=1)
     entradas = ENTRADAS + [
         {"occurred_at": CLICK.isoformat(), "metadata": {"gclid": "G1", "campanha_nome": "Search"}},
@@ -133,9 +143,8 @@ def test_um_evento_lead_por_clique_e_so_na_plataforma_do_clique():
     ]
     rows = build_candidates(lead=_lead(ctwa_clid="C2"), entradas=entradas, sales=[], opportunity_at=None,
                             values=VALUES, now=NOW)
-    assert _keys(rows) == ["google:lead:G1", "meta:lead:C1", "meta:lead:C2"]
+    assert _keys(rows) == ["google:lead:G1"]
     r = _by_key(rows)
-    assert r["meta:lead:C2"]["event_at"] == c2.isoformat()
     assert r["google:lead:G1"]["click_id_type"] == "gclid" and r["google:lead:G1"]["campaign_name"] == "Search"
 
 
@@ -148,10 +157,11 @@ def test_dois_cliques_da_mesma_plataforma_no_mesmo_instante_geram_dois_leads():
 
 def test_mesmo_clique_repetido_vira_uma_linha_com_a_hora_mais_antiga():
     depois = CLICK + timedelta(hours=5)
-    entradas = [{"occurred_at": depois.isoformat(), "metadata": {"ctwa_clid": "C1"}},
-                {"occurred_at": CLICK.isoformat(), "metadata": {"ctwa_clid": "C1"}}]
-    rows = build_candidates(lead=_lead(), entradas=entradas, sales=[], opportunity_at=None, values=VALUES, now=NOW)
-    assert _keys(rows) == ["meta:lead:C1"]
+    entradas = [{"occurred_at": depois.isoformat(), "metadata": {"gclid": "G1"}},
+                {"occurred_at": CLICK.isoformat(), "metadata": {"gclid": "G1"}}]
+    rows = build_candidates(lead=_lead(ctwa_clid=None), entradas=entradas, sales=[], opportunity_at=None,
+                            values=VALUES, now=NOW)
+    assert _keys(rows) == ["google:lead:G1"]
     assert rows[0]["event_at"] == CLICK.isoformat()
 
 
@@ -171,7 +181,7 @@ def test_etapas_usam_o_clique_mais_recente_antes_do_evento():
 def test_evento_no_futuro_ainda_nao_entra():
     rows = build_candidates(lead=_lead(), entradas=ENTRADAS, sales=[], opportunity_at=NOW + timedelta(days=1),
                             values=VALUES, now=NOW)
-    assert _keys(rows) == ["meta:lead:C1"]
+    assert rows == []
 
 
 def test_horario_sem_fuso_nao_derruba_a_varredura():
@@ -180,7 +190,7 @@ def test_horario_sem_fuso_nao_derruba_a_varredura():
     naive = (CLICK + timedelta(hours=1)).replace(tzinfo=None).isoformat()
     lead = _lead(metadata={"handoff": {"at": naive, "motivo": "ok"}})
     rows = build_candidates(lead=lead, entradas=ENTRADAS, sales=[], opportunity_at=None, values=VALUES, now=NOW)
-    assert _keys(rows) == ["meta:lead:C1", "meta:qualified:C1"]
+    assert _keys(rows) == ["meta:qualified:C1"]
     assert _by_key(rows)["meta:qualified:C1"]["event_at"] == (CLICK + timedelta(hours=1)).isoformat()
 
 
@@ -243,10 +253,10 @@ def _fake_sb(tables, upserts, log):
 
 def test_run_sweep_faz_upsert_com_ignore_duplicates(monkeypatch):
     tables = {
-        "ad_conversion_values": [{"segment": "atacado", "stage": "lead", "value": 5}],
+        "ad_conversion_values": [{"segment": "atacado", "stage": "qualified", "value": 80}],
         "lead_events": [{"lead_id": "L1", "event_type": "entrada", "occurred_at": CLICK.isoformat(),
                          "metadata": {"ctwa_clid": "C1"}}],
-        "leads": [_lead()],
+        "leads": [_lead(metadata={"handoff": {"at": (CLICK + timedelta(hours=1)).isoformat(), "motivo": "ok"}})],
         "sales": [], "quotes": [],
     }
     upserts, log = [], []
@@ -255,7 +265,7 @@ def test_run_sweep_faz_upsert_com_ignore_duplicates(monkeypatch):
     assert n >= 1
     rows, kw = upserts[0]
     assert kw == {"on_conflict": "dedupe_key", "ignore_duplicates": True}
-    assert any(r["dedupe_key"] == "meta:lead:C1" and r["value"] == 5.0 for r in rows)
+    assert any(r["dedupe_key"] == "meta:qualified:C1" and r["value"] == 80.0 for r in rows)
     # todas as linhas de um upsert em lote precisam das MESMAS chaves (PostgREST usa ?columns=)
     assert len({tuple(sorted(r)) for r in rows}) == 1
 
@@ -297,7 +307,8 @@ def test_um_lead_quebrado_nao_derruba_a_varredura(monkeypatch):
                          "metadata": {"ctwa_clid": "C1"}},
                         {"lead_id": "L2", "event_type": "entrada", "occurred_at": CLICK.isoformat(),
                          "metadata": {"ctwa_clid": "C9"}}],
-        "leads": [_lead(id="L2", ctwa_clid="C9"), _lead()],
+        "leads": [_lead(id="L2", ctwa_clid="C9"),
+                  _lead(metadata={"handoff": {"at": (CLICK + timedelta(hours=1)).isoformat(), "motivo": "ok"}})],
         "sales": [], "quotes": [],
     }
     upserts, log = [], []
@@ -311,4 +322,4 @@ def test_um_lead_quebrado_nao_derruba_a_varredura(monkeypatch):
     monkeypatch.setattr(sweep_mod, "build_candidates", _flaky)
     sweep_mod.run_sweep(now=NOW)
     keys = [r["dedupe_key"] for rows, _ in upserts for r in rows]
-    assert keys == ["meta:lead:C1"]
+    assert keys == ["meta:qualified:C1"]

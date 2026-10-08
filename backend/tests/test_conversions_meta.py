@@ -20,7 +20,7 @@ def _h(s):
 
 def test_build_event_business_messaging():
     ev = meta.build_event(ROW, LEAD, waba_id="WABA9")
-    assert ev["event_name"] == "QualifiedLead"
+    assert ev["event_name"] == "LeadSubmitted"
     assert ev["event_time"] == int(datetime(2026, 10, 7, 15, tzinfo=timezone.utc).timestamp())
     assert ev["action_source"] == "business_messaging"
     assert ev["messaging_channel"] == "whatsapp"
@@ -34,11 +34,16 @@ def test_build_event_business_messaging():
 
 
 @pytest.mark.parametrize("stage,name", [
-    ("lead", "LeadSubmitted"), ("qualified", "QualifiedLead"),
+    ("qualified", "LeadSubmitted"),
     ("opportunity", "InitiateCheckout"), ("purchase", "Purchase"),
 ])
 def test_nomes_padrao(stage, name):
     assert meta.build_event({**ROW, "stage": stage}, LEAD, waba_id="W")["event_name"] == name
+
+
+def test_lead_nao_tem_evento_na_meta():
+    # O clique (conversa iniciada) a Meta já conta; mandar LeadSubmitted nele viraria "maximizar conversas".
+    assert "lead" not in meta.EVENT_NAMES
 
 
 def test_sem_valor_nao_manda_custom_data():

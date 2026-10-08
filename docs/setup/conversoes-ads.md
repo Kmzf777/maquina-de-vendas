@@ -100,8 +100,8 @@ Tudo começa com as duas plataformas desligadas.
 
 Limites do produto (da spec): `event_time` no máximo 7 dias antes do envio (um evento fora da
 janela derruba o request inteiro, por isso o sender confere de novo); a Meta não deduplica, a
-dedup é nossa (`dedupe_key`/`event_id`); só eventos padrão (`LeadSubmitted`, `QualifiedLead`,
-`InitiateCheckout`, `Purchase`).
+dedup é nossa (`dedupe_key`/`event_id`); só eventos padrão (`LeadSubmitted` no repasse, `InitiateCheckout`,
+`Purchase`; o clique não vai para a Meta e `QualifiedLead` não é usado).
 
 ## 5. Google
 
@@ -154,9 +154,9 @@ retraída nas plataformas (fora de escopo), fica só na aba.
 
 ## 7. Verificações pendentes (spec §12, antes do modo teste)
 
-- **Meta:** se o Gerenciador oferece `QualifiedLead` do dataset como meta de otimização em
-  campanha CTWA. Não foi confirmado em doc. Se não, a Meta recebe os eventos para medição e otimiza
-  por Purchase quando houver volume.
+- **Meta:** se a meta "Maximizar o número de leads por mensagens" aparece para a conta e otimiza nos
+  `LeadSubmitted` do repasse (≥10 eventos de lead ou compra em 30 dias). `QualifiedLead` não é usado.
+  Se não aparecer, a Meta recebe os eventos para medição e otimiza por Purchase quando houver volume.
 - **Google:** se a conta exige algum aceite/termo para a Data Manager API. A doc consultada só
   menciona ativar a API no projeto Cloud e o escopo sensível; qualquer aceite na conta Google Ads
   só aparece na prática, no primeiro envio `validateOnly`.
