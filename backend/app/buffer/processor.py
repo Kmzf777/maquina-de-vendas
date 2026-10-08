@@ -39,18 +39,22 @@ from app.agent.tools import (
     record_deferred_media_delivery, apply_stage_transition,
 )
 from app.buffer.prefill import match_prefill_stage
-# Os DOIS fluxos de botões, cada um com o seu id e o seu runner. `fluxo_da_conversa`
-# devolve o id (não um booleano) justamente porque agora há dois: um predicado
-# sim/não não diria QUAL motor atende a conversa. Ver `_runner_do_fluxo`.
+# Os fluxos de botões (Recuperação, ValerIA v1 e v2), cada um com o seu id e o seu
+# runner. `fluxo_da_conversa` devolve o id (não um booleano) justamente porque há
+# mais de um: um predicado sim/não não diria QUAL motor atende a conversa. Ver
+# `_runner_do_fluxo` e `runner.fluxo_efetivo`.
 from app.button_flow.flows import FLOW_ID as FLUXO_RECUPERACAO
 from app.button_flow.runner import (
     MOTIVO_HANDOFF_FORMAL,
     e_clique_de_botao,
     fluxo_da_conversa,
+    fluxo_efetivo,
     run_button_flow,
 )
 from app.button_flow.valeria_registry import FLOW_ID as FLUXO_VALERIA_BOTOES
+from app.button_flow.valeria_registry_v2 import FLOW_ID as FLUXO_VALERIA_BOTOES_V2
 from app.button_flow.valeria_runner import processar_inbound as run_valeria_botoes
+from app.button_flow.valeria_runner_v2 import processar_inbound as run_valeria_botoes_v2
 from app.utils.geo import ddd_to_region
 from app.buffer.lead_lock import lead_run_lock
 
@@ -1411,6 +1415,8 @@ def _runner_do_fluxo(fluxo: str | None):
     """
     if fluxo == FLUXO_VALERIA_BOTOES:
         return run_valeria_botoes
+    if fluxo == FLUXO_VALERIA_BOTOES_V2:
+        return run_valeria_botoes_v2
     if fluxo == FLUXO_RECUPERACAO:
         return run_button_flow
     if fluxo:
@@ -1701,7 +1707,12 @@ async def process_buffered_messages(
     # BANCO quando NENHUM fluxo está ligado (`config.algum_fluxo_ligado`) — com um kill
     # switch por fluxo, o contrato de "sem consulta" é sobre o CONJUNTO dos fluxos, não
     # mais sobre a chave da Recuperação.
-    _rodar_fluxo = _runner_do_fluxo(fluxo_da_conversa(conversation, channel))
+    #
+    # `fluxo_efetivo` e não `fluxo_da_conversa`: entre a v1 e a v2 da ValerIA, quem
+    # está no meio do atendimento termina no fluxo em que começou (o `flow_state.flow`
+    # gravado vence o perfil do canal). Fora disso as duas respostas são idênticas —
+    # inclusive o None, que é o que mantém o caminho normal e o "sem tocar no banco".
+    _rodar_fluxo = _runner_do_fluxo(fluxo_efetivo(conversation, channel))
     if _rodar_fluxo is not None:
         # O LOCK É ADQUIRIDO AQUI, e não movendo o gate para dentro do lock da IA
         # (linha ~1690): o lock da IA vive DEPOIS do gate de canal humano, do

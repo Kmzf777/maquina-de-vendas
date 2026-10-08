@@ -154,6 +154,33 @@ def fluxo_da_conversa(conversation: dict, channel: dict) -> str | None:
         return None
 
 
+# Os fluxos da ValerIA de botões. Entre ELES o `flow_state.flow` da conversa vence o
+# perfil (`fluxo_efetivo`); a Recuperação fica fora de propósito — é outro bot, em
+# outro número, e não tem registry compatível com o `node` de nenhum dos dois.
+FLUXOS_VALERIA = frozenset({"valeria_botoes_v1", "valeria_botoes_v2"})
+
+
+def fluxo_efetivo(conversation: dict, channel: dict) -> str | None:
+    """O fluxo que atende ESTE inbound: o da conversa em andamento vence o do perfil.
+
+    Trocar o perfil do canal de v1 para v2 (ou de volta) não pode reiniciar quem
+    está no meio do atendimento: o `flow_state.flow` gravado é a memória de qual
+    registry entende o `node` salvo. Só vale entre os fluxos da ValerIA, e só
+    quando o perfil ainda aponta para UM deles (perfil desligado → None continua None).
+
+    Devolve None exatamente quando `fluxo_da_conversa` devolve None: a pergunta "é
+    de ALGUM fluxo de botões?" (`_optout_deterministico_cabe`) não muda por aqui.
+    """
+    fluxo = fluxo_da_conversa(conversation, channel)
+    if fluxo not in FLUXOS_VALERIA:
+        return fluxo
+    estado = (conversation or {}).get("flow_state")
+    gravado = estado.get("flow") if isinstance(estado, dict) else None
+    if gravado in FLUXOS_VALERIA and gravado != fluxo and config.enabled(gravado):
+        return gravado
+    return fluxo
+
+
 def is_button_flow_conversation(conversation: dict, channel: dict) -> bool:
     """True quando esta conversa é atendida pelo fluxo de RECUPERAÇÃO.
 

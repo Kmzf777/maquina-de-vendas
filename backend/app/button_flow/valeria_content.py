@@ -47,6 +47,18 @@ ter — errar aqui não rebaixa um score, troca de vendedor ou desliga um
 opt-out. `aplicar_terminais` só lê `corpo` do override, do mesmo jeito que
 `aplicar` só lê `corpo`/`rotulos`: as outras chaves não são filtradas, são
 ignoradas por não existir linha que as leia.
+
+── A v2 (vitrine) usa a mesma fresta, com outro `registry` ──────────────────
+Toda função que lê `reg.*` aceita `registry=` (default: o módulo da v1, então
+nenhuma chamada existente muda). A v2 acrescenta duas famílias de chave à
+mesma tabela, ambas só com `corpo`:
+  • as chaves de texto de `CHAVES_TEXTO` (regras, como-funciona, cada FAQ
+    `faq:<ramo>:<faq_id>`, além do nudge e do rótulo de lista) — o default de
+    cada uma é `texto_default`;
+  • o corpo de cada card do carrossel, na chave `card:<nó>:<card_id>`
+    (`chave_do_card`). O nó entra na chave porque o id do card NÃO é único no
+    fluxo: `microlote` existe na vitrine atacado e na de marca própria, com
+    textos e SKUs diferentes. `aplicar` funde esses overrides nos `cards` do nó.
 """
 from __future__ import annotations
 
@@ -136,7 +148,95 @@ def aplicar(nos: dict, overrides: dict) -> dict:
         if mudancas:
             resultado[node_id] = replace(no, **mudancas)
 
+    # Cards do carrossel (só v2; na v1 `cards` é sempre vazio e nada muda). Só o
+    # `corpo` do override é lido — `skus`, `foto`, `destino` e `exige_min_lot` são
+    # estrutura e não têm linha que os leia, como `destino`/`grava` acima.
+    for node_id, no in list(resultado.items()):
+        cards = getattr(no, "cards", ()) or ()
+        if not cards:
+            continue
+        novos = tuple(
+            replace(card, corpo=corpo) if (corpo := _corpo_do_override(
+                overrides.get(chave_do_card(node_id, card.id)))) else card
+            for card in cards
+        )
+        if novos != cards:
+            resultado[node_id] = replace(no, cards=novos)
+
     return resultado
+
+
+def _corpo_do_override(override) -> str | None:
+    if not isinstance(override, dict):
+        return None
+    corpo = override.get("corpo")
+    return corpo if corpo else None
+
+
+# ── Cards (v2) ──────────────────────────────────────────────────────────────
+PREFIXO_CARD = "card:"
+
+
+def chave_do_card(no_id: str, card_id: str) -> str:
+    """A chave CANÔNICA do corpo de um card em `valeria_flow_content`."""
+    return f"{PREFIXO_CARD}{no_id}:{card_id}"
+
+
+def localizar_card(chave: str, registry=reg) -> list:
+    """Todos os `(no_id, Card)` que `chave` pode designar. Puro.
+
+    Aceita a forma canônica `card:<nó>:<card_id>` e o atalho `card:<card_id>`. O
+    atalho pode casar com MAIS de um card (o id `microlote` existe em VA e VP) —
+    quem chama decide o que fazer com a ambiguidade; `card_da_chave` recusa.
+    """
+    if not isinstance(chave, str) or not chave.startswith(PREFIXO_CARD):
+        return []
+    resto = chave[len(PREFIXO_CARD):]
+    no_id, _, card_id = resto.rpartition(":")
+    achados = []
+    for nid, no in registry.NOS.items():
+        if no_id and nid != no_id:
+            continue
+        for card in getattr(no, "cards", ()) or ():
+            if card.id == card_id:
+                achados.append((nid, card))
+    return achados
+
+
+def card_da_chave(chave: str, registry=reg):
+    """O `(no_id, Card)` único de `chave`, ou None (inexistente ou ambíguo)."""
+    achados = localizar_card(chave, registry)
+    return achados[0] if len(achados) == 1 else None
+
+
+# ── Textos que não são nó (v2) ──────────────────────────────────────────────
+def texto_default(chave: str, registry=reg) -> str | None:
+    """O texto default de uma chave de texto do `registry`, ou None se não for uma.
+
+    v1: só o nudge e o rótulo do botão de lista. v2: também as chaves de
+    `CHAVES_TEXTO` — regras do atacado, como-funciona da marca própria e cada
+    FAQ (`faq:<ramo>:<faq_id>`).
+    """
+    if chave == registry.CHAVE_NUDGE:
+        return registry.CORPO_NUDGE
+    if chave == registry.CHAVE_ROTULO_LISTA:
+        return registry.ROTULO_BOTAO_LISTA
+    if chave not in (getattr(registry, "CHAVES_TEXTO", None) or ()):
+        return None
+    if chave == getattr(registry, "CHAVE_REGRAS_ATACADO", None):
+        return registry.REGRAS_ATACADO_DEFAULT
+    if chave == getattr(registry, "CHAVE_COMO_FUNCIONA_PL", None):
+        return registry.COMO_FUNCIONA_PL_DEFAULT
+    if chave.startswith("faq:"):
+        _, ramo, faq_id = chave.split(":", 2)
+        return (getattr(registry, "FAQ", {}).get(ramo) or {}).get(faq_id)
+    return None
+
+
+def chaves_de_texto(registry=reg) -> frozenset:
+    """Toda chave editável que não é nó, terminal nem card."""
+    return frozenset(getattr(registry, "CHAVES_TEXTO", None)
+                     or {registry.CHAVE_NUDGE, registry.CHAVE_ROTULO_LISTA})
 
 
 def aplicar_terminais(terminais: dict, overrides: dict) -> dict:
@@ -236,11 +336,11 @@ def historico_de_rotulos(overrides: dict) -> dict:
     return mapa
 
 
-def _limite_de_rotulo(no: reg.No) -> int:
-    return reg.LIMITE_TITULO_LISTA if no.tela == "lista" else reg.LIMITE_ROTULO_BOTAO
+def _limite_de_rotulo(no: reg.No, registry=reg) -> int:
+    return registry.LIMITE_TITULO_LISTA if no.tela == "lista" else registry.LIMITE_ROTULO_BOTAO
 
 
-def validar(node_id: str, payload: dict) -> str | None:
+def validar(node_id: str, payload: dict, registry=reg) -> str | None:
     """Valida um override antes de gravar. Devolve a mensagem de erro (PT-BR,
     pra tela mostrar ao operador) ou `None` quando o payload pode ser salvo.
 
@@ -263,14 +363,20 @@ def validar(node_id: str, payload: dict) -> str | None:
         "momento mais frágil" que a auditoria 08/07 mediu para o handoff. Por
         isso a pergunta não é "este payload está em branco?", é "o DEFAULT
         deste terminal já era em branco?".
+
+    `registry` é o módulo do fluxo (default: v1). Na v2, além de nós e
+    terminais, aceita as chaves de `CHAVES_TEXTO` e `card:<...>` — as duas só
+    com `corpo`, não branco. O tamanho do card NÃO é medido aqui: o limite da
+    Meta (160 caracteres, 2 quebras) vale para o texto DEPOIS de resolver os
+    `{preco:...}`, e resolver preço é I/O (o catálogo) — quem mede é a rota.
     """
-    if node_id == reg.CHAVE_NUDGE:
+    if node_id == registry.CHAVE_NUDGE:
         corpo = payload.get("corpo")
         if corpo is not None and not corpo.strip():
             return "o corpo do nudge não pode ficar vazio"
         return None
 
-    if node_id == reg.CHAVE_ROTULO_LISTA:
+    if node_id == registry.CHAVE_ROTULO_LISTA:
         # A segunda chave reservada (ver `reg.CHAVE_ROTULO_LISTA`): o rótulo do
         # botão que abre a folha de opções. Guardado em `corpo` e não em `rotulos`
         # porque `rotulos` é um mapa `botao_id -> texto` e este botão não é de nó
@@ -285,14 +391,39 @@ def validar(node_id: str, payload: dict) -> str | None:
         if rotulo is not None:
             if not rotulo.strip():
                 return "o rótulo do botão de lista não pode ficar vazio"
-            if len(rotulo) > reg.LIMITE_ROTULO_BOTAO:
+            if len(rotulo) > registry.LIMITE_ROTULO_BOTAO:
                 return (
                     f"o rótulo do botão de lista tem {len(rotulo)} caracteres, "
-                    f"o limite é {reg.LIMITE_ROTULO_BOTAO}"
+                    f"o limite é {registry.LIMITE_ROTULO_BOTAO}"
                 )
         return None
 
-    no = reg.NOS.get(node_id)
+    if node_id in chaves_de_texto(registry):
+        # As chaves de texto da v2 (regras, como-funciona, FAQs). Mesma regra do
+        # nudge — corpo nunca branco — e sem botões: um `rotulos` aqui seria
+        # override morto, então é recusado como no terminal.
+        if payload.get("rotulos"):
+            return f"{node_id!r} não tem botões — só o corpo é editável"
+        corpo = payload.get("corpo")
+        if corpo is not None and not corpo.strip():
+            return "o texto não pode ficar vazio"
+        return None
+
+    # Card inexistente cai no "não existe no registry" do fim, como qualquer id
+    # desconhecido (e a v1, que não tem card, segue com a mesma mensagem de antes).
+    achados = localizar_card(node_id, registry)
+    if achados:
+        if len(achados) > 1:
+            opcoes = " ou ".join(chave_do_card(nid, card.id) for nid, card in achados)
+            return f"{node_id!r} é ambíguo — use {opcoes}"
+        if payload.get("rotulos"):
+            return "card não tem rótulo editável — só o corpo"
+        corpo = payload.get("corpo")
+        if corpo is not None and not corpo.strip():
+            return "o corpo do card não pode ficar vazio"
+        return None
+
+    no = registry.NOS.get(node_id)
     if no is not None:
         corpo = payload.get("corpo")
         if corpo is not None and not corpo.strip():
@@ -301,7 +432,7 @@ def validar(node_id: str, payload: dict) -> str | None:
         rotulos = payload.get("rotulos") or {}
         if rotulos:
             ids_validos = {botao.id for botao in no.botoes}
-            limite = _limite_de_rotulo(no)
+            limite = _limite_de_rotulo(no, registry)
             for botao_id, rotulo in rotulos.items():
                 if botao_id not in ids_validos:
                     return f"botão {botao_id!r} não existe no nó {node_id!r}"
@@ -313,7 +444,7 @@ def validar(node_id: str, payload: dict) -> str | None:
 
         return None
 
-    terminal = reg.TERMINAIS.get(node_id)
+    terminal = registry.TERMINAIS.get(node_id)
     if terminal is not None:
         # Terminal não declara `botoes` — nem `T_ADIAR`, cuja folha 30/60/90 é
         # `reg.BOTOES_PRAZO`, uma tabela à parte no registry, não um campo do
