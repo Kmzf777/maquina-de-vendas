@@ -54,7 +54,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { PainelCanaisProps } from "./valeria-flow-types";
-import { mensagemDeErro } from "./valeria-flow-shared";
+import { FLOW_V1, mensagemDeErro, queryDoFluxo, versaoCurta } from "./valeria-flow-shared";
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // O contrato de GET /api/valeria-flow/channels
@@ -87,6 +87,11 @@ export interface CanalDoFluxo {
   perfil_compartilhado: boolean;
   /** Nomes dos outros canais naquele perfil. Podem vir NULL — o router não filtra. */
   compartilhado_com: (string | null)[];
+  /**
+   * O fluxo de botões que este canal roda HOJE (`gate._fluxo_de` sobre o perfil),
+   * `null` quando atende por LLM. É a fonte do selo v1/v2.
+   */
+  flow_id?: string | null;
   atende_este_fluxo: boolean;
 }
 
@@ -153,7 +158,7 @@ export function ValeriaFlowChannels({ flowId }: PainelCanaisProps) {
   const carregar = useCallback(async (signal?: AbortSignal): Promise<CanaisResposta | null> => {
     setCarregando(true);
     try {
-      const resposta = await fetch("/api/valeria-flow/channels", { signal, cache: "no-store" });
+      const resposta = await fetch(`/api/valeria-flow/channels${queryDoFluxo(flowId)}`, { signal, cache: "no-store" });
       const json = await resposta.json().catch(() => ({}));
       if (!resposta.ok) {
         setErro(mensagemDeErro(json, PADRAO_CARREGAR));
@@ -171,7 +176,7 @@ export function ValeriaFlowChannels({ flowId }: PainelCanaisProps) {
     } finally {
       if (!signal?.aborted) setCarregando(false);
     }
-  }, []);
+  }, [flowId]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -188,7 +193,10 @@ export function ValeriaFlowChannels({ flowId }: PainelCanaisProps) {
       const resposta = await fetch("/api/valeria-flow/activate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ channel_id: canal.id }),
+        // `flow_id` SEMPRE, inclusive na v1: é ele que diz ao backend para qual versão o
+        // perfil novo aponta, e repontar um número para a versão errada é o erro que
+        // esta tela existe para impedir.
+        body: JSON.stringify({ channel_id: canal.id, flow_id: flowId }),
       });
       const json = await resposta.json().catch(() => ({}));
       if (!resposta.ok) {
@@ -200,9 +208,10 @@ export function ValeriaFlowChannels({ flowId }: PainelCanaisProps) {
       setConfirmando(null);
       const atual = await carregar();
       const ligado = atual ? atual.ligado : Boolean((json as { ligado?: boolean }).ligado);
+      const qual = flowId === FLOW_V1 ? "ValerIA de Botões" : `ValerIA de Botões (${versaoCurta(flowId)})`;
       setSucesso(
         ligado
-          ? `${nome} passou a atender pela ValerIA de Botões. Um perfil de agente novo foi criado só para este canal; nenhum perfil existente foi alterado.`
+          ? `${nome} passou a atender pela ${qual}. Um perfil de agente novo foi criado só para este canal; nenhum perfil existente foi alterado.`
           : `${nome} já aponta para o fluxo de botões, mas o fluxo continua DESLIGADO: nada será respondido por botões enquanto VALERIA_BOTOES_ENABLED não estiver ligada no ambiente do backend.`,
       );
     } catch {
@@ -253,7 +262,7 @@ export function ValeriaFlowChannels({ flowId }: PainelCanaisProps) {
         <p className="shrink-0 text-[11px] text-[#7b7b78]">
           Fluxo{" "}
           <code className="rounded-[4px] bg-[#faf9f6] px-1 py-0.5 text-[#111111]">
-            {dados?.flow_id ?? flowId}
+            {flowId}
           </code>
           {dados && (
             <>
@@ -383,6 +392,13 @@ function LinhaCanal({
   // para ESTE fluxo, e uma segunda cópia da regra é a divergência que o projeto evita).
   const outroFluxoDeBotoes =
     canal.perfil?.kind === "button_flow" && !canal.atende_este_fluxo;
+  // A versão da ValerIA de Botões que o canal segue HOJE, qualquer que seja a versão
+  // aberta no seletor: é o que o operador precisa ver antes de trocar v1 por v2.
+  // O `flow_id` do canal (o fluxo efetivo, calculado pelo router); sem ele, o do perfil
+  // de botões.
+  const versao = versaoCurta(
+    canal.flow_id !== undefined ? canal.flow_id : canal.perfil?.kind === "button_flow" ? canal.perfil.flow_id : null,
+  );
 
   // A borda esquerda carrega o estado: tinta = já atende por este fluxo, âmbar =
   // perfil acoplado a outro canal, transparente = nada a notar.
@@ -401,6 +417,14 @@ function LinhaCanal({
         <p className="text-[12px] tabular-nums text-[#7b7b78]">
           {nomeOu(canal.phone, "sem número")}
         </p>
+        {versao && (
+          <span
+            title="Versão do fluxo de botões deste canal"
+            className="rounded-[4px] border border-[#111111] px-1.5 py-0.5 text-[11px] font-medium tabular-nums text-[#111111]"
+          >
+            {versao}
+          </span>
+        )}
         {canal.atende_este_fluxo && (
           <span className="rounded-[4px] bg-[#111111] px-1.5 py-0.5 text-[11px] font-medium text-white">
             Atende por este fluxo

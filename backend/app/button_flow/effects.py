@@ -123,8 +123,14 @@ CANAL_TEXTO = "whatsapp_texto"
 def aplicar(
     efeitos: Efeitos, *, lead: dict, conversation_id: str,
     evidencia: dict | None = None, fluxo: str = FLUXO_RECUPERACAO,
+    nota_sem_qualificacao: bool = True,
 ) -> bool:
     """Aplica os efeitos da decisão. Retorna False se o fluxo NÃO deve avançar.
+
+    `nota_sem_qualificacao=False` tira da nota de transbordo a frase "Nenhuma
+    qualificação por conversa — abordar direto.": a ValerIA v2 qualifica e escreve
+    o resumo dela logo depois (`valeria_runner_v2.montar_nota`), e a frase o
+    contradiria. Default True = Recuperação e ValerIA v1 byte a byte como antes.
 
     Só o opt-out bloqueia: se não conseguimos gravar `opt_out=true`, avançar o nó
     encerraria o fluxo com o lead ainda elegível a disparos — exatamente o que ele
@@ -191,7 +197,8 @@ def aplicar(
                       com_optout=bool(efeitos.optout))
 
     if efeitos.handoff:
-        _aplicar_handoff(lead, conversation_id, vendedor=efeitos.vendedor, fluxo=fluxo)
+        _aplicar_handoff(lead, conversation_id, vendedor=efeitos.vendedor, fluxo=fluxo,
+                         nota_sem_qualificacao=nota_sem_qualificacao)
 
     if efeitos.recontato_dias:
         _agendar_recontato(lead, efeitos.recontato_dias, conversation_id, fluxo=fluxo)
@@ -456,7 +463,8 @@ def _silenciar_ia(lead: dict, conversation_id: str, *,
 
 def _aplicar_handoff(lead: dict, conversation_id: str, *,
                      vendedor: str | None = None,
-                     fluxo: str = FLUXO_RECUPERACAO) -> None:
+                     fluxo: str = FLUXO_RECUPERACAO,
+                     nota_sem_qualificacao: bool = True) -> None:
     """Handoff enxuto: sem resumo por LLM (não houve conversa) e sem rescue job.
 
     Nos fluxos de `FLUXOS_QUE_ASSUMEM_CONTROLE_HUMANO` o desligamento da IA vem
@@ -524,9 +532,10 @@ def _aplicar_handoff(lead: dict, conversation_id: str, *,
         },
     }, rotulo="metadata.handoff")
     _mover_deal(lead_id, *STAGE_QUER_REPOR)
-    anotar(lead_id, conversation_id,
-           f"➡️ [TRANSBORDO p/ {vendedor}] {motivo}. "
-           f"Nenhuma qualificação por conversa — abordar direto.")
+    nota = f"➡️ [TRANSBORDO p/ {vendedor}] {motivo}."
+    if nota_sem_qualificacao:
+        nota += " Nenhuma qualificação por conversa — abordar direto."
+    anotar(lead_id, conversation_id, nota)
 
 
 def _agendar_recontato(lead: dict, dias: int, conversation_id: str, *,

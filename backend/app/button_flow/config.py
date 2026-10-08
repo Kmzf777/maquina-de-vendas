@@ -39,6 +39,11 @@ def _env(name: str, padrao: str = "") -> str:
 _CHAVE_POR_FLUXO = {
     "recuperacao_v1": "RECUPERACAO_ENABLED",
     "valeria_botoes_v1": "VALERIA_BOTOES_ENABLED",
+    # A v2 (vitrine) é a MESMA ValerIA de botões, com outro registry: a mesma chave
+    # desliga as duas. Qual das duas atende é o perfil do canal (`flow_id`) — e,
+    # para quem está no meio do atendimento, o `flow_state.flow` gravado
+    # (`runner.fluxo_efetivo`).
+    "valeria_botoes_v2": "VALERIA_BOTOES_ENABLED",
 }
 
 

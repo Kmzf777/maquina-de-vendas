@@ -20,7 +20,35 @@
  * `components/campaigns/cadence-flow/types.ts` e o daqui) são SÓ declarações, e todos
  * os importadores usam `import type`. Um valor em tempo de execução ali quebraria essa
  * leitura e o cabeçalho daquele arquivo, que diz o que ele guarda.
+ *
+ * Pelo mesmo motivo moram aqui as constantes de VERSÃO (v1/v2) e a montagem da query
+ * `?flow_id=`: a casca e o painel de canais montam URLs, e as duas montagens têm de
+ * concordar sobre o que a v1 manda (nada — a v1 continua batendo nas URLs de sempre).
  */
+import type { FlowIdValeria } from "./valeria-flow-types";
+
+export const FLOW_V1: FlowIdValeria = "valeria_botoes_v1";
+export const FLOW_V2: FlowIdValeria = "valeria_botoes_v2";
+
+/** As versões na ordem do seletor, com o rótulo que o operador lê. */
+export const VERSOES: { id: FlowIdValeria; rotulo: string; curto: string; descricao: string }[] = [
+  { id: FLOW_V1, rotulo: "v1", curto: "v1", descricao: "Roteiro de botões original" },
+  { id: FLOW_V2, rotulo: "v2 (vitrine)", curto: "v2", descricao: "Vitrine com carrossel e tabela de preços" },
+];
+
+/**
+ * A query de versão para uma URL de `/api/valeria-flow`: vazia na v1, de propósito. O
+ * backend já responde pela v1 sem `flow_id`, e manter a v1 nas URLs de sempre é o que
+ * deixa a v1 se comportar IGUAL a antes do seletor existir.
+ */
+export function queryDoFluxo(flowId: FlowIdValeria): string {
+  return flowId === FLOW_V1 ? "" : `?flow_id=${encodeURIComponent(flowId)}`;
+}
+
+/** "v1"/"v2" para um `flow_id` de perfil, ou `null` se não for da ValerIA de Botões. */
+export function versaoCurta(flowId: string | null | undefined): string | null {
+  return VERSOES.find((versao) => versao.id === flowId)?.curto ?? null;
+}
 
 /**
  * A mensagem do backend, ou `padrao` se não houver nenhuma.

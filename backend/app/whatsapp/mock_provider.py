@@ -113,6 +113,17 @@ class MockProvider(WhatsAppProvider):
         })
         return {"status": "mock_ok", "method": "send_interactive_list"}
 
+    async def send_interactive_carousel(self, to: str, body: str, cards: list[dict]) -> dict:
+        logger.warning(f"[MOCK] send_interactive_carousel to={to} cards={len(cards)}")
+        _log_entry({
+            "method": "send_interactive_carousel",
+            "to": to,
+            "body": body,
+            # Tuplas viram listas: o ensaio é lido de um .jsonl.
+            "cards": [{**c, "buttons": [list(b) for b in c.get("buttons", [])]} for c in cards],
+        })
+        return {"status": "mock_ok", "method": "send_interactive_carousel"}
+
     async def mark_read(self, message_id: str, remote_jid: str = "") -> dict:
         _log_entry({"method": "mark_read", "message_id": message_id})
         return {"status": "mock_ok", "method": "mark_read"}

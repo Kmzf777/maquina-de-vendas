@@ -59,6 +59,20 @@ async function gateAdmin(): Promise<Gate> {
 }
 
 /**
+ * O `?flow_id=` da requisição do navegador, pronto para colar no `path` do upstream —
+ * ou `""` sem ele (a v1, que o backend já assume por default).
+ *
+ * Só ESTE parâmetro atravessa, e não a query inteira: o proxy repassa um Bearer admin,
+ * e encaminhar parâmetros arbitrários do navegador para o backend seria abrir uma
+ * fresta que nenhuma rota pediu. O valor não é validado aqui — o router devolve 400
+ * para um `flow_id` desconhecido, com a mensagem dele.
+ */
+export function queryDoFluxo(request: Request): string {
+  const flowId = new URL(request.url).searchParams.get("flow_id");
+  return flowId ? `?flow_id=${encodeURIComponent(flowId)}` : "";
+}
+
+/**
  * Repassa `status` e corpo do upstream tal qual: o 400 do backend traz uma
  * mensagem em português escrita para o operador (ex.: rótulo de botão acima do
  * limite de 20 caracteres da Meta) e a tela mostra esse texto verbatim. Envelopar

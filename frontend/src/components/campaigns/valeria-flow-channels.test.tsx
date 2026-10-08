@@ -240,7 +240,7 @@ describe("ValeriaFlowChannels — ativação", () => {
     await waitFor(() => expect(chamadas.filter((c) => c.method === "POST")).toHaveLength(1));
     const posts = chamadas.filter((c) => c.method === "POST");
     expect(posts[0].url).toContain("/api/valeria-flow/activate");
-    expect(posts[0].body).toEqual({ channel_id: "a3a607b1" });
+    expect(posts[0].body).toEqual({ channel_id: "a3a607b1", flow_id: FLOW_ID });
   });
 
   it("Cancelar fecha a confirmação sem mandar nada", async () => {
@@ -395,5 +395,57 @@ describe("nomesIrmaos / listarNomes", () => {
     expect(listarNomes(["A"])).toBe("A");
     expect(listarNomes(["A", "B"])).toBe("A e B");
     expect(listarNomes(["A", "B", "C"])).toBe("A, B e C");
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
+describe("ValeriaFlowChannels — versão do fluxo", () => {
+  const V2 = "valeria_botoes_v2";
+  const NA_V1: CanalDoFluxo = {
+    ...CANAL_SOZINHO,
+    id: "c-v1",
+    name: "Comercial",
+    perfil: { id: "pb1", name: "Botões v1", kind: "button_flow", flow_id: FLOW_ID },
+    atende_este_fluxo: true,
+  };
+  const NA_V2: CanalDoFluxo = {
+    ...CANAL_SOZINHO,
+    id: "c-v2",
+    name: "Vitrine",
+    perfil: { id: "pb2", name: "Botões v2", kind: "button_flow", flow_id: V2 },
+    atende_este_fluxo: false,
+  };
+
+  it("mostra a versão de cada canal de botões como selo v1/v2, e nenhum no canal com IA", async () => {
+    await montar(true, [NA_V1, NA_V2, CANAL_SOZINHO]);
+    expect(within(linha("Comercial")).getByTitle("Versão do fluxo de botões deste canal").textContent).toBe("v1");
+    expect(within(linha("Vitrine")).getByTitle("Versão do fluxo de botões deste canal").textContent).toBe("v2");
+    expect(within(linha("Suporte")).queryByTitle("Versão do fluxo de botões deste canal")).toBeNull();
+  });
+
+  it("na v2, busca os canais com `?flow_id=` e ativa mandando o `flow_id` da v2", async () => {
+    const chamadas = instalarFetch([{ flow_id: V2, ligado: true, canais: [{ ...NA_V1, atende_este_fluxo: false }, { ...NA_V2, atende_este_fluxo: true }] }]);
+    render(<ValeriaFlowChannels flowId={V2} />);
+    await waitFor(() => expect(screen.getByText("Comercial")).toBeTruthy());
+    expect(chamadas[0].url).toBe("/api/valeria-flow/channels?flow_id=valeria_botoes_v2");
+
+    fireEvent.click(botao(linha("Comercial"), "Ativar"));
+    fireEvent.click(botao(linha("Comercial"), "Confirmar ativação"));
+    await waitFor(() => expect(chamadas.filter((c) => c.method === "POST")).toHaveLength(1));
+    expect(chamadas.find((c) => c.method === "POST")?.body).toEqual({ channel_id: "c-v1", flow_id: V2 });
+  });
+
+  it("o selo vem do `flow_id` do CANAL quando o router o manda, e cai no do perfil sem ele", async () => {
+    await montar(true, [
+      // O perfil diz v1, o canal (fluxo efetivo do router) diz v2: vale o do canal.
+      { ...NA_V1, flow_id: V2 },
+      // Sem o campo no canal: o do perfil de botões.
+      { ...NA_V2, flow_id: undefined },
+      // LLM: o router manda `flow_id: null`, e não há selo.
+      { ...CANAL_SOZINHO, flow_id: null },
+    ]);
+    expect(within(linha("Comercial")).getByTitle("Versão do fluxo de botões deste canal").textContent).toBe("v2");
+    expect(within(linha("Vitrine")).getByTitle("Versão do fluxo de botões deste canal").textContent).toBe("v2");
+    expect(within(linha("Suporte")).queryByTitle("Versão do fluxo de botões deste canal")).toBeNull();
   });
 });
