@@ -74,3 +74,11 @@ def test_trigger_de_entrada_dispara_nas_colunas_novas_e_mantem_seguranca():
 
 def test_sem_placeholder_do_plano():
     assert "(a) Recrie" not in SQL
+
+
+def test_lock_timeout_logo_depois_do_begin():
+    """O ALTER TABLE leads pede lock exclusivo: se esperar atrás de uma transação longa, trava
+    TODAS as escritas em leads (webhook do WhatsApp) enquanto espera. Com lock_timeout a
+    migration falha em 5 s e pode ser re-rodada (é idempotente)."""
+    depois = SQL.lower().split("begin;", 1)[1].lstrip()
+    assert depois.startswith("set local lock_timeout = '5s';")

@@ -12,6 +12,7 @@
 -- conversion_events (vazia) NAO e dropada: scripts/bling/mesclar_leads_duplicados.py a referencia.
 
 begin;
+set local lock_timeout = '5s';  -- ALTER TABLE leads: falha em 5 s em vez de travar as escritas em leads
 
 create table if not exists public.ad_conversions (
   id              uuid primary key default gen_random_uuid(),
