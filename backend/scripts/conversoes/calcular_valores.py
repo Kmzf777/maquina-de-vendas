@@ -1,7 +1,8 @@
 """Propõe o valor estimado por segmento x etapa para `ad_conversion_values`.
 
 valor = receita das vendas em até 30 dias dos leads com clique que atingiram a etapa
-        ÷ número desses leads (janela de 180 dias).
+        ÷ número desses leads (janela de 180 dias). Na etapa `lead`, só leads com clique Google
+        (só o Google recebe `lead`). `opportunity` não é proposto: o valor dela é definido à mão.
 
 Só imprime a proposta. Grava SÓ com --aplicar, depois de aprovada: mudar valor reinicia o
 aprendizado das campanhas.
@@ -49,24 +50,50 @@ def propor_valores(marcos: list[dict[str, Any]], vendas: list[dict[str, Any]]) -
     return cel
 
 
-def _carregar(sb, agora: datetime) -> tuple[list[dict], list[dict]]:
-    """Marcos com as MESMAS regras da varredura (clique, repasse válido, já era cliente), mas
-    sem a janela de envio — aqui é histórico de 180 dias."""
+def marcos_do_lead(lead: dict[str, Any], entradas: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Marcos de UM lead com as MESMAS regras da varredura (clique, repasse válido, já era
+    cliente), mas sem a janela de envio — aqui é histórico.
+
+    - `lead`: só quem tem clique GOOGLE (só o Google recebe essa etapa; a Meta já conta a
+      conversa), na hora do 1º clique Google;
+    - `qualified`: repasse válido de quem tem clique de qualquer plataforma (as duas recebem).
+    """
     from app.conversions.eligibility import (
         clicks_from_entradas, clicks_from_lead_fallback, parse_ts, qualified_handoff_ok,
         segment_for, stage_allowed,
     )
+    seg = segment_for(lead.get("stage"))
+    ja = lead.get("ja_era_cliente")
+    clicks = clicks_from_entradas(entradas)
+    clicks += clicks_from_lead_fallback(lead, clicks)
+    marcos: list[dict[str, Any]] = []
+    google = [c.click_at for c in clicks if c.platform == "google"]
+    if google and stage_allowed("lead", ja):
+        marcos.append({"lead_id": lead["id"], "segment": seg, "stage": "lead", "at": min(google)})
+    h = (lead.get("metadata") or {}).get("handoff")
+    if clicks and qualified_handoff_ok(h) and stage_allowed("qualified", ja):
+        marcos.append({"lead_id": lead["id"], "segment": seg, "stage": "qualified", "at": parse_ts(h["at"])})
+    return marcos
+
+
+def _carregar(sb, agora: datetime) -> tuple[list[dict], list[dict]]:
+    from app.conversions.eligibility import parse_ts
     desde = (agora - HISTORICO).isoformat()
     entradas: list[dict] = []
     i = 0
     while True:
+        # `.order("id")`: sem ordem estável o Postgres pode repetir/pular linhas entre páginas.
         page = sb.table("lead_events").select("lead_id,occurred_at,metadata").eq("event_type", "entrada") \
-            .gte("occurred_at", desde).range(i, i + 999).execute().data or []
+            .gte("occurred_at", desde).order("id").range(i, i + 999).execute().data or []
         entradas += page
         if len(page) < 1000:
             break
         i += 1000
-    ids = sorted({e["lead_id"] for e in entradas if e.get("lead_id")})
+    por_lead: dict[str, list[dict]] = defaultdict(list)
+    for e in entradas:
+        if e.get("lead_id"):
+            por_lead[e["lead_id"]].append(e)
+    ids = sorted(por_lead)
     marcos: list[dict] = []
     vendas: list[dict] = []
     for j in range(0, len(ids), 200):
@@ -84,16 +111,7 @@ def _carregar(sb, agora: datetime) -> tuple[list[dict], list[dict]]:
             if s.get("status") != "cancelada" and at:
                 vendas.append({"lead_id": s["lead_id"], "sold_at": at, "value": s.get("value"), "kit": s["id"] in kits})
         for lead in leads:
-            seg = segment_for(lead.get("stage"))
-            ja = lead.get("ja_era_cliente")
-            clicks = clicks_from_entradas([e for e in entradas if e["lead_id"] == lead["id"]])
-            clicks += clicks_from_lead_fallback(lead, clicks)
-            if clicks and stage_allowed("lead", ja):
-                primeiro = min(c.click_at for c in clicks)
-                marcos.append({"lead_id": lead["id"], "segment": seg, "stage": "lead", "at": primeiro})
-            h = (lead.get("metadata") or {}).get("handoff")
-            if clicks and qualified_handoff_ok(h) and stage_allowed("qualified", ja):
-                marcos.append({"lead_id": lead["id"], "segment": seg, "stage": "qualified", "at": parse_ts(h["at"])})
+            marcos += marcos_do_lead(lead, por_lead.get(lead["id"], []))
     return marcos, vendas
 
 
