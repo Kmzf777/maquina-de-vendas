@@ -76,19 +76,22 @@ def marcos_do_lead(lead: dict[str, Any], entradas: list[dict[str, Any]]) -> list
     return marcos
 
 
+_BLOCO = 200  # ids por `.in_()`: 200 uuids ≈ 8 KB de URL, o limite seguro do repo
+
+
+def _blocos(ids: list[str]):
+    for j in range(0, len(ids), _BLOCO):
+        yield ids[j:j + _BLOCO]
+
+
 def _carregar(sb, agora: datetime) -> tuple[list[dict], list[dict]]:
     from app.conversions.eligibility import parse_ts
+    from app.db.paginacao import paginar
     desde = (agora - HISTORICO).isoformat()
-    entradas: list[dict] = []
-    i = 0
-    while True:
-        # `.order("id")`: sem ordem estável o Postgres pode repetir/pular linhas entre páginas.
-        page = sb.table("lead_events").select("lead_id,occurred_at,metadata").eq("event_type", "entrada") \
-            .gte("occurred_at", desde).order("id").range(i, i + 999).execute().data or []
-        entradas += page
-        if len(page) < 1000:
-            break
-        i += 1000
+    # `.order("id")` em toda consulta paginada: sem ordem estável o Postgres pode repetir/pular
+    # linhas entre páginas (teto de 1000 do PostgREST).
+    entradas = paginar(lambda: sb.table("lead_events").select("lead_id,occurred_at,metadata")
+                       .eq("event_type", "entrada").gte("occurred_at", desde).order("id"))
     por_lead: dict[str, list[dict]] = defaultdict(list)
     for e in entradas:
         if e.get("lead_id"):
@@ -96,19 +99,20 @@ def _carregar(sb, agora: datetime) -> tuple[list[dict], list[dict]]:
     ids = sorted(por_lead)
     marcos: list[dict] = []
     vendas: list[dict] = []
-    for j in range(0, len(ids), 200):
-        bloco = ids[j:j + 200]
-        leads = sb.table("leads").select("id,stage,ja_era_cliente,metadata,created_at,ctwa_clid,gclid,gbraid,wbraid") \
-            .in_("id", bloco).execute().data or []
-        sales = sb.table("sales").select("id,lead_id,sold_at,value,status").in_("lead_id", bloco) \
-            .gte("sold_at", desde).execute().data or []
-        sale_ids = [s["id"] for s in sales]
-        itens = sb.table("sale_items").select("sale_id,descricao").in_("sale_id", sale_ids).execute().data or [] \
-            if sale_ids else []
-        kits = {it["sale_id"] for it in itens if "kit degust" in (it.get("descricao") or "").lower()}
+    for bloco in _blocos(ids):
+        leads = paginar(lambda: sb.table("leads").select(
+            "id,stage,ja_era_cliente,metadata,created_at,ctwa_clid,gclid,gbraid,wbraid"
+        ).in_("id", bloco).order("id"))
+        sales = paginar(lambda: sb.table("sales").select("id,lead_id,sold_at,value,status")
+                        .in_("lead_id", bloco).gte("sold_at", desde).order("id"))
+        kits: set[str] = set()
+        for ids_venda in _blocos([s["id"] for s in sales]):
+            itens = paginar(lambda: sb.table("sale_items").select("id,sale_id,descricao")
+                            .in_("sale_id", ids_venda).order("id"))
+            kits |= {it["sale_id"] for it in itens if "kit degust" in (it.get("descricao") or "").lower()}
         for s in sales:
             at = parse_ts(s.get("sold_at"))
-            if s.get("status") != "cancelada" and at:
+            if (s.get("status") or "").strip().lower() != "cancelada" and at:
                 vendas.append({"lead_id": s["lead_id"], "sold_at": at, "value": s.get("value"), "kit": s["id"] in kits})
         for lead in leads:
             marcos += marcos_do_lead(lead, por_lead.get(lead["id"], []))
