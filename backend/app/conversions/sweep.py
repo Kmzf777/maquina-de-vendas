@@ -68,6 +68,21 @@ def _quote_at(q: dict[str, Any]) -> datetime | None:
     return max(cands) if cands else None
 
 
+def _sale_at(s: dict[str, Any]) -> datetime | None:
+    """`sales.sold_at` é só a data da venda (Bling, CRM e manual gravam 12:00 ou 15:00 UTC, conferido
+    em produção). Lido cru, uma venda fechada no mesmo dia do clique pareceria anterior a ele (clique
+    às 14:00 BRT, sold_at = 09:00 BRT) e nunca teria clique atribuído. Mesma ideia de `_quote_at`:
+    se a venda foi lançada (`created_at`) no mesmo dia de São Paulo do `sold_at`, vale a hora do
+    lançamento; lançada em outro dia (retroativa), vale o `sold_at`."""
+    vendido = _ts(s.get("sold_at"))
+    criado = _ts(s.get("created_at"))
+    if vendido is None or criado is None:
+        return vendido
+    if vendido.astimezone(_TZ_BR).date() == criado.astimezone(_TZ_BR).date():
+        return max(vendido, criado)
+    return vendido
+
+
 def opportunity_from(quotes: list[dict[str, Any]], propostas: list[dict[str, Any]]) -> datetime | None:
     """Hora da oportunidade (§5 da spec): a PRIMEIRA entre orçamento enviado/aprovado/convertido
     e entrada de um deal na etapa `proposta_enviada`."""
@@ -134,7 +149,7 @@ def build_candidates(*, lead: dict[str, Any], entradas: list[dict[str, Any]], sa
     for s in sales:
         if (s.get("status") or "").strip().lower() == "cancelada":
             continue
-        at = _ts(s.get("sold_at"))
+        at = _sale_at(s)
         if at and s.get("id"):
             valor = float(s["value"]) if s.get("value") is not None else None
             eventos.append(("purchase", at, valor, s["id"], None))
@@ -216,7 +231,7 @@ def run_sweep(now: datetime | None = None) -> int:
         # ANTES do evento, e o filtro de janela é do build_candidates.
         entradas = _by_lead(_paged(lambda: sb.table("lead_events").select("id,lead_id,occurred_at,metadata")
                                    .eq("event_type", "entrada").in_("lead_id", bloco).order("id")))
-        sales = _by_lead(_paged(lambda: sb.table("sales").select("id,lead_id,sold_at,value,status")
+        sales = _by_lead(_paged(lambda: sb.table("sales").select("id,lead_id,sold_at,created_at,value,status")
                                 .in_("lead_id", bloco).gte("sold_at", since).order("id")))
         quotes = _by_lead(_paged(lambda: sb.table("quotes").select("id,lead_id,status,quoted_at,created_at")
                                  .in_("lead_id", bloco).in_("status", _OPP_QUOTE_STATUS).order("id")))

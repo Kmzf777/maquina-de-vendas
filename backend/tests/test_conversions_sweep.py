@@ -83,6 +83,50 @@ def test_oportunidade_e_venda():
     assert _by_key(rows)["meta:opportunity:C1"]["value"] == 300.0
 
 
+def test_venda_do_mesmo_dia_usa_a_hora_do_lancamento():
+    """`sold_at` é só a data (gravada 12:00/15:00 UTC). Clique às 14:00 BRT e venda lançada às
+    15:00 BRT do mesmo dia: com o sold_at cru (09:00 BRT) a venda pareceria ANTES do clique e
+    nunca teria clique atribuído. No mesmo dia vale a hora de `created_at`."""
+    click = datetime(2026, 10, 7, 14, tzinfo=BR)
+    entradas = [{"occurred_at": click.isoformat(), "metadata": {"ctwa_clid": "C1"}}]
+    criado = datetime(2026, 10, 7, 18, tzinfo=timezone.utc)
+    sales = [{"id": "S1", "lead_id": "L1", "sold_at": "2026-10-07T12:00:00+00:00",
+              "created_at": criado.isoformat(), "value": 180, "status": None}]
+    rows = build_candidates(lead=_lead(created_at=click.isoformat()), entradas=entradas, sales=sales,
+                            opportunity_at=None, values=VALUES, now=NOW)
+    assert _keys(rows) == ["meta:purchase:S1"]
+    assert rows[0]["event_at"] == criado.isoformat()
+
+
+def test_venda_retroativa_mantem_o_sold_at():
+    # Lançada dias depois (created_at em outro dia): a data do documento é a que vale.
+    entradas = [{"occurred_at": datetime(2026, 10, 2, 14, tzinfo=BR).isoformat(), "metadata": {"ctwa_clid": "C1"}}]
+    sales = [{"id": "S1", "lead_id": "L1", "sold_at": "2026-10-03T12:00:00+00:00",
+              "created_at": "2026-10-07T18:00:00+00:00", "value": 180, "status": None}]
+    rows = build_candidates(lead=_lead(created_at="2026-10-02T17:00:00+00:00"), entradas=entradas, sales=sales,
+                            opportunity_at=None, values=VALUES, now=NOW)
+    assert _keys(rows) == ["meta:purchase:S1"]
+    assert rows[0]["event_at"] == datetime(2026, 10, 3, 12, tzinfo=timezone.utc).isoformat()
+
+
+def test_venda_sem_created_at_usa_o_sold_at():
+    sales = [{"id": "S1", "lead_id": "L1", "sold_at": (CLICK + timedelta(days=1)).isoformat(), "value": 1, "status": None}]
+    rows = build_candidates(lead=_lead(), entradas=ENTRADAS, sales=sales, opportunity_at=None, values=VALUES, now=NOW)
+    assert rows[0]["event_at"] == (CLICK + timedelta(days=1)).isoformat()
+
+
+def test_campanha_cai_no_utm_campaign_da_entrada():
+    for meta in ({"gclid": "G1", "utm_campaign": "search-atacado"},
+                 {"gclid": "G1", "campanha_nome": "", "utm_campaign": "search-atacado"}):
+        rows = build_candidates(lead=_lead(ctwa_clid=None), entradas=[{"occurred_at": CLICK.isoformat(), "metadata": meta}],
+                                sales=[], opportunity_at=None, values=VALUES, now=NOW)
+        assert rows[0]["campaign_name"] == "search-atacado"
+    rows = build_candidates(lead=_lead(ctwa_clid=None), entradas=[{"occurred_at": CLICK.isoformat(), "metadata": {
+        "gclid": "G1", "campanha_nome": "Search | Atacado", "utm_campaign": "search-atacado"}}],
+        sales=[], opportunity_at=None, values=VALUES, now=NOW)
+    assert rows[0]["campaign_name"] == "Search | Atacado"
+
+
 def test_venda_cancelada_com_caixa_diferente_tambem_sai():
     sales = [{"id": "S1", "lead_id": "L1", "sold_at": (CLICK + timedelta(days=1)).isoformat(), "value": 99, "status": "Cancelada"}]
     rows = build_candidates(lead=_lead(), entradas=ENTRADAS, sales=sales, opportunity_at=None, values=VALUES, now=NOW)
@@ -268,6 +312,9 @@ def test_run_sweep_faz_upsert_com_ignore_duplicates(monkeypatch):
     assert any(r["dedupe_key"] == "meta:qualified:C1" and r["value"] == 80.0 for r in rows)
     # todas as linhas de um upsert em lote precisam das MESMAS chaves (PostgREST usa ?columns=)
     assert len({tuple(sorted(r)) for r in rows}) == 1
+    # a hora da venda depende de created_at (venda do mesmo dia)
+    sel = [a[0] for (t, attr, a, _k) in log if t == "sales" and attr == "select"]
+    assert sel and "created_at" in sel[0].split(",")
 
 
 def test_run_sweep_quebra_os_ids_em_blocos_de_200(monkeypatch):

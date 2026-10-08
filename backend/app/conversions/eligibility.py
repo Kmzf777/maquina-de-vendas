@@ -43,6 +43,10 @@ def parse_ts(v: Any) -> datetime | None:
         return None
 
 
+def _txt(v: Any) -> str:
+    return v.strip() if isinstance(v, str) else ""
+
+
 def clicks_from_entradas(entradas: list[dict[str, Any]]) -> list[Click]:
     """Uma entrada pode ter mais de um ID (raro); cada ID vira um Click."""
     out: list[Click] = []
@@ -51,10 +55,13 @@ def clicks_from_entradas(entradas: list[dict[str, Any]]) -> list[Click]:
         meta = e.get("metadata") or {}
         if at is None:
             continue
+        # Nome da campanha: o resolvido pelo anúncio Meta (`campanha_nome`); sem ele (Google, ou
+        # anúncio Meta ainda não sincronizado), o `utm_campaign` cru da entrada.
+        campanha = _txt(meta.get("campanha_nome")) or _txt(meta.get("utm_campaign")) or None
         for ctype, platform in _PLATFORM_OF.items():
             cid = (meta.get(ctype) or "").strip()
             if cid:
-                out.append(Click(platform, cid, ctype, at, meta.get("campanha_nome")))
+                out.append(Click(platform, cid, ctype, at, campanha))
     return out
 
 
