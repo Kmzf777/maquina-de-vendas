@@ -183,12 +183,17 @@ Retentativas: 1 min, 5 min, 30 min, 2 h, 12 h; na 6ª falha vai para `erro`. Var
 faltando também entra no backoff (não é permanente) — e, se for credencial da plataforma ou o ID
 da ação de uma etapa do Google, a plataforma/etapa nem é processada (seção 2).
 
-**Disjuntor de credencial.** Token inválido/revogado ou sem permissão (Google: HTTP 401/403 ou
+**Disjuntor de credencial.** Token inválido/revogado ou sem permissão (Google: HTTP 401 ou
 falha do OAuth com `invalid_grant`/`invalid_client`; Meta: HTTP 401/403 ou códigos 190/102/10/200–299)
 para o envio **àquela plataforma no resto do tick** e a linha que bateu no erro **não gasta
-tentativa**: continua `pendente`, com `last_error` preenchido e `next_attempt_at` 30 min à frente.
+tentativa**: continua `pendente`, com `last_error` preenchido e `next_attempt_at` 30 min à frente —
+e as demais linhas vencidas da plataforma também são empurradas 30 min de uma vez.
 O log do worker mostra `[CONVERSOES] meta: erro de credencial (...) — plataforma parada neste
-tick`. Troque o token e reinicie; a fila segue sozinha. A outra plataforma não é afetada. O access
+tick`. Troque o token e reinicie; a fila segue sozinha. A outra plataforma não é afetada: o sender
+busca o lote de cada plataforma separado (até 100 cada), então uma plataforma travada não ocupa as
+vagas da outra. No Google, o **403** do envio não dispara o disjuntor: pode ser uma ação/destino
+específico sem acesso, então segue o backoff normal (gasta tentativa e acaba em `erro` se
+persistir — confira o acesso da conta à ação e reenvie). O access
 token do Google fica em cache por 50 min no processo (trocar o refresh token no `.env` invalida o
 cache; um 401 também).
 
@@ -199,7 +204,10 @@ deduplica neste produto: reenviar um evento que já chegou duplica a conversão.
   Eventos antes de reenviar"`;
 - linha retomada de um claim abandonado (worker morreu no meio do envio, ou o resultado não foi
   gravado depois de 3 tentativas) vira `erro` com `last_error = "envio interrompido — conferir no
-  Gerenciador de Eventos antes de reenviar"`, sem chamar a Meta.
+  Gerenciador de Eventos antes de reenviar"`, sem chamar a Meta — inclusive em modo teste. Esse
+  `erro` também aparece quando **só a resposta do claim se perdeu** (o banco gravou o `claimed_at`,
+  mas o worker não recebeu a confirmação e nunca enviou): nesse caso o evento simplesmente não está
+  no Gerenciador. O sistema não distingue os dois casos — por isso a conferência.
 Nesses dois casos, procure o evento no Gerenciador de Eventos (dataset, aba Visão geral/Eventos,
 pelo `event_id` da linha). Se **não** estiver lá, reenvie com o `update` abaixo; se estiver, deixe
 como está. Falha de conexão (o request nem saiu) segue transitória. No Google tudo isso é

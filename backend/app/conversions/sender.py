@@ -133,6 +133,18 @@ def _save(sb, row_id: str, upd: dict[str, Any]) -> bool:
     return False
 
 
+def _adiar_plataforma(sb, platform: str) -> None:
+    """Disjuntor: empurra de uma vez as linhas vencidas e livres da plataforma para daqui a 30 min,
+    para não ficarem girando a cada tick (nem gastam tentativa)."""
+    agora = _utcnow()
+    try:
+        sb.table("ad_conversions").update({"next_attempt_at": (agora + AUTH_PAUSE).isoformat()}) \
+            .eq("platform", platform).eq("status", "pendente").lte("next_attempt_at", agora.isoformat()) \
+            .is_("claimed_at", "null").execute()
+    except Exception as exc:  # noqa: BLE001 — o adiamento é otimização; o tick já parou a plataforma
+        logger.warning("[CONVERSOES] falha ao adiar as linhas de %s: %s", platform, exc)
+
+
 def _send(row: dict[str, Any], lead: dict[str, Any]) -> SendResult:
     """Exceção inesperada do cliente (linha malformada, bug) vira falha transitória: entra no
     backoff e acaba em `erro`, em vez de deixar a linha presa no claim e reenviada a cada 10 min."""
@@ -187,12 +199,16 @@ def run_sender(now: datetime | None = None, limit: int = 100) -> dict[str, int]:
     if test_mode:
         limit = min(limit, TEST_MODE_LIMIT)
     sb = get_supabase()
-    q = sb.table("ad_conversions").select("*").eq("status", "pendente").in_("platform", platforms)
-    if "google" in platforms and len(google_stages) < len(_STAGES):
-        # Na própria consulta: linha que não pode sair não ocupa vaga do lote (senão 100 linhas de
-        # uma etapa sem ação travariam a fila inteira, sempre as primeiras por next_attempt_at).
-        q = q.or_(f"platform.neq.google,stage.in.({','.join(google_stages)})")
-    due = q.lte("next_attempt_at", now.isoformat()).order("next_attempt_at").limit(limit).execute().data or []
+    # Uma consulta POR PLATAFORMA, cada uma com o seu limite: com um lote único, as linhas vencidas
+    # de uma plataforma travada (disjuntor, etapa sem ação) ocupariam todas as vagas e a outra
+    # nunca sairia — na Meta, até passar dos 7 dias e se perder.
+    due: list[dict[str, Any]] = []
+    for platform in platforms:
+        q = sb.table("ad_conversions").select("*").eq("status", "pendente").eq("platform", platform)
+        if platform == "google" and len(google_stages) < len(_STAGES):
+            # Etapa sem ação não ocupa vaga do lote (senão 100 linhas dela travariam o Google).
+            q = q.in_("stage", google_stages)
+        due += q.lte("next_attempt_at", now.isoformat()).order("next_attempt_at").limit(limit).execute().data or []
     if not due:
         return counts
     lead_ids = sorted({r["lead_id"] for r in due})
@@ -222,7 +238,8 @@ def run_sender(now: datetime | None = None, limit: int = 100) -> dict[str, int]:
             upd = {"status": "ignorado", "claimed_at": None, "last_error": "venda removida antes do envio"}
         elif row.get("sale_id") in canceladas:
             upd = {"status": "ignorado", "claimed_at": None, "last_error": "venda cancelada antes do envio"}
-        elif platform == "meta" and not test_mode and _stale_reclaim(row, claim_at):
+        elif platform == "meta" and _stale_reclaim(row, claim_at):
+            # Vale também em modo teste: o claim velho pode ser de um envio REAL anterior.
             logger.error("[CONVERSOES] meta %s %s: envio anterior interrompido (claim de %s) — não "
                          "reenvia; conferir no Gerenciador de Eventos", row["stage"], row["id"], row.get("claimed_at"))
             upd = {"status": "erro", "claimed_at": None, "last_error": STALE_META_MSG}
@@ -233,6 +250,7 @@ def run_sender(now: datetime | None = None, limit: int = 100) -> dict[str, int]:
                 bloqueadas.add(platform)
                 logger.error("[CONVERSOES] %s: erro de credencial (%s) — plataforma parada neste tick, "
                              "a linha %s não gasta tentativa", platform, result.error, row["id"])
+                _adiar_plataforma(sb, platform)
             elif not result.ok:
                 logger.warning("[CONVERSOES] %s %s %s falhou: %s", platform, row["stage"], row["id"], result.error)
         if _save(sb, row["id"], upd):

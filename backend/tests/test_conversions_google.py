@@ -118,7 +118,11 @@ def test_send_401_403_sao_transitorios(monkeypatch):
     _env(monkeypatch)
     for status in (401, 403):
         r = google.send(ROW, LEAD, transport=_transport(status, {"error": {"message": "PERMISSION_DENIED"}}))
-        assert not r.ok and not r.permanent and r.auth_error, status
+        assert not r.ok and not r.permanent, status
+    # Só o 401 (credencial ruim) dispara o disjuntor. O 403 do ingest pode ser de UMA ação/destino
+    # sem acesso: segue o backoff normal (gasta tentativa e acaba em `erro`), sem parar o Google.
+    assert google.send(ROW, LEAD, transport=_transport(401, {"error": {"message": "x"}})).auth_error
+    assert not google.send(ROW, LEAD, transport=_transport(403, {"error": {"message": "x"}})).auth_error
     for status in (400, 429, 500):
         r = google.send(ROW, LEAD, transport=_transport(status, {"error": {"message": "x"}}))
         assert not r.auth_error, status

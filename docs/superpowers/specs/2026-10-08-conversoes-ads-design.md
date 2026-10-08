@@ -188,15 +188,18 @@ evento real) → pulada inteira pelo sender, sem reivindicar linha, com aviso no
 Etapa do Google sem `GOOGLE_ADS_CONVERSION_ACTION_<ETAPA>` → filtrada na própria consulta (não
 ocupa vaga do lote nem é reivindicada), aviso a cada tick.
 
-**Disjuntor de credencial:** token inválido/sem permissão (Google 401/403 e OAuth 400/401, ex.
+**Disjuntor de credencial:** token inválido/sem permissão (Google 401 e OAuth 400/401, ex.
 `invalid_grant`; Meta 401/403 e códigos 190/102/10/200–299 — `SendResult.auth_error`) para a
-plataforma no resto do tick; a linha não gasta tentativa (continua `pendente`, +30 min).
+plataforma no resto do tick; a linha não gasta tentativa (continua `pendente`, +30 min) e as demais
+linhas vencidas e livres da plataforma são empurradas +30 min num update só. O 403 do ingest do
+Google pode ser de uma ação/destino específico: segue o backoff normal. O lote é buscado **por
+plataforma** (limite próprio), para uma plataforma travada não tomar as vagas da outra.
 
 **Desfecho desconhecido (só Meta, que não deduplica):** resposta que não chegou depois de o
 request sair (timeout de leitura/escrita, `ReadError`, `RemoteProtocolError`) → `erro` permanente
 "resposta da Meta não chegou — conferir no Gerenciador de Eventos antes de reenviar"; linha
 retomada de um claim abandonado (> 10 min) → `erro` "envio interrompido — conferir…", sem chamar a
-Meta. Reenvio só à mão, depois de conferir. No Google os dois casos são reenviados normalmente
+Meta (também em modo teste; pode ser só a resposta do claim que se perdeu, sem envio). Reenvio só à mão, depois de conferir. No Google os dois casos são reenviados normalmente
 (dedup por `transactionId`). Falha de conexão (request não saiu) é transitória nas duas.
 `enviado` no Google = request aceito; o processamento é assíncrono.
 

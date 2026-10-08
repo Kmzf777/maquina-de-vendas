@@ -99,24 +99,32 @@ def test_run_sender_plataformas_desligadas_nao_toca_no_banco(monkeypatch):
 
 
 class _Q:
-    """Query builder falso do supabase-py: qualquer filtro devolve a si mesmo. O update de
-    claim (com `claimed_at` só) devolve a linha; `falhas_gravacao` faz o update final estourar."""
+    """Query builder falso do supabase-py. No select, `eq`/`in_` filtram pelas colunas que a linha
+    tem e `limit` corta; o resto devolve a si mesmo. O update de claim (com `claimed_at` só)
+    devolve a linha; `falhas_gravacao` faz o update final estourar."""
 
-    def __init__(self, data, log, falhas=None):
-        self.data = data
+    def __init__(self, data, log, falhas=None, filtra=True):
+        self.data = list(data)
         self.log = log
         self.falhas = falhas if falhas is not None else [0]
         self.final = False
+        self.filtra = filtra
 
     def __getattr__(self, n):
         def call(*a, **k):
             self.log.append((n, a))
+            if self.filtra and n in ("eq", "in_"):
+                col, val = a
+                ok = (lambda v: v == val) if n == "eq" else (lambda v: v in set(val))
+                self.data = [r for r in self.data if col not in r or ok(r[col])]
+            if self.filtra and n == "limit":
+                self.data = self.data[:a[0]]
             return self
         return call
 
     def update(self, u):
         self.log.append(("update", (u,)))
-        q = _Q([{"id": "R1"}], self.log, self.falhas)
+        q = _Q([{"id": "R1"}], self.log, self.falhas, filtra=False)
         q.final = set(u) != {"claimed_at"} or u["claimed_at"] is None
         return q
 
@@ -202,7 +210,8 @@ def test_run_sender_so_reivindica_a_plataforma_configurada(monkeypatch):
     sb, log = _fake_sb([])
     monkeypatch.setattr(sender_mod, "get_supabase", lambda: sb)
     sender_mod.run_sender(now=NOW)
-    assert ("in_", ("platform", ["google"])) in log
+    assert ("eq", ("platform", "google")) in log
+    assert ("eq", ("platform", "meta")) not in log
 
 
 def test_run_sender_envia_e_grava(monkeypatch):
@@ -375,7 +384,7 @@ def test_google_so_reivindica_etapas_com_acao_configurada(monkeypatch, caplog):
     with caplog.at_level("WARNING"):
         counts = sender_mod.run_sender(now=NOW)
     # filtro na própria consulta (a linha sem ação não ocupa o lote) + trava linha a linha
-    assert ("or_", ("platform.neq.google,stage.in.(qualified,purchase)",)) in log
+    assert ("in_", ("stage", ["qualified", "purchase"])) in log
     assert enviados == ["R2"] and counts["enviado"] == 1
     claims = [a for n, a in log if n == "eq" and a[0] == "id"]
     assert ("id", "R1") not in claims
@@ -408,10 +417,18 @@ def test_disjuntor_de_credencial_para_a_plataforma_no_tick(monkeypatch):
     assert chamadas == ["R1"]
     claims = [a for n, a in log if n == "eq" and a[0] == "id"]
     assert ("id", "R2") not in claims and ("id", "R3") not in claims
-    last = _updates(log)[-1]
+    last = [u for u in _updates(log) if "last_error" in u][-1]
     assert "attempts" not in last and "status" not in last and last["claimed_at"] is None
     assert last["next_attempt_at"] == (NOW + timedelta(minutes=30)).isoformat()
     assert counts["pendente"] == 1 and counts["erro"] == 0
+    # as outras linhas vencidas da plataforma são empurradas de uma vez (não ficam girando)
+    adiar = {"next_attempt_at": (NOW + timedelta(minutes=30)).isoformat()}
+    assert adiar in _updates(log)
+    i = log.index(("update", (adiar,)))
+    filtros = log[i + 1:i + 6]
+    assert ("eq", ("platform", "meta")) in filtros and ("eq", ("status", "pendente")) in filtros
+    assert ("lte", ("next_attempt_at", NOW.isoformat())) in filtros
+    assert ("is_", ("claimed_at", "null")) in filtros
 
 
 def test_disjuntor_nao_para_a_outra_plataforma(monkeypatch):
@@ -453,3 +470,37 @@ def test_venda_cancelada_com_caixa_e_espaco_vira_ignorado(monkeypatch):
     monkeypatch.setattr(sender_mod.meta, "send", send)
     assert sender_mod.run_sender(now=NOW)["ignorado"] == 1
     send.assert_not_called()
+
+
+def test_plataforma_travada_nao_toma_as_vagas_da_outra(monkeypatch):
+    """Token do Google revogado com mais linhas vencidas do que o lote: a Meta precisa sair do
+    mesmo jeito (senão as linhas dela passam dos 7 dias e se perdem). Uma consulta por plataforma,
+    cada uma com o seu limite."""
+    _env(monkeypatch)
+    _google_env(monkeypatch)
+    rows = [_qrow(id=f"G{i}", platform="google", next_attempt_at=f"2026-10-0{i + 1}") for i in range(5)]
+    rows.append(_qrow(id="M1", platform="meta"))
+    sb, log = _fake_sb(rows)
+    monkeypatch.setattr(sender_mod, "get_supabase", lambda: sb)
+    google_calls, meta_calls = [], []
+    monkeypatch.setattr(sender_mod.google, "send",
+                        lambda r, l: google_calls.append(r["id"]) or SendResult(ok=False, error="HTTP 401", auth_error=True))
+    monkeypatch.setattr(sender_mod.meta, "send", lambda r, l: meta_calls.append(r["id"]) or SendResult(ok=True))
+    counts = sender_mod.run_sender(now=NOW, limit=3)
+    assert meta_calls == ["M1"] and counts["enviado"] == 1
+    assert len(google_calls) == 1
+    assert ("limit", (3,)) in log and log.count(("limit", (3,))) == 2
+
+
+def test_meta_claim_abandonado_vira_erro_tambem_em_modo_teste(monkeypatch):
+    """Em modo teste o claim velho pode ser de um envio REAL anterior: reenviar como teste apagaria
+    a evidência e a linha sairia de verdade de novo depois."""
+    _env(monkeypatch, test_mode="true")
+    sb, log = _fake_sb([_qrow(claimed_at=(NOW - timedelta(minutes=11)).isoformat())])
+    monkeypatch.setattr(sender_mod, "get_supabase", lambda: sb)
+    send = MagicMock()
+    monkeypatch.setattr(sender_mod.meta, "send", send)
+    counts = sender_mod.run_sender(now=NOW)
+    send.assert_not_called()
+    assert counts["erro"] == 1
+    assert _updates(log)[-1]["last_error"].startswith("envio interrompido")

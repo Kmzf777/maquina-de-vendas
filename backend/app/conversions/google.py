@@ -186,12 +186,13 @@ def send(row: dict[str, Any], lead: dict[str, Any], *, transport: httpx.BaseTran
         return SendResult(ok=True, response=ok_body if isinstance(ok_body, dict) else {"raw": ok_body})
     if resp.status_code == 401:
         _reset_token_cache()  # token em cache revogado: o próximo envio pede outro
-    # 401/403 (credencial revogada, sem acesso à conta) se resolvem gerando token novo: a fila
-    # espera no backoff em vez de virar `erro` de vez — e o sender para o Google no tick.
+    # 401/403 não são permanentes (backoff). Só o 401 (credencial ruim) é `auth_error` e para o
+    # Google no tick sem gastar tentativa: o 403 do ingest pode ser de UMA ação/destino sem acesso,
+    # então segue o backoff normal e, se persistir, a linha acaba em `erro`.
     permanent = 400 <= resp.status_code < 500 and resp.status_code not in (401, 403, 429)
     try:
         payload = resp.json()
     except ValueError:
         payload = None
     return SendResult(ok=False, permanent=permanent, error=_error_message(resp), response=payload,
-                      auth_error=resp.status_code in (401, 403))
+                      auth_error=resp.status_code == 401)
