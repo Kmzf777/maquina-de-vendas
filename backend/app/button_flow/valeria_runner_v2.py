@@ -55,7 +55,7 @@ from app.button_flow import valeria_engine as motor_v1
 from app.button_flow import valeria_engine_v2 as motor
 from app.button_flow import valeria_registry_v2 as r2
 from app.button_flow import valeria_runner as v1
-from app.button_flow.engine import Clique, Mensagem, Texto
+from app.button_flow.engine import Clique, Mensagem, Texto, normalizar
 from app.button_flow.valeria_engine_v2 import DecisaoV2, TextoClassificado
 from app.conversations.service import get_history, save_message
 from app.db.supabase import get_supabase
@@ -82,7 +82,8 @@ ROTULO_DO_RAMO = {"atacado": "Atacado", "private_label": "Marca própria",
                   "consumo": "Consumo próprio", "exportacao": "Exportação"}
 # (nó, rótulo na nota, sufixo) — as respostas de qualificação que viram linha da nota.
 _QUALIFICACAO = (("QA1", "Negócio", ""), ("QA2", "Volume", "/mês"),
-                 ("QP1", "Marca", ""), ("QP2", "Quantidade", ""))
+                 ("QP1", "Marca", ""), ("QP2", "Quantidade", ""),
+                 ("E1", "Destino", ""), ("E2", "Exporta por", ""), ("E3", "Objetivo", ""))
 
 _LINHAS_HISTORICO = 30
 _MAX_TEXTOS_NOTA = 5
@@ -297,10 +298,21 @@ def _rotulo_do_botao(nos: dict, no_id: str, botao_id) -> str | None:
     return next((b.rotulo for b in no.botoes if b.id == botao_id), botao_id)
 
 
-def montar_nota(estado: dict, nos: dict, *, textos: list[str], motivo: str | None) -> str:
-    """Resumo do atendimento para o vendedor. Pura."""
+def _texto_ja_na_origem(texto: str, motivo: str | None) -> bool:
+    """True quando a "Origem do repasse" já cita este texto (PERGUNTA/VENDEDOR/escreveu)."""
+    return bool(motivo) and (motivo.endswith(f": {texto}") or f'"{texto}"' in motivo)
+
+
+def montar_nota(estado: dict, nos: dict, *, textos: list[str], motivo: str | None,
+                ramo: str | None = None) -> str:
+    """Resumo do atendimento para o vendedor. Pura.
+
+    `ramo` é o do turno (estado + nó em que o lead ESTAVA): o nó gravado depois do
+    turno é o terminal, que não diz ramo — sem isto a exportação, que não grava
+    `flow_state.ramo`, saía como "ramo não escolhido".
+    """
     estado = estado if isinstance(estado, dict) else {}
-    ramo = _ramo(estado, estado.get("node"))
+    ramo = ramo or _ramo(estado, estado.get("node"))
     cabecalho = f"[ValerIA botões v2] {ROTULO_DO_RAMO.get(ramo or '', 'ramo não escolhido')}"
     interesse = estado.get("interesse")
     if isinstance(interesse, str) and interesse:
@@ -337,6 +349,7 @@ def montar_nota(estado: dict, nos: dict, *, textos: list[str], motivo: str | Non
     if jornada:
         linhas.append(" · ".join(jornada))
 
+    textos = [t for t in textos if not _texto_ja_na_origem(t, motivo)]
     if textos:
         linhas.append("Mensagens escritas pelo lead: " + " / ".join(f'"{t}"' for t in textos))
     linhas.append(f"Origem do repasse: {motivo or '—'}")
@@ -344,11 +357,11 @@ def montar_nota(estado: dict, nos: dict, *, textos: list[str], motivo: str | Non
 
 
 async def _anotar_repasse(lead: dict, conversation: dict, estado: dict, nos: dict,
-                          motivo: str | None) -> None:
+                          motivo: str | None, *, ramo: str | None) -> None:
     """Observação no lead + mensagem de sistema na conversa (`effects.anotar`). Fail-soft."""
     try:
         textos = await asyncio.to_thread(_textos_do_lead, conversation.get("id"))
-        nota = montar_nota(estado, nos, textos=textos, motivo=motivo)
+        nota = montar_nota(estado, nos, textos=textos, motivo=motivo, ramo=ramo)
         await asyncio.to_thread(effects.anotar, lead.get("id"), conversation.get("id"), nota)
     except Exception as exc:
         logger.warning("%s nota de repasse não gravada conv=%s: %s", _LOG,
@@ -417,43 +430,66 @@ class _Saida:
         if _MARCADOR_PRECO.search(texto):
             precos = await self.catalogo.precos(ramo)
             texto = _MARCADOR_PRECO.sub(lambda m: precos.get(m.group(1)) or SOB_CONSULTA, texto)
+        # Qualquer outro `{x}` (texto editado na tela) leva a linha embora, como na v1.
+        texto = v1._resolver(texto, {})
+        if not texto:
+            logger.warning("%s FAQ %r vazia depois de resolver — nada enviado", _LOG, faq_id)
+            return
         await self.texto(texto)
 
     async def vitrine(self, decisao: DecisaoV2) -> bool:
         """Mensagens 1-3 da vitrine conforme `decisao.vitrine`. False = sem tabela.
 
-        False só acontece ANTES de qualquer envio da vitrine: o chamador troca o turno
-        pelo repasse (spec §6.3, "catálogo indisponível").
+        False só acontece quando o setor do ramo não tem PREÇO NENHUM (catálogo vazio
+        ou fora), e ANTES de qualquer envio: o chamador troca o turno pelo repasse
+        (spec §6.3). Com preço mas sem mensagem 2 (um SKU base faltando, nenhuma linha
+        de tabela), a mensagem 2 é pulada e o resto da vitrine sai — um SKU ausente não
+        pode derrubar todas as vitrines do ramo.
+
+        Carrossel recusado pela Meta: os botões com a foto saem DEPOIS da mensagem 2,
+        no lugar da 3ª — os botões ficam por último, onde o lead os vê.
         """
         no = self.conteudo.nos[decisao.proximo_no]
         ramo = r2.RAMO_DO_NO.get(no.id)
         modo = decisao.vitrine if decisao.vitrine in ("completa", "tabela") else "acoes"
         mensagem = decisao.mensagem or Mensagem(corpo=r2.CORPO_ACOES, botoes=no.botoes)
+        botoes = mensagem.botoes or no.botoes
 
         mensagem_2 = None
         if modo != "acoes":
-            mensagem_2 = _mensagem_2(ramo, await self.catalogo.precos(ramo), self.conteudo.textos)
-            if mensagem_2 is None:
+            precos = await self.catalogo.precos(ramo)
+            if not precos:
                 return False
+            mensagem_2 = v1._resolver(_mensagem_2(ramo, precos, self.conteudo.textos) or "", {})
+            if not mensagem_2:
+                logger.warning("%s %s com preço mas sem mensagem 2 — vitrine sem ela",
+                               _LOG, no.id)
 
-        acoes_enviadas = False
+        foto_do_fallback = None
         if modo == "completa":
-            acoes_enviadas = await self._carrossel(no, mensagem)
-        if mensagem_2 is not None and await self.texto(mensagem_2):
+            foto_do_fallback = await self._carrossel(no, mensagem)
+        if mensagem_2 and await self.texto(mensagem_2):
             self.viu.append("tabela")
-        if not acoes_enviadas:
-            # Decisão 1 do cabeçalho: em "completa" a `mensagem` é a do carrossel.
-            corpo = r2.CORPO_ACOES if modo == "completa" else mensagem.corpo
-            await self.botoes(corpo, mensagem.botoes or no.botoes)
+        if foto_do_fallback and await self.botoes(v1._resolver(mensagem.corpo, {}), botoes,
+                                                  image_url=foto_do_fallback):
+            self.viu.append("vitrine")
+            return True
+        # Decisão 1 do cabeçalho: em "completa" a `mensagem` é a do carrossel.
+        corpo = r2.CORPO_ACOES if modo == "completa" else mensagem.corpo
+        await self.botoes(v1._resolver(corpo, {}) or r2.CORPO_ACOES, botoes)
         return True
 
-    async def _carrossel(self, no, mensagem: Mensagem) -> bool:
-        """Mensagem 1. Devolve True quando o fallback JÁ levou os botões de ação."""
+    async def _carrossel(self, no, mensagem: Mensagem) -> str | None:
+        """Mensagem 1. Devolve a foto do 1º card quando a Meta RECUSOU o carrossel.
+
+        Com a foto em mãos, `vitrine` manda os botões de ação com ela no header depois
+        da mensagem 2 (spec §6.3).
+        """
         corpo = v1._resolver(mensagem.corpo, {})
         cards = await self.catalogo.cards(no)
         if not cards:
             logger.warning("%s nenhum card de %s pode sair — vitrine sem carrossel", _LOG, no.id)
-            return False
+            return None
         if len(cards) >= 2:
             urls = [await asyncio.to_thread(v1.url_publica_da_foto, card.foto)
                     for card, _ in cards]
@@ -467,22 +503,19 @@ class _Saida:
                 except Exception as exc:
                     logger.error("%s carrossel recusado conv=%s — botões com foto: %s", _LOG,
                                  self.conversation.get("id"), exc, exc_info=True)
-                    if await self.botoes(corpo, mensagem.botoes or no.botoes, image_url=urls[0]):
-                        self.viu.append("vitrine")
-                        return True
-                    return False
+                    return urls[0]
                 await self._registrar(
                     "\n\n".join([corpo, *(texto for _, texto in cards)]), resultado,
                     message_type="interactive")
                 self.viu.append("vitrine")
-                return False
+                return None
             logger.warning("%s foto de card não publicada em %s — cards como texto", _LOG, no.id)
         else:
             logger.warning("%s só %d card enviável em %s — cards como texto", _LOG,
                            len(cards), no.id)
         if await self.texto("\n\n".join(texto for _, texto in cards)):
             self.viu.append("vitrine")
-        return False
+        return None
 
 
 def _decisao_de_terminal(destino: str, nos: dict, terminais: dict, **extra) -> DecisaoV2:
@@ -582,8 +615,11 @@ async def _executar_turno(
         return motivo
 
     evento = v1._montar_evento(texto, message_type, metadata)
-    pediu_saida = (isinstance(evento, Texto)
-                   and valeria_classifier.pediu_para_sair_v2(evento.conteudo))
+    # Lista exata do motor OU gramática determinística do classificador: os dois sem
+    # LLM — a frase exata não pode gastar uma chamada que o motor já resolve sozinho.
+    pediu_saida = isinstance(evento, Texto) and (
+        normalizar(evento.conteudo) in motor_v1.FRASES_OPTOUT
+        or valeria_classifier.pediu_para_sair_v2(evento.conteudo))
     # O pedido de saída vence o detector do robô do lead (a v1 faz o mesmo com a
     # lista exata, dentro de `_e_robo_do_lead`).
     if not pediu_saida and await v1._e_robo_do_lead(lead, conversation_id, evento):
@@ -616,7 +652,8 @@ async def _executar_turno(
     if deal and deal.get("stage_id"):
         campos["deal_stage_id"] = deal["stage_id"]
     if efetiva.efeitos.handoff:
-        await _anotar_repasse(lead, conversation, campos, conteudo.nos, efetiva.repasse_motivo)
+        await _anotar_repasse(lead, conversation, campos, conteudo.nos,
+                              efetiva.repasse_motivo, ramo=_ramo(campos, no))
     await v1._persistir_estado(conversation, estado, campos)
     logger.info("%s turno aplicado conv=%s nó=%s vitrine=%s faq=%s", _LOG, conversation_id,
                 efetiva.proximo_no, efetiva.vitrine, efetiva.faq)
@@ -739,7 +776,17 @@ async def repassar_parado(*, lead: dict, conversation: dict, channel: dict, prov
             logger.info("%s repasse automático fora de nó de intenção (%s) conv=%s",
                         _LOG, node, conversation_id)
             return False
-        if lead.get("human_control") is True or lead.get("opt_out") is True:
+        # As MESMAS guardas de um turno: kill switch, human_control, card movido pelo
+        # vendedor e blacklist (`_motivo_para_nao_rodar`), mais o opt-out.
+        if not config.enabled(r2.FLOW_ID):
+            return False
+        if lead.get("opt_out") is True:
+            return False
+        deal = await asyncio.to_thread(v1.get_open_deal, lead.get("id"))
+        motivo = await asyncio.to_thread(v1._motivo_para_nao_rodar, lead, estado, deal)
+        if motivo:
+            logger.info("%s repasse automático não roda conv=%s: %s", _LOG,
+                        conversation_id, motivo)
             return False
         ramo = _ramo(estado, node)
         destino = r2.HANDOFF_DO_RAMO.get(ramo or "")
@@ -770,7 +817,8 @@ async def repassar_parado(*, lead: dict, conversation: dict, channel: dict, prov
             await v1._enviar_cartao(provider, saida.destino, conteudo.terminais.get(destino),
                                     channel, conversation=conversation, lead=lead)
         campos = proximo_estado_v2(estado_travado, decisao)
-        await _anotar_repasse(lead, conversation, campos, conteudo.nos, decisao.repasse_motivo)
+        await _anotar_repasse(lead, conversation, campos, conteudo.nos,
+                              decisao.repasse_motivo, ramo=ramo)
         await v1._persistir_estado(conversation, estado_travado, campos)
         logger.info("%s repasse automático conv=%s %s -> %s", _LOG, conversation_id,
                     node, destino)

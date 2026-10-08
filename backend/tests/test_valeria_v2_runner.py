@@ -259,13 +259,39 @@ async def test_carrossel_recusado_vira_botoes_com_foto_e_sem_terceira_mensagem(t
     turno.provedor.carrossel_explode = True
     estado = await turno(PRONTA_ATACADO)
     p = turno.provedor
-    assert p.tipos() == ["botoes", "texto"]
-    _, corpo, botoes, imagem = p.chamadas[0]
+    # A tabela primeiro; os botões (com a foto) por ÚLTIMO, onde o lead os vê.
+    assert p.tipos() == ["texto", "botoes"]
+    assert p.chamadas[0][1].startswith("tabela atacado")
+    _, corpo, botoes, imagem = p.chamadas[1]
     assert corpo == r2.NOS["VA"].corpo
     assert [b[0] for b in botoes] == ["pedido", "provar", "duvida"]
     assert imagem == "https://storage.exemplo/atacado/foto_1_classico.jpg"
-    assert p.chamadas[1][1].startswith("tabela atacado")
+    assert estado["node"] == "VA" and estado["viu"] == ["tabela", "vitrine"]
+
+
+@pytest.mark.asyncio
+async def test_pl_sem_o_sku_base_nao_derruba_a_vitrine(turno):
+    """Um SKU faltando não é catálogo vazio: sem "como funciona", o resto sai."""
+    turno.catalogo["linhas"] = [p for p in catalogo_producao()
+                                if p["name"] != "Café Canastra 250g — c/ embalagem Canastra"]
+    estado = await turno(PRONTA_PL)
+    p = turno.provedor
+    assert p.tipos() == ["texto", "botoes"]       # 1 card só (vira texto) + ações
+    assert p.chamadas[0][1].startswith("Sua própria embalagem")
+    assert [b[0] for b in p.chamadas[1][2]] == ["orcamento", "provar", "duvida"]
+    assert estado["node"] == "VP"
+    assert not any(e.handoff for e in turno.registro["efeitos"])
+
+
+@pytest.mark.asyncio
+async def test_atacado_com_preco_mas_sem_linha_de_tabela_nao_repassa(turno):
+    turno.catalogo["linhas"] = [{"sector": "Atacado", "name": "SKU fora da tabela",
+                                 "price_formatted": "R$ 10,00", "min_lot": None}]
+    estado = await turno(PRONTA_ATACADO)
+    assert turno.provedor.tipos() == ["botoes"]
+    assert turno.provedor.chamadas[0][1] == r2.CORPO_ACOES
     assert estado["node"] == "VA"
+    assert not any(e.handoff for e in turno.registro["efeitos"])
 
 
 @pytest.mark.asyncio
@@ -340,6 +366,8 @@ async def test_pergunta_no_qa2_repassa_com_o_texto_na_nota(turno):
     turno.conversa["flow_state"] = _no(None, "QA2", ramo="atacado", interesse="classico",
                                        respostas={"QA1": "cafeteria"}, viu=["vitrine", "tabela"])
     turno.classificar.return_value = Classificacao("PERGUNTA")
+    turno.registro["historico"].append({"role": "user", "content": "tenho 2 lojas em BH",
+                                        "message_type": "text", "metadata": {}})
     estado = await turno("vocês fazem café com açaí?")
     p = turno.provedor
     assert p.tipos() == ["texto", "cartao"]
@@ -349,7 +377,9 @@ async def test_pergunta_no_qa2_repassa_com_o_texto_na_nota(turno):
     assert "interesse: Clássico" in nota
     assert "Negócio: Cafeteria" in nota
     assert "Viu: vitrine + tabela" in nota
-    assert '"vocês fazem café com açaí?"' in nota
+    # O texto da pergunta vai na Origem e NÃO se repete em "Mensagens escritas".
+    assert 'Mensagens escritas pelo lead: "tenho 2 lojas em BH"' in nota
+    assert nota.count("vocês fazem café com açaí?") == 1
     assert "Origem do repasse: PERGUNTA: vocês fazem café com açaí?" in nota
 
 
@@ -442,9 +472,57 @@ async def test_fluxo_pl_ate_o_handoff_com_a_nota(turno):
         "[ValerIA botões v2] Marca própria",
         "Marca: Já tenho a marca · Quantidade: 100 a 500",
         "Viu: vitrine + como funciona",
-        'Mensagens escritas pelo lead: "uns 300 pacotes"',
         'Origem do repasse: escreveu "uns 300 pacotes"',
     ]
+
+
+@pytest.mark.asyncio
+async def test_nota_de_exportacao_tem_ramo_e_respostas(turno):
+    turno.conversa["flow_state"] = _no(None, "E4", respostas={
+        "N0": "exportacao", "E1": "europa", "E2": "cnpj_proprio", "E3": "revender"})
+    estado = await turno("Sim, quero falar", payload="sim", titulo="Sim, quero falar")
+    assert estado["node"] == "T_HANDOFF_ARTHUR"
+    assert turno.provedor.tipos() == ["texto", "cartao"]
+    assert turno.registro["notas"][-1].splitlines() == [
+        "[ValerIA botões v2] Exportação",
+        "Destino: Europa · Exporta por: Pelo meu CNPJ · Objetivo: Comprar e revender",
+        'Origem do repasse: clicou "Sim, quero falar"',
+    ]
+
+
+def test_nota_sem_ramo_diz_ramo_nao_escolhido():
+    nota = v2.montar_nota({"node": "T_HANDOFF"}, r2.NOS, textos=[], motivo="VENDEDOR: oi")
+    assert nota.splitlines()[0] == "[ValerIA botões v2] ramo não escolhido"
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Nenhum marcador cru chega ao lead
+# ═══════════════════════════════════════════════════════════════════════════
+@pytest.mark.asyncio
+async def test_faq_editada_com_marcador_desconhecido_corta_a_linha(turno, monkeypatch):
+    monkeypatch.setattr(valeria_content, "carregar", lambda _f: {
+        "faq:atacado:frete": {"corpo": "Frete pro {cidade}\nGrátis acima de R$2.000."}})
+    turno.conversa["flow_state"] = _no(None, "QA1", ramo="atacado")
+    turno.classificar.return_value = Classificacao("FAQ", faq_id="frete")
+    await turno("e o frete?")
+    assert turno.provedor.chamadas[0][1] == "Grátis acima de R$2.000."
+
+
+@pytest.mark.asyncio
+async def test_nudge_editado_com_marcador_na_vitrine_nao_vaza(turno, monkeypatch):
+    monkeypatch.setattr(valeria_content, "carregar", lambda _f: {
+        r2.CHAVE_NUDGE: {"corpo": "oi {nome}!\npra seguir, toca aqui 👇"}})
+    turno.conversa["flow_state"] = _no(None, "VA", ramo="atacado")
+    await turno("bom dia")
+    assert turno.provedor.chamadas[0][1] == "pra seguir, toca aqui 👇"
+
+
+@pytest.mark.asyncio
+async def test_frase_exata_de_saida_nao_gasta_llm(turno):
+    turno.conversa["flow_state"] = _no(None, "QA1", ramo="atacado")
+    estado = await turno("para")
+    turno.classificar.assert_not_called()
+    assert estado["node"] == "T_OPTOUT"
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -571,6 +649,29 @@ async def test_repassar_parado_perde_a_trava_e_nao_faz_nada(turno, monkeypatch):
     assert turno.registro["efeitos"] == []
     assert turno.registro["notas"] == []
     assert turno.registro["gravacoes"] == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("guarda", ["kill_switch", "human_control", "blacklist", "card_movido"])
+async def test_repassar_parado_respeita_as_guardas_do_turno(turno, monkeypatch, guarda):
+    sb = _SupabaseFalso(ganha=True)
+    monkeypatch.setattr(v2, "get_supabase", lambda: sb)
+    turno.conversa["flow_state"] = _no(None, "QA2", ramo="atacado", deal_stage_id="S1")
+    if guarda == "kill_switch":
+        monkeypatch.setenv("VALERIA_BOTOES_ENABLED", "off")
+    elif guarda == "human_control":
+        turno.lead["human_control"] = True
+    elif guarda == "blacklist":
+        monkeypatch.setattr(irmao, "is_lead_blacklisted", lambda _l: True)
+    else:
+        monkeypatch.setattr(v1, "get_open_deal", lambda _l: {"stage_id": "S2"})
+    ganhou = await v2.repassar_parado(
+        lead=turno.lead, conversation=turno.conversa, channel={"mode": "ai"},
+        provider=turno.provedor, horas=3)
+    assert ganhou is False
+    assert sb.banco["updates"] == [], "pegou a trava apesar da guarda"
+    assert turno.provedor.chamadas == []
+    assert turno.registro["efeitos"] == []
 
 
 @pytest.mark.asyncio
