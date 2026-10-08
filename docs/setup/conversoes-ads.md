@@ -14,14 +14,20 @@ Spec: `docs/superpowers/specs/2026-10-08-conversoes-ads-design.md`.
 
 ## 2. Variáveis de ambiente
 
-Lidas com `os.getenv` (api e worker leem o mesmo `.env`). Sem as variáveis de uma plataforma, a
-linha vai direto para `erro` (erro permanente apontando a variável que falta).
+Lidas com `os.getenv` (api e worker leem o mesmo `.env`). Plataforma **ligada mas sem
+configuração** (falta `META_CAPI_DATASET_ID`/`_ACCESS_TOKEN`/`META_WABA_ID`, ou
+`GOOGLE_ADS_CUSTOMER_ID`/`_CLIENT_ID`/`_CLIENT_SECRET`/`_REFRESH_TOKEN`) é **pulada inteira**: o
+sender não reivindica nenhuma linha dela, nada gasta tentativa, e o log do worker avisa a cada tick
+(`[CONVERSOES] meta ligada mas sem configuração (VAR): nada sai da fila`). Ao configurar e reiniciar,
+a fila sai sozinha. O ID da ação do Google é por etapa: se faltar só o de uma etapa, as linhas
+dela falham com `GOOGLE_ADS_CONVERSION_ACTION_X não configurado` e entram no backoff (não viram
+`erro` direto; viram `erro` só depois das 5 retentativas, ~15 h).
 
 | Variável | Uso | Default |
 |---|---|---|
 | `CONVERSIONS_META_ENABLED` | Liga o envio para a Meta. Desligada, as linhas ficam `pendente`. | `false` |
 | `CONVERSIONS_GOOGLE_ENABLED` | Idem, Google. | `false` |
-| `CONVERSIONS_TEST_MODE` | Meta: inclui `test_event_code` (só se `META_CAPI_TEST_EVENT_CODE` existir). Google: `validateOnly: true`. | `false` |
+| `CONVERSIONS_TEST_MODE` | Meta: inclui `test_event_code`; **sem `META_CAPI_TEST_EVENT_CODE` a Meta fica pulada** (o evento sairia como real). Google: `validateOnly: true`. | `false` |
 | `META_CAPI_DATASET_ID` | Dataset ligado ao WABA (destino do `POST /{id}/events`). | sem default |
 | `META_CAPI_ACCESS_TOKEN` | Token de system user (seção 4). | sem default |
 | `META_CAPI_TEST_EVENT_CODE` | Código da aba Test Events. | sem default |
@@ -35,15 +41,25 @@ Lembrete: o `.env` da VPS é o que vale; depois de editar, reinicie api e worker
 
 ## 3. Ordem de ativação
 
+> **⚠️ Antes de tudo: aplique `supabase/migrations/20261008_ad_conversions.sql` em produção ANTES
+> de subir a branch para `master`.** O push para `master` dispara o deploy automático, e o código
+> novo já lê colunas que só a migration cria: o /trafego (`traffic_report`) e a origem do lead
+> (`/api/leads/[id]/origin`) selecionam `leads.gbraid`/`wbraid`, e o worker lê `ad_conversions`.
+> Deploy antes da migration = /trafego e painel de origem quebrados até ela ser aplicada.
+>
+> Não re-rode a `20261006b_lead_timeline_triggers.sql` depois da 20261008 (recria sobrecargas
+> antigas e todo insert em `leads` falha com "function is not unique"); se precisar, re-rode a
+> 20261008 logo em seguida.
+
 Tudo começa com as duas plataformas desligadas.
 
-1. **Migration e deploy.** Aplicada à mão (idempotente), a partir da raiz do repo:
+1. **Migration (antes do push) e deploy.** Aplicada à mão (idempotente), a partir da raiz do repo:
    ```bash
    docker exec -i $(docker ps --format '{{.Names}}' | grep supabase_db | head -1) \
      psql -U postgres -d postgres -v ON_ERROR_STOP=1 < supabase/migrations/20261008_ad_conversions.sql
    ```
-   Faça o deploy com `CONVERSIONS_*_ENABLED` ausentes/`false`. A tarefa `conversions-sweep`
-   (1800 s) enche a fila, inclusive os 90 dias de histórico. Confira o que **seria** enviado:
+   Só depois faça o push/deploy, com `CONVERSIONS_*_ENABLED` ausentes/`false`. A tarefa
+   `conversions-sweep` (1800 s) enche a fila, inclusive os 90 dias de histórico. Confira o que **seria** enviado:
    ```sql
    select platform, stage, status, count(*) from ad_conversions group by 1,2,3 order by 1,2,3;
    ```
@@ -52,8 +68,9 @@ Tudo começa com as duas plataformas desligadas.
    python -m scripts.conversoes.calcular_valores                     # só imprime a proposta
    python -m scripts.conversoes.calcular_valores --aplicar --por "<nome>"   # depois de aprovada
    ```
-   Células com N < 20 vêm marcadas: decida se usa `geral` no lugar. Para `opportunity`, que o
-   script não cobre, insira à mão:
+   O script propõe só `lead` (calculado só com leads que têm clique Google, porque só o Google
+   recebe essa etapa) e `qualified`. Células com N < 20 vêm marcadas: decida se usa `geral` no
+   lugar. O valor de `opportunity`, que o script não propõe, é definido à mão:
    ```sql
    insert into ad_conversion_values(segment,stage,value,updated_by)
    values ('atacado','opportunity',<v>,'<nome>')
@@ -68,8 +85,10 @@ Tudo começa com as duas plataformas desligadas.
    where c.status='pendente' and c.value is null and c.stage=v.stage and c.segment=v.segment;
    ```
 3. **Modo teste.** `CONVERSIONS_TEST_MODE=true` e ligue **uma** plataforma por vez.
-   - Meta: o evento aparece em Events Manager, aba Test Events, do dataset (precisa de
-     `META_CAPI_TEST_EVENT_CODE`).
+   - Meta: o evento aparece em Events Manager, aba Test Events, do dataset. Precisa de
+     `META_CAPI_TEST_EVENT_CODE`: com o modo teste ligado e o código vazio, a Meta fica pulada
+     (nada é enviado — sem o código o evento iria como real e, como o modo teste não consome a
+     linha, sairia de novo a cada 6 h). O log do worker avisa a variável que falta.
    - Google: o envio vai com `validateOnly`; **nada aparece na conta**, a resposta só diz que a
      validação passou.
    Em modo teste o sender manda no máximo 10 linhas por rodada, e um envio aceito **não consome a
@@ -135,11 +154,19 @@ dedup é nossa (`dedupe_key`/`event_id`); só eventos padrão (`LeadSubmitted` n
 |---|---|
 | `pendente` | Na fila. Também é onde ficam as linhas quando a plataforma está desligada ou aguardando retentativa (`next_attempt_at`). |
 | `enviado` | Aceito pela plataforma de verdade. Envio em modo teste nunca vira `enviado`: a linha fica `pendente` com `last_response.modo_teste = true`. |
-| `erro` | Erro permanente (validação, variável ausente) ou 6 falhas seguidas. Veja `last_error` e `last_response`. Token inválido/sem permissão (HTTP 401/403; na Meta também os códigos OAuth 190/102, permissão 10/200–299 e limites 4/17/32/341/613) **não** é permanente: entra no backoff, e a fila espera a troca do token — mas, se passar das 5 retentativas (~15 h), vira `erro` e precisa do `update` abaixo. |
+| `erro` | Erro permanente (4xx de validação) ou 6 falhas seguidas. Veja `last_error` e `last_response`. Token inválido/sem permissão (HTTP 401/403; na Meta também os códigos OAuth 190/102, permissão 10/200–299 e limites 4/17/32/341/613) **não** é permanente: entra no backoff, e a fila espera a troca do token — mas, se passar das 5 retentativas (~15 h), vira `erro` e precisa do `update` abaixo. |
 | `fora_da_janela` | O clique ficou velho demais antes do envio (Meta 7 dias, Google 90). Não há o que fazer. |
-| `ignorado` | Venda cancelada antes do envio. |
+| `ignorado` | Venda cancelada (`venda cancelada antes do envio`) ou apagada (`venda removida antes do envio`) antes do envio. |
 
-Retentativas: 1 min, 5 min, 30 min, 2 h, 12 h; na 6ª falha vai para `erro`.
+Retentativas: 1 min, 5 min, 30 min, 2 h, 12 h; na 6ª falha vai para `erro`. Variável de ambiente
+faltando também entra no backoff (não é permanente) — e, se for credencial da plataforma, a
+plataforma nem é processada (seção 2).
+
+**Aba "Conversões enviadas" (/trafego):** só admin. O endpoint `GET /api/conversions/ads` exige o
+JWT de admin no próprio backend (`exigir_admin`, o mesmo das rotas de atribuição do /trafego); a
+proxy do Next (`/api/traffic/conversoes`) repassa o token pelo `adminProxy`. Chamada direta ao
+backend sem token → 401; token de quem não é admin → 403. Os contadores somam **todas** as linhas
+do filtro; só a lista para em 1000 (a tela avisa que está truncada).
 
 Reenviar uma linha depois de corrigir a causa (credencial, ID de ação, etc.):
 ```sql

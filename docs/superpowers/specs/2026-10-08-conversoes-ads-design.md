@@ -81,7 +81,14 @@ developer tokens que não o usavam; vale para nós).
 | `lead` | `lead_events` `entrada` com `ctwa_clid` ou `gclid` | `occurred_at` | não enviado (a Meta já conta a conversa) | ação LEAD |
 | `qualified` | `leads.metadata.handoff.at` preenchido | `handoff.at` | `LeadSubmitted` | ação QUALIFIED |
 | `opportunity` | 1º entre `quotes.status in ('enviado','aprovado','convertido')` (`quoted_at`) e entrada do deal em `proposta_enviada` (`lead_events` `etapa`) | o que vier primeiro | `InitiateCheckout` | ação OPPORTUNITY |
-| `purchase` | `sales` com `status <> 'cancelada'` | `sold_at` | `Purchase` | ação PURCHASE |
+| `purchase` | `sales` com `status <> 'cancelada'` | `sold_at`, ajustado (abaixo) | `Purchase` | ação PURCHASE |
+
+**Hora da venda.** `sales.sold_at` é só a data (Bling, CRM e manual gravam 12:00 ou 15:00 UTC —
+conferido em produção). Lido cru, uma venda do mesmo dia do clique pareceria anterior a ele (clique
+14:00 BRT, `sold_at` = 09:00 BRT) e nunca teria clique atribuído. Regra (mesma ideia de
+`quotes.quoted_at`): se `sales.created_at` cai no mesmo dia de São Paulo que o `sold_at`, a hora do
+evento é `max(sold_at, created_at)`; se a venda foi lançada em outro dia (retroativa), vale o
+`sold_at`.
 
 **Clique atribuído** = a `entrada` mais recente do lead com ID de clique da plataforma e
 `occurred_at <= hora do evento`.
@@ -110,7 +117,7 @@ create table ad_conversions (
   click_id        text not null,          -- ctwa_clid | gclid | gbraid | wbraid
   click_id_type   text not null,          -- 'ctwa_clid' | 'gclid' | 'gbraid' | 'wbraid'
   click_at        timestamptz not null,
-  campaign_name   text null,              -- campanha_nome da entrada (para a aba)
+  campaign_name   text null,              -- campanha_nome da entrada, senão utm_campaign (para a aba)
   dedupe_key      text not null unique,   -- '{platform}:{stage}:{click_id}' | '{platform}:purchase:{sale_id}'
   event_at        timestamptz not null,
   event_id        text not null,          -- determinístico; vira event_id (Meta) / transactionId (Google)
@@ -154,12 +161,11 @@ Tudo em `backend/app/conversions/` (pacote novo; `campaigns/` já está grande):
 | Arquivo | Responsabilidade |
 |---|---|
 | `eligibility.py` | Funções puras: clique atribuído, janelas, regras de §5, segmento. |
-| `sweep.py` | Varredura: lê fontes dos últimos 90 dias (paginado — teto de 1000 do PostgREST), monta candidatos, `insert … on conflict do nothing`. Copia o valor de `ad_conversion_values` na inserção. |
+| `sweep.py` | Varredura: lê fontes dos últimos 90 dias (paginado — teto de 1000 do PostgREST), monta candidatos, `insert … on conflict do nothing`. Lê `ad_conversion_values` direto (uma query por rodada) e copia o valor na inserção; sem linha para a célula, o valor fica `null` (envia sem valor). |
 | `meta.py` | Monta e envia o evento Business Messaging (reaproveita os hashes do `capi_dispatcher`). |
 | `google.py` | Monta e envia o evento Data Manager; access token pelo mesmo OAuth do `google_ads.py`. |
 | `sender.py` | Claim atômico das pendentes (`claimed_at`, como follow-ups), checa janela de novo antes de enviar, classifica erro, agenda retentativa. |
-| `values.py` | Leitura de `ad_conversion_values`; fallback `null` (envia sem valor) se faltar linha. |
-| `router.py` | `GET /api/conversions/ads` (lista + contadores, filtros) para a aba. |
+| `router.py` | `GET /api/conversions/ads` (lista + contadores, filtros) para a aba. **Só admin**: exige o JWT de admin no backend (`exigir_admin` de `traffic_router`); a proxy do Next o repassa pelo `adminProxy`. |
 
 **Worker:** duas entradas em `TASK_SPECS`: `conversions-sweep` (periódica, 1800 s) e
 `conversions-send` (periódica, 300 s, até 100 pendentes por tick). 30 min de latência é irrelevante
@@ -171,8 +177,12 @@ Dados pessoais (e-mail, telefone) **não** vão para a fila: o sender lê o lead
 → `ignorado`.
 
 **Retentativa:** 1 min, 5 min, 30 min, 2 h, 12 h; na 6ª falha → `erro`. Erro permanente (4xx de
-validação, permissão) → `erro` direto. Evento que saiu da janela antes do envio → `fora_da_janela`.
-Plataforma desligada → nada sai da fila (fica `pendente`).
+validação) → `erro` direto. Token/permissão (401/403, códigos OAuth da Meta), limite, 5xx, rede e
+variável de ambiente faltando **não** são permanentes (backoff). Evento que saiu da janela antes do
+envio → `fora_da_janela`. Venda cancelada ou apagada (`sale_id` nulo) antes do envio → `ignorado`.
+Plataforma desligada → nada sai da fila (fica `pendente`). Plataforma ligada mas sem configuração
+(credenciais ausentes; na Meta, também modo teste sem `META_CAPI_TEST_EVENT_CODE`, que mandaria
+evento real) → pulada inteira pelo sender, sem reivindicar linha, com aviso no log a cada tick.
 
 **Removido:** `campaigns/conversions.py`, `conversion_log.py`, `google_export.py`, a parte de envio
 de `capi_dispatcher.py`, as chamadas em `automation/triggers.py:96-115`, `automation/engine.py:672-679`
@@ -187,6 +197,11 @@ Script `backend/scripts/conversoes/calcular_valores.py` (só leitura, imprime pr
 > valor(segmento, etapa) = receita das vendas em até 30 dias dos leads com clique que atingiram a
 > etapa ÷ número desses leads — janela de 180 dias.
 
+O script propõe só **`lead` e `qualified`**. `lead` usa só leads com clique **Google** (só o Google
+recebe `lead`), na hora do 1º clique Google; `qualified` usa repasses válidos com clique de qualquer
+plataforma. O valor de **`opportunity` é definido à mão** (`insert … on conflict` em
+`ad_conversion_values`, ver `docs/setup/conversoes-ads.md`).
+
 Mostra, por segmento, a receita separada em kit e não-kit, o N de cada célula e marca células com
 N < 20 (o Rafael decide se usa `geral` no lugar). Grava em `ad_conversion_values` só com `--aplicar`
 depois da aprovação. Recálculo é manual — cada mudança de valor reinicia o aprendizado.
@@ -195,9 +210,14 @@ Segmento = `leads.stage` no momento da varredura: `atacado`, `private_label`; o 
 
 ## 9. Aba "Conversões enviadas" (/trafego)
 
-- **Contadores:** etapa × plataforma × status no período do filtro do /trafego.
+- **Acesso:** só admin — o endpoint exige o JWT de admin no backend (não só na proxy), porque o
+  backend é público e a lista expõe nome de lead e valor de venda.
+- **Contadores:** etapa × plataforma × status no período do filtro do /trafego, calculados sobre
+  **todas** as linhas do filtro (select leve paginado), não sobre a lista. A lista para em 1000
+  linhas (teto do PostgREST) e devolve `truncated`.
 - **Lista:** data do evento, lead (link para a conversa), etapa, plataforma, campanha (`meta_ad_id` →
-  `meta_ad_campaigns`; Google pela `campanha_nome` da entrada), valor, status, erro traduzido.
+  `meta_ad_campaigns`; Google pela `campanha_nome` da entrada; sem ela, o `utm_campaign` cru da
+  entrada), valor, status, erro traduzido (o conserto de token depende da plataforma).
 - **Filtros:** etapa, plataforma, status.
 - Frontend em `src/components/trafego/conversoes-enviadas.tsx` + proxy `src/app/api/traffic/conversoes`.
 
@@ -240,9 +260,13 @@ Roteiro passo a passo em `docs/setup/conversoes-ads.md`:
 - Unitários (puros): elegibilidade (clique atribuído, janelas, já era cliente, fluxo de
   Recuperação), montagem dos payloads Meta e Google (hash, fuso `-03:00`, nomes, valor), `event_id`,
   classificação de erro e backoff.
-- Varredura com banco de teste: rodar 2× não duplica; venda movida para o lead com clique depois de
-  uma mesclagem entra na rodada seguinte; venda cancelada antes do envio não entra.
-- Sender com HTTP mockado: retentativa, erro permanente, `fora_da_janela`, plataforma desligada.
+- Varredura: **com Supabase mockado** (query builder falso — não há banco de teste): upsert com
+  `ignore_duplicates` na `dedupe_key` (rodar 2× não duplica — a garantia é a UNIQUE do banco),
+  paginação, blocos de 200 ids, lead com dado ruim não derruba a rodada, hora da venda do mesmo dia;
+  venda cancelada não entra.
+- Sender com HTTP e Supabase mockados: retentativa, erro permanente, `fora_da_janela`, plataforma
+  desligada ou sem configuração, venda cancelada/apagada, modo teste.
+- Router com Supabase mockado: contadores com mais de 1000 linhas, 401/403 sem admin.
 - Rodar no container da imagem `canastra-api` (venv local quebrado).
 
 ## 14. Fora de escopo
