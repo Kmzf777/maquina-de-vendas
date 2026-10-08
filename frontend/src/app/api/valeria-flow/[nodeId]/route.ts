@@ -1,5 +1,5 @@
 import { type NextRequest } from "next/server";
-import { adminProxy } from "../_shared";
+import { adminProxy, queryDoFluxo } from "../_shared";
 
 type Params = { params: Promise<{ nodeId: string }> };
 
@@ -7,7 +7,7 @@ type Params = { params: Promise<{ nodeId: string }> };
 export async function PUT(request: NextRequest, { params }: Params) {
   const { nodeId } = await params;
   const body = await request.json();
-  return adminProxy(`/api/valeria-flow/${encodeURIComponent(nodeId)}`, {
+  return adminProxy(`/api/valeria-flow/${encodeURIComponent(nodeId)}${queryDoFluxo(request)}`, {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
@@ -15,9 +15,9 @@ export async function PUT(request: NextRequest, { params }: Params) {
 }
 
 /** DELETE /api/valeria-flow/{nodeId} — apaga o override; devolve o item no default do registry. */
-export async function DELETE(_request: NextRequest, { params }: Params) {
+export async function DELETE(request: NextRequest, { params }: Params) {
   const { nodeId } = await params;
-  return adminProxy(`/api/valeria-flow/${encodeURIComponent(nodeId)}`, {
+  return adminProxy(`/api/valeria-flow/${encodeURIComponent(nodeId)}${queryDoFluxo(request)}`, {
     method: "DELETE",
   });
 }

@@ -18,8 +18,20 @@
 /** O ramo comercial do nó. `entrada` é só o N0, que pergunta o setor. */
 export type RamoFluxo = "entrada" | "atacado" | "private_label" | "consumo" | "exportacao";
 
-/** Como a mensagem sai no WhatsApp. `foto_botoes` manda a foto no header. */
-export type TelaFluxo = "lista" | "botoes" | "foto_botoes";
+/**
+ * Como a mensagem sai no WhatsApp. `foto_botoes` manda a foto no header. `carrossel`
+ * só existe na v2: as vitrines (VA/VP) saem como cards com foto, um por produto.
+ */
+export type TelaFluxo = "lista" | "botoes" | "foto_botoes" | "carrossel";
+
+/**
+ * As duas versões da ValerIA de Botões que o MESMO router serve (contrato C7 do plano
+ * `2026-10-08-valeria-botoes-v2-vitrine.md`): toda rota de `/api/valeria-flow` aceita
+ * `?flow_id=`, e sem ele o backend responde pela v1. A v2 vive AO LADO da v1 — a
+ * conversa em andamento termina na versão em que começou —, então o editor escolhe
+ * qual das duas está editando e a ativação diz para qual delas aponta o canal.
+ */
+export type FlowIdValeria = "valeria_botoes_v1" | "valeria_botoes_v2";
 
 /**
  * Um rótulo que saiu do ar. O motor (`valeria_engine._casar`) usa o par
@@ -51,6 +63,50 @@ export interface BotaoFluxo {
   editado: boolean;
 }
 
+/**
+ * Um card do carrossel da v2. Só o `corpo` é editável, e ele grava pela chave
+ * `card:<id>` (contrato C7). O corpo traz marcadores `{preco:<nome do produto>}` que o
+ * backend troca pelo preço do catálogo NO ENVIO; o limite da Meta (160 caracteres, no
+ * máximo 2 quebras de linha) vale DEPOIS dessa troca — por isso o `PUT` pode voltar 422
+ * com um texto que, cru, parecia caber.
+ */
+export interface CardFluxo {
+  id: string;
+  corpo: string;
+  corpo_default: string;
+  /**
+   * A chave do `PUT`/`DELETE`, CANÔNICA: `card:<nó>:<id>`. O id do card não é único no
+   * fluxo (`microlote` está na vitrine do atacado e na da marca própria), e o atalho
+   * `card:<id>` de um id repetido é 400 no backend. Os campos abaixo são do serializador
+   * (`_card_json`); a tela tem reserva para cada um, porque o contrato mínimo é
+   * `{id, corpo, corpo_default}`.
+   */
+  chave?: string;
+  tipo?: "card";
+  no?: string;
+  editado?: boolean;
+  /** 160: medido DEPOIS de trocar os preços. */
+  limite?: number;
+  /** 2. */
+  limite_quebras?: number;
+  foto?: string;
+  rotulo_botao?: string;
+}
+
+/**
+ * Um texto da v2 que não é tela nem desfecho: as regras do atacado, o "como funciona"
+ * da marca própria e cada resposta de FAQ (`faq:<ramo>:<faq_id>`). Grava pela `chave`,
+ * pela MESMA fresta do `PUT` de qualquer nó.
+ */
+export interface TextoFluxo {
+  chave: string;
+  corpo: string;
+  corpo_default: string;
+  /** Do serializador (`_reservado_json`); a tela tem reserva para os dois. */
+  rotulo_interno?: string;
+  editado?: boolean;
+}
+
 /** Um nó conversacional: corpo + botões, ambos editáveis. */
 export interface NoFluxo {
   id: string;
@@ -66,6 +122,8 @@ export interface NoFluxo {
   editaveis: string[];
   rotulos_antigos: RotuloAntigo[];
   editado: boolean;
+  /** Só na v2, só nas vitrines (`tela: "carrossel"`). Ausente na v1. */
+  cards?: CardFluxo[];
 }
 
 /**
@@ -162,6 +220,12 @@ export interface FluxoResposta {
   nudge: ReservadoFluxo;
   rotulo_lista: ReservadoFluxo;
   prazos: PrazoFluxo[];
+  /**
+   * Só na v2: as chaves de `CHAVES_TEXTO` do registry. Inclui as duas reservadas de
+   * sempre (nudge e botão de lista), que o editor já mostra em "Textos soltos" — ele as
+   * filtra para não desenhar o mesmo texto duas vezes.
+   */
+  textos?: TextoFluxo[];
 }
 
 /**
@@ -181,14 +245,21 @@ export interface ConteudoUpdate {
  * backend recusou — nesse caso a mensagem dele já está em `PainelProps.erro`, escrita
  * para o operador. Não rejeita: um painel que esquecesse o `catch` derrubaria o modal.
  */
-export type SalvarConteudo = (nodeId: string, patch: ConteudoUpdate) => Promise<ItemFluxo | null>;
+export type SalvarConteudo = (nodeId: string, patch: ConteudoUpdate) => Promise<ItemGravado | null>;
+
+/**
+ * O que um `PUT`/`DELETE` bem-sucedido devolve. Para nó, terminal e reservado é o
+ * `_item_json` mesclado; para `card:<id>` e para os textos da v2 a forma é a do
+ * serializador do backend, e o painel só precisa saber que DEU CERTO (não-nulo).
+ */
+export type ItemGravado = ItemFluxo | CardFluxo | TextoFluxo;
 
 /**
  * `DELETE /api/valeria-flow/{node_id}`: volta ao default do registry. Mesma
  * assinatura e mesmo contorno de erro do `salvar` — é por isso que `corpo_default`
  * viaja no `GET`.
  */
-export type RestaurarConteudo = (nodeId: string) => Promise<ItemFluxo | null>;
+export type RestaurarConteudo = (nodeId: string) => Promise<ItemGravado | null>;
 
 /** Props do painel da aba "Fluxo" (`valeria-flow-editor.tsx`). */
 export interface PainelFluxoProps {
@@ -203,5 +274,6 @@ export interface PainelFluxoProps {
 
 /** Props do painel da aba "Onde está ativo" (`valeria-flow-channels.tsx`). */
 export interface PainelCanaisProps {
-  flowId: string;
+  /** A versão escolhida no seletor da casca: é a que a ativação aponta. */
+  flowId: FlowIdValeria;
 }

@@ -553,3 +553,240 @@ describe("funções puras", () => {
     expect(fragmentarMarcadores("{Preco}")).toEqual([{ texto: "{Preco}", marcador: false }]);
   });
 });
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// v2 (vitrine) — cards do carrossel e os textos que não são tela
+// ═══════════════════════════════════════════════════════════════════════════════
+//
+// O `GET ?flow_id=valeria_botoes_v2` tem a MESMA forma da v1 e mais duas coisas
+// (contrato C7): `cards` nos nós de vitrine e a lista `textos`. Os testes abaixo
+// travam o que o operador precisa ver e o endereço do `PUT` de cada um — o card grava
+// por `card:<id>`, e o texto pela própria chave.
+
+const CARD_CLASSICO = {
+  id: "classico",
+  corpo: "Clássico · torra escura · 84 pts\n250g {preco:Clássico 250g}",
+  corpo_default: "Clássico · torra escura · 84 pts\n250g {preco:Clássico 250g}",
+};
+const CARD_SUAVE = {
+  id: "suave",
+  corpo: "Suave · torra média · 84 pts",
+  corpo_default: "Suave · torra média · 84 pts",
+};
+
+const VA: NoFluxo = {
+  id: "VA",
+  tipo: "no",
+  rotulo_interno: "VA · Vitrine atacado",
+  tela: "carrossel",
+  ramo: "atacado",
+  corpo: "olha os nossos cafés 👇",
+  corpo_default: "olha os nossos cafés 👇",
+  foto: null,
+  produto: null,
+  botoes: [
+    {
+      id: "pedido",
+      rotulo: "Quero fazer pedido",
+      rotulo_default: "Quero fazer pedido",
+      destino: "QA1",
+      grava: [],
+      descricao: "",
+      limite_rotulo: 20,
+      editado: false,
+    },
+  ],
+  editaveis: ["corpo", "rotulos"],
+  rotulos_antigos: [],
+  editado: false,
+  cards: [CARD_CLASSICO, CARD_SUAVE],
+};
+
+const FLUXO_V2: FluxoResposta = {
+  ...FLUXO,
+  flow_id: "valeria_botoes_v2",
+  nos: [N0, VA],
+  textos: [
+    { chave: "__regras_atacado__", corpo: "✅ pedido mínimo 30kg", corpo_default: "✅ pedido mínimo 30kg" },
+    { chave: "faq:atacado:frete", corpo: "Frete por conta do cliente.", corpo_default: "Frete por conta do cliente." },
+    // As duas chaves reservadas de sempre também estão em `CHAVES_TEXTO`; o editor já
+    // as mostra em "Textos soltos" e não pode desenhá-las duas vezes.
+    { chave: "__nudge__", corpo: NUDGE.corpo, corpo_default: NUDGE.corpo_default },
+  ],
+};
+
+function montarV2(salvar = vi.fn<PainelFluxoProps["salvar"]>(async () => null), erro: string | null = null) {
+  const restaurar = vi.fn<PainelFluxoProps["restaurar"]>(async () => null);
+  render(<ValeriaFlowEditor dados={FLUXO_V2} salvar={salvar} restaurar={restaurar} salvando={null} erro={erro} />);
+  return { salvar, restaurar };
+}
+
+const campoCard = (id: string) => screen.getByLabelText(`Texto do card ${id}`) as HTMLTextAreaElement;
+
+describe("v2 — cards do carrossel", () => {
+  it("desenha uma caixa de texto por card, com o contador x/160", () => {
+    montarV2();
+    irParaAtacado(/VA · Vitrine atacado/);
+
+    expect(campoCard("classico").value).toBe(CARD_CLASSICO.corpo);
+    expect(campoCard("suave").value).toBe(CARD_SUAVE.corpo);
+    // O contador conta o `{preco:…}` como o PREÇO que vai sair (≈ "R$ 00,00"), não
+    // como o marcador cru — senão o texto default já nasceria vermelho.
+    const esperado = "Clássico · torra escura · 84 pts\n250g R$ 00,00".length;
+    expect(screen.getByTestId("contador-card-classico").textContent).toBe(`${esperado}/160`);
+  });
+
+  it("fica vermelho acima de 160 e volta ao normal no limite", () => {
+    montarV2();
+    irParaAtacado(/VA · Vitrine atacado/);
+
+    fireEvent.change(campoCard("suave"), { target: { value: "x".repeat(161) } });
+    const contador = screen.getByTestId("contador-card-suave");
+    expect(contador.textContent).toBe("161/160");
+    expect(contador.className).toContain("text-[#a4261b]");
+
+    fireEvent.change(campoCard("suave"), { target: { value: "x".repeat(160) } });
+    expect(screen.getByTestId("contador-card-suave").className).not.toContain("text-[#a4261b]");
+  });
+
+  it("salva o card pela chave canônica `card:<nó>:<id>`, só com o corpo", async () => {
+    const { salvar } = montarV2();
+    irParaAtacado(/VA · Vitrine atacado/);
+
+    fireEvent.change(campoCard("suave"), { target: { value: "Suave · achocolatado" } });
+    fireEvent.click(screen.getByRole("button", { name: "Salvar card suave" }));
+
+    // Nunca o atalho `card:suave`: um id repetido em duas vitrines é 400 no backend.
+    expect(salvar).toHaveBeenCalledWith("card:VA:suave", { corpo: "Suave · achocolatado" });
+  });
+
+  it("usa a `chave` que o servidor mandou no card, e o `limite` dele", () => {
+    const salvar = vi.fn<PainelFluxoProps["salvar"]>(async () => null);
+    const comChave = { ...VA, cards: [{ ...CARD_SUAVE, chave: "card:VA:suave", limite: 20 }] };
+    render(
+      <ValeriaFlowEditor dados={{ ...FLUXO_V2, nos: [N0, comChave] }} salvar={salvar} restaurar={vi.fn(async () => null)} salvando={null} erro={null} />,
+    );
+    irParaAtacado(/VA · Vitrine atacado/);
+    expect(screen.getByTestId("contador-card-suave").textContent).toBe(`${CARD_SUAVE.corpo.length}/20`);
+    fireEvent.change(campoCard("suave"), { target: { value: "curto" } });
+    fireEvent.click(screen.getByRole("button", { name: "Salvar card suave" }));
+    expect(salvar).toHaveBeenCalledWith("card:VA:suave", { corpo: "curto" });
+  });
+
+  it("não deixa salvar card sem mudança, vazio ou com mais de 2 quebras de linha", () => {
+    montarV2();
+    irParaAtacado(/VA · Vitrine atacado/);
+    const salvarCard = () => screen.getByRole("button", { name: "Salvar card suave" }) as HTMLButtonElement;
+
+    expect(salvarCard().disabled).toBe(true);
+    fireEvent.change(campoCard("suave"), { target: { value: "  " } });
+    expect(salvarCard().disabled).toBe(true);
+    fireEvent.change(campoCard("suave"), { target: { value: "a\nb\nc\nd" } });
+    expect(salvarCard().disabled).toBe(true);
+    expect(screen.getByText(/no máximo 2 quebras de linha/)).toBeTruthy();
+    fireEvent.change(campoCard("suave"), { target: { value: "a\nb\nc" } });
+    expect(salvarCard().disabled).toBe(false);
+  });
+
+  it("mostra a recusa do backend (422 do preço resolvido) junto do card que a recebeu", async () => {
+    const recusa = "o card classico passa de 160 caracteres depois de trocar os preços";
+    const salvar = vi.fn<PainelFluxoProps["salvar"]>(async () => null);
+    const restaurar = vi.fn<PainelFluxoProps["restaurar"]>(async () => null);
+    const { rerender } = render(
+      <ValeriaFlowEditor dados={FLUXO_V2} salvar={salvar} restaurar={restaurar} salvando={null} erro={null} />,
+    );
+    irParaAtacado(/VA · Vitrine atacado/);
+    fireEvent.change(campoCard("classico"), { target: { value: "Clássico novo {preco:Clássico 250g}" } });
+    fireEvent.click(screen.getByRole("button", { name: "Salvar card classico" }));
+    await vi.waitFor(() => expect(salvar).toHaveBeenCalled());
+
+    // A casca escreve a recusa em `erro`; o editor a mostra no card que tentou salvar.
+    rerender(<ValeriaFlowEditor dados={FLUXO_V2} salvar={salvar} restaurar={restaurar} salvando={null} erro={recusa} />);
+    const cartao = screen.getByTestId("card-classico");
+    expect(within(cartao).getByText(recusa)).toBeTruthy();
+    // E o rascunho continua no campo: a recusa não apaga o que o operador escreveu.
+    expect(campoCard("classico").value).toBe("Clássico novo {preco:Clássico 250g}");
+  });
+
+  it("restaura o card editado pelo DELETE da chave dele", () => {
+    const restaurar = vi.fn<PainelFluxoProps["restaurar"]>(async () => null);
+    const editado = { ...VA, cards: [{ ...CARD_SUAVE, corpo: "Outro texto" }] };
+    render(
+      <ValeriaFlowEditor
+        dados={{ ...FLUXO_V2, nos: [N0, editado] }}
+        salvar={vi.fn(async () => null)}
+        restaurar={restaurar}
+        salvando={null}
+        erro={null}
+      />,
+    );
+    irParaAtacado(/VA · Vitrine atacado/);
+    fireEvent.click(screen.getByRole("button", { name: "Restaurar card suave" }));
+    expect(restaurar).toHaveBeenCalledWith("card:VA:suave");
+  });
+
+  it("a prévia mostra os cards da vitrine", () => {
+    montarV2();
+    irParaAtacado(/VA · Vitrine atacado/);
+    fireEvent.change(campoCard("suave"), { target: { value: "Suave digitado agora" } });
+    expect(within(previa()).getByText("Suave digitado agora")).toBeTruthy();
+  });
+
+  it("destaca o `{preco:…}` do card na prévia e explica que o card sem preço não sai", () => {
+    montarV2();
+    irParaAtacado(/VA · Vitrine atacado/);
+    expect(within(previa()).getByText("{preco:Clássico 250g}")).toBeTruthy();
+    expect(within(previa()).getByText(/o card inteiro não sai/)).toBeTruthy();
+  });
+
+  it("a tela da v1 não ganha seção de cards", () => {
+    montar();
+    expect(screen.queryByText("Cards do carrossel")).toBeNull();
+  });
+});
+
+describe("v2 — textos da vitrine (regras, como funciona, FAQ)", () => {
+  it("lista os textos num grupo próprio, sem repetir as chaves reservadas", () => {
+    const grupos = montarGrupos(FLUXO_V2);
+    const vitrine = grupos.find((grupo) => grupo.chave === "vitrine");
+    expect(vitrine?.itens.map((item) => item.id)).toEqual(["__regras_atacado__", "faq:atacado:frete"]);
+    // O nudge continua UMA vez, em "Textos soltos".
+    const ids = grupos.flatMap((grupo) => grupo.itens.map((item) => item.id));
+    expect(ids.filter((id) => id === "__nudge__")).toHaveLength(1);
+  });
+
+  it("v1 não tem o grupo", () => {
+    expect(montarGrupos(FLUXO).some((grupo) => grupo.chave === "vitrine")).toBe(false);
+  });
+
+  it("edita a FAQ por `corpo` e grava pela chave", () => {
+    const { salvar } = montarV2();
+    irPara(/^Textos da vitrine/);
+    irPara(/FAQ atacado · frete/);
+
+    const campo = screen.getByLabelText("Texto") as HTMLTextAreaElement;
+    expect(campo.value).toBe("Frete por conta do cliente.");
+    fireEvent.change(campo, { target: { value: "Frete grátis acima de 30kg." } });
+    fireEvent.click(botaoSalvar());
+
+    expect(salvar).toHaveBeenCalledWith("faq:atacado:frete", { corpo: "Frete grátis acima de 30kg." });
+  });
+
+  it("mostra Restaurar só no texto que difere do default", () => {
+    render(
+      <ValeriaFlowEditor
+        dados={{
+          ...FLUXO_V2,
+          textos: [{ chave: "__regras_atacado__", corpo: "editado", corpo_default: "original" }],
+        }}
+        salvar={vi.fn(async () => null)}
+        restaurar={vi.fn(async () => null)}
+        salvando={null}
+        erro={null}
+      />,
+    );
+    irPara(/^Textos da vitrine/);
+    expect(screen.getByRole("heading", { name: "Regras do atacado" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Restaurar o texto original" })).toBeTruthy();
+  });
+});

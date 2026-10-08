@@ -40,7 +40,7 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { ValeriaFlowModal, aplicarItem, gravarConteudo } from "./valeria-flow-modal";
+import { ValeriaFlowModal, aplicarGravacao, aplicarItem, gravarConteudo, restaurarConteudo } from "./valeria-flow-modal";
 import type { CanaisResposta } from "./valeria-flow-channels";
 import type { FluxoResposta, NoFluxo, ReservadoFluxo } from "./valeria-flow-types";
 
@@ -466,5 +466,215 @@ describe("aplicarItem", () => {
     expect(comRotulo.rotulo_lista.corpo).toBe("Escolher");
     // O reservado não vaza para a lista de nós.
     expect(comRotulo.nos).toBe(FLUXO.nos);
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Versão do fluxo: v1 (default) · v2 (vitrine)
+// ═══════════════════════════════════════════════════════════════════════════════
+//
+// A v2 mora ao lado da v1 no MESMO router (contrato C7): toda rota aceita
+// `?flow_id=valeria_botoes_v2`. A v1 continua sem query nenhuma — os testes acima são a
+// prova de que ela não mudou —, e os daqui travam o que a troca de versão não pode
+// fazer: buscar a versão errada, gravar na versão errada, ou apagar o rascunho da outra.
+
+const URL_V2 = "/api/valeria-flow?flow_id=valeria_botoes_v2";
+
+const VA: NoFluxo = {
+  ...N0,
+  id: "VA",
+  rotulo_interno: "VA · Vitrine atacado",
+  tela: "carrossel",
+  ramo: "atacado",
+  corpo: "olha os nossos cafés",
+  corpo_default: "olha os nossos cafés",
+  botoes: [],
+  cards: [
+    { id: "classico", corpo: "Clássico {preco:Clássico 250g}", corpo_default: "Clássico {preco:Clássico 250g}" },
+  ],
+};
+
+const FLUXO_V2: FluxoResposta = {
+  ...FLUXO,
+  flow_id: "valeria_botoes_v2",
+  nos: [{ ...N0, rotulo_interno: "N0 · Ramo (v2)" }, VA],
+  textos: [{ chave: "faq:atacado:frete", corpo: "Frete FOB.", corpo_default: "Frete FOB." }],
+};
+
+/** Roteia por URL e devolve a lista de chamadas, para afirmar URL, método e corpo. */
+function rotearVersoes(put?: (url: string, init?: RequestInit) => Response) {
+  vi.mocked(global.fetch).mockImplementation(async (entrada: RequestInfo | URL, init?: RequestInit) => {
+    const url = String(entrada);
+    if (init?.method === "PUT" || init?.method === "DELETE") {
+      return put ? put(url, init) : resposta({});
+    }
+    if (url.startsWith("/api/valeria-flow/channels")) {
+      return resposta({ ...CANAIS, flow_id: url.includes("v2") ? "valeria_botoes_v2" : "valeria_botoes_v1" } as unknown as Corpo);
+    }
+    return resposta((url === URL_V2 ? FLUXO_V2 : FLUXO) as unknown as Corpo);
+  });
+}
+
+const versao = (nome: string) => screen.getByRole("radio", { name: nome });
+
+describe("ValeriaFlowModal — seletor de versão", () => {
+  it("abre na v1, sem query, e mostra o seletor 'Versão: v1 · v2 (vitrine)'", async () => {
+    rotearVersoes();
+    render(<ValeriaFlowModal open onClose={() => {}} />);
+    await waitFor(() => expect(colunaDeRamos()).toBeTruthy());
+
+    expect(screen.getByRole("radiogroup", { name: "Versão do fluxo" })).toBeTruthy();
+    expect(versao("v1").getAttribute("aria-checked")).toBe("true");
+    expect(versao("v2 (vitrine)").getAttribute("aria-checked")).toBe("false");
+    expect(global.fetch).toHaveBeenCalledWith("/api/valeria-flow", expect.anything());
+    expect(global.fetch).not.toHaveBeenCalledWith(URL_V2, expect.anything());
+  });
+
+  it("escolher a v2 busca `?flow_id=valeria_botoes_v2` e mostra o fluxo dela", async () => {
+    rotearVersoes();
+    render(<ValeriaFlowModal open onClose={() => {}} />);
+    await waitFor(() => expect(colunaDeRamos()).toBeTruthy());
+
+    fireEvent.click(versao("v2 (vitrine)"));
+
+    await waitFor(() => expect(screen.getByRole("heading", { name: "N0 · Ramo (v2)" })).toBeTruthy());
+    expect(global.fetch).toHaveBeenCalledWith(URL_V2, expect.objectContaining({ cache: "no-store" }));
+    expect(versao("v2 (vitrine)").getAttribute("aria-checked")).toBe("true");
+  });
+
+  it("trocar de versão não apaga o rascunho da outra, nem a busca de novo", async () => {
+    rotearVersoes();
+    render(<ValeriaFlowModal open onClose={() => {}} />);
+    await waitFor(() => expect(colunaDeRamos()).toBeTruthy());
+
+    const RASCUNHO = "rascunho da v1";
+    fireEvent.change(screen.getByLabelText("Texto da tela"), { target: { value: RASCUNHO } });
+
+    fireEvent.click(versao("v2 (vitrine)"));
+    await waitFor(() => expect(screen.getByRole("heading", { name: "N0 · Ramo (v2)" })).toBeTruthy());
+
+    fireEvent.click(versao("v1"));
+    await waitFor(() => expect(screen.getByRole("heading", { name: "N0 · Setor" })).toBeTruthy());
+    // Os dois editores estão montados (um escondido); o visível é o da v1, com o rascunho.
+    const campos = screen.getAllByLabelText("Texto da tela") as HTMLTextAreaElement[];
+    expect(campos.some((campo) => campo.value === RASCUNHO)).toBe(true);
+    expect(buscasDoFluxo()).toBe(1);
+  });
+
+  it("salvar um card na v2 manda o PUT de `card:<nó>:<id>` com `?flow_id=valeria_botoes_v2`", async () => {
+    rotearVersoes(() => resposta({ id: "classico", corpo: "Clássico novo", corpo_default: VA.cards![0].corpo_default }));
+    render(<ValeriaFlowModal open onClose={() => {}} />);
+    await waitFor(() => expect(colunaDeRamos()).toBeTruthy());
+    fireEvent.click(versao("v2 (vitrine)"));
+    await waitFor(() => expect(screen.getByRole("heading", { name: "N0 · Ramo (v2)" })).toBeTruthy());
+
+    fireEvent.click(screen.getByRole("button", { name: /^Atacado/ }));
+    fireEvent.change(screen.getByLabelText("Texto do card classico"), { target: { value: "Clássico novo" } });
+    fireEvent.click(screen.getByRole("button", { name: "Salvar card classico" }));
+
+    await waitFor(() =>
+      expect(global.fetch).toHaveBeenCalledWith(
+        "/api/valeria-flow/card%3AVA%3Aclassico?flow_id=valeria_botoes_v2",
+        expect.objectContaining({ method: "PUT", body: JSON.stringify({ corpo: "Clássico novo" }) }),
+      ),
+    );
+    // O servidor aceitou: o card passa a diferir do default e ganha o Restaurar.
+    await waitFor(() => expect(screen.getByRole("button", { name: "Restaurar card classico" })).toBeTruthy());
+  });
+
+  it("mostra o 422 do card (texto longo depois dos preços) com as palavras do backend", async () => {
+    const recusa = "o card 'classico' fica com 171 caracteres depois de trocar os preços; o limite é 160";
+    rotearVersoes(() => resposta({ detail: recusa }, 422));
+    render(<ValeriaFlowModal open onClose={() => {}} />);
+    await waitFor(() => expect(colunaDeRamos()).toBeTruthy());
+    fireEvent.click(versao("v2 (vitrine)"));
+    await waitFor(() => expect(screen.getByRole("heading", { name: "N0 · Ramo (v2)" })).toBeTruthy());
+
+    fireEvent.click(screen.getByRole("button", { name: /^Atacado/ }));
+    fireEvent.change(screen.getByLabelText("Texto do card classico"), { target: { value: "Clássico grande" } });
+    fireEvent.click(screen.getByRole("button", { name: "Salvar card classico" }));
+
+    const alerta = await waitFor(() => screen.getByRole("alert"));
+    expect(alerta.textContent).toBe(recusa);
+  });
+
+  it("recusa mostrar a v1 como se fosse a v2 quando o backend ainda não serve a v2", async () => {
+    // Backend antigo: ignora `flow_id` e devolve a v1. Editar aquilo gravaria
+    // `?flow_id=valeria_botoes_v2` em ids da v1.
+    vi.mocked(global.fetch).mockImplementation(async () => resposta(FLUXO as unknown as Corpo));
+    render(<ValeriaFlowModal open onClose={() => {}} />);
+    await waitFor(() => expect(colunaDeRamos()).toBeTruthy());
+
+    fireEvent.click(versao("v2 (vitrine)"));
+    const alerta = await waitFor(() => screen.getByRole("alert"));
+    expect(alerta.textContent).toContain("valeria_botoes_v2");
+    expect(screen.queryByRole("navigation", { name: "Ramos do fluxo" })).toBeNull();
+  });
+
+  it("a aba de canais da v2 busca os canais com o `flow_id` dela", async () => {
+    rotearVersoes();
+    render(<ValeriaFlowModal open onClose={() => {}} />);
+    await waitFor(() => expect(colunaDeRamos()).toBeTruthy());
+    fireEvent.click(versao("v2 (vitrine)"));
+    await waitFor(() => expect(screen.getByRole("heading", { name: "N0 · Ramo (v2)" })).toBeTruthy());
+
+    fireEvent.click(screen.getByRole("tab", { name: "Onde está ativo" }));
+    await waitFor(() =>
+      expect(global.fetch).toHaveBeenCalledWith(
+        "/api/valeria-flow/channels?flow_id=valeria_botoes_v2",
+        expect.objectContaining({ cache: "no-store" }),
+      ),
+    );
+  });
+});
+
+describe("gravarConteudo / restaurarConteudo — por versão", () => {
+  it("a v1 continua sem query; a v2 leva `?flow_id=`", async () => {
+    vi.mocked(global.fetch).mockResolvedValue(resposta({}));
+    await gravarConteudo("N0", { corpo: "x" }, "valeria_botoes_v1");
+    await restaurarConteudo("faq:atacado:frete", "valeria_botoes_v2");
+
+    expect(vi.mocked(global.fetch).mock.calls.map(([url]) => String(url))).toEqual([
+      "/api/valeria-flow/N0",
+      "/api/valeria-flow/faq%3Aatacado%3Afrete?flow_id=valeria_botoes_v2",
+    ]);
+  });
+});
+
+describe("aplicarGravacao — card e texto da v2", () => {
+  it("recoloca o corpo do card pela chave canônica gravada", () => {
+    const depois = aplicarGravacao(FLUXO_V2, "card:VA:classico", { id: "classico", corpo: "Novo" }, { corpo: "Novo" });
+    expect(depois.nos[1].cards?.[0]).toMatchObject({ id: "classico", corpo: "Novo", corpo_default: VA.cards![0].corpo_default, editado: true });
+    expect(depois.nos[0]).toBe(FLUXO_V2.nos[0]);
+  });
+
+  it("a chave canônica não toca o card de MESMO id em outra vitrine", () => {
+    const VP = { ...VA, id: "VP", ramo: "private_label" as const };
+    const dois = { ...FLUXO_V2, nos: [VA, VP] };
+    const depois = aplicarGravacao(dois, "card:VP:classico", { corpo: "Só no VP" }, { corpo: "Só no VP" });
+    expect(depois.nos[0]).toBe(VA);
+    expect(depois.nos[1].cards?.[0].corpo).toBe("Só no VP");
+  });
+
+  it("usa o `_card_json` inteiro quando o servidor o devolve", () => {
+    const servidor = { ...VA.cards![0], tipo: "card", chave: "card:VA:classico", corpo: "Do servidor", editado: true };
+    const depois = aplicarGravacao(FLUXO_V2, "card:VA:classico", servidor, { corpo: "Do servidor" });
+    expect(depois.nos[1].cards?.[0]).toMatchObject({ corpo: "Do servidor", chave: "card:VA:classico", editado: true });
+  });
+
+  it("no DELETE do card (sem patch) volta ao default quando a resposta não traz corpo", () => {
+    const editado = { ...FLUXO_V2, nos: [FLUXO_V2.nos[0], { ...VA, cards: [{ ...VA.cards![0], corpo: "editado" }] }] };
+    const depois = aplicarGravacao(editado, "card:VA:classico", {}, null);
+    expect(depois.nos[1].cards?.[0].corpo).toBe(VA.cards![0].corpo_default);
+  });
+
+  it("recoloca o texto pela chave", () => {
+    const depois = aplicarGravacao(FLUXO_V2, "faq:atacado:frete", { corpo: "Frete CIF." }, { corpo: "Frete CIF." });
+    expect(depois.textos?.[0].corpo).toBe("Frete CIF.");
+  });
+
+  it("um nó continua indo por `aplicarItem`", () => {
+    const depois = aplicarGravacao(FLUXO, "N0", { ...N0, corpo: "Outro" }, { corpo: "Outro" });
+    expect(depois.nos[0].corpo).toBe("Outro");
   });
 });

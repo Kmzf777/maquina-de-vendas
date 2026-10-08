@@ -45,11 +45,26 @@
  * `{"rotulos": {"cafeteria": ""}}` passa pelo 400, é aplicado por
  * `valeria_content.aplicar` e a Meta recusa a tela INTEIRA no envio — a ValerIA fica
  * muda naquele nó. Bloquear na tela é mais barato que descobrir em produção.
+ *
+ * ── A v2 (vitrine) entra pelas MESMAS peças ─────────────────────────────────────
+ * O `GET ?flow_id=valeria_botoes_v2` tem a forma da v1 e mais duas coisas (contrato C7
+ * do plano `2026-10-08-valeria-botoes-v2-vitrine.md`):
+ *   • `cards` nas vitrines (`tela: "carrossel"`). Cada card grava SOZINHO, pela chave
+ *     `card:<id>`, então tem caixa, contador e Salvar próprios dentro da tela do nó.
+ *     O contador conta o `{preco:…}` como o preço que vai sair, não como o marcador cru,
+ *     porque o limite de 160 do backend é medido DEPOIS dessa troca — e o 422 que ele
+ *     devolve quando passa aparece no próprio card. O tamanho NÃO bloqueia o Salvar
+ *     (só o servidor conhece o preço de verdade); vazio e mais de 2 quebras bloqueiam,
+ *     porque não dependem de preço.
+ *   • `textos` (regras do atacado, como funciona da marca própria, cada FAQ). Viram
+ *     itens `reservado` num grupo próprio e reaproveitam o editor de corpo inteiro —
+ *     gravam pela chave, como o nudge.
  */
 
 import { useMemo, useState } from "react";
 import type {
   BotaoFluxo,
+  CardFluxo,
   ConteudoUpdate,
   FluxoResposta,
   ItemFluxo,
@@ -60,6 +75,7 @@ import type {
   ReservadoFluxo,
   TelaFluxo,
   TerminalFluxo,
+  TextoFluxo,
 } from "./valeria-flow-types";
 
 // ═════════════════════════════════════════════════════════════════════════════════
@@ -70,6 +86,28 @@ import type {
 export const CHAVE_NUDGE = "__nudge__";
 /** `reg.CHAVE_ROTULO_LISTA`. */
 export const CHAVE_ROTULO_LISTA = "__rotulo_lista__";
+/** `valeria_registry_v2.CHAVE_REGRAS_ATACADO`. */
+export const CHAVE_REGRAS_ATACADO = "__regras_atacado__";
+/** `valeria_registry_v2.CHAVE_COMO_FUNCIONA_PL`. */
+export const CHAVE_COMO_FUNCIONA_PL = "__como_funciona_pl__";
+
+/** `valeria_tabela.LIMITE_CARD_CHARS` e `LIMITE_CARD_QUEBRAS`: o card depois dos preços. */
+export const LIMITE_CARD = 160;
+export const LIMITE_QUEBRAS_CARD = 2;
+
+/**
+ * Quanto um `{preco:…}` ocupa depois de resolvido, para o contador. O backend formata
+ * "R$ 35,90" (`valeria_tabela._formatar`); um preço de quatro dígitos ("R$ 1.169,70")
+ * passa disso, e é por isso que o contador é estimativa e quem decide é o 422.
+ */
+const PRECO_ESTIMADO = "R$ 00,00";
+const MARCADOR_PRECO = /\{preco:[^}]*\}/g;
+
+/**
+ * Os marcadores da v2: os de sempre (`{total_pl}`) e os com argumento
+ * (`{preco:<nome do produto>}`, que o padrão da v1 não reconhece por causa dos `:`).
+ */
+const MARCADOR_V2 = /\{[a-z_]+(?::[^}]*)?\}/g;
 
 /**
  * O MESMO padrão de `valeria_runner._MARCADOR`. Vale a duplicação porque o efeito é
@@ -97,6 +135,7 @@ const ROTULO_TELA: Record<TelaFluxo, string> = {
   lista: "lista",
   botoes: "botões",
   foto_botoes: "foto + botões",
+  carrossel: "carrossel",
 };
 
 // ═════════════════════════════════════════════════════════════════════════════════
@@ -143,14 +182,71 @@ export function montarGrupos(dados: FluxoResposta): GrupoFluxo[] {
     descricao: "O que a ValerIA faz quando a conversa chega ao fim de um ramo",
     itens: dados.terminais,
   });
+  const vitrine = itensDosTextos(dados);
+  if (vitrine.length) {
+    grupos.push({
+      chave: "vitrine",
+      rotulo: "Textos da vitrine",
+      descricao: "Regras do atacado, como funciona a marca própria e as respostas de cada dúvida",
+      itens: vitrine,
+    });
+  }
   grupos.push({
     chave: "textos",
     rotulo: "Textos soltos",
     descricao: "Texto que o lead lê e que não pertence a tela nenhuma",
-    itens: [dados.nudge, dados.rotulo_lista],
+    // Filtro defensivo: a v2 serve as mesmas duas chaves, mas um registry sem uma delas
+    // não pode virar `undefined` na lista e estourar o painel inteiro.
+    itens: [dados.nudge, dados.rotulo_lista].filter(Boolean),
   });
 
   return grupos.filter((grupo) => grupo.itens.length > 0);
+}
+
+/** O nome que o operador lê para uma chave de `textos` da v2. */
+export function rotuloDoTexto(chave: string): string {
+  if (chave === CHAVE_REGRAS_ATACADO) return "Regras do atacado";
+  if (chave === CHAVE_COMO_FUNCIONA_PL) return "Como funciona (marca própria)";
+  const faq = /^faq:([^:]+):(.+)$/.exec(chave);
+  if (faq) {
+    const ramo = RAMOS.find((candidato) => candidato.chave === faq[1])?.rotulo.toLowerCase() ?? faq[1];
+    return `FAQ ${ramo} · ${faq[2].replace(/_/g, " ")}`;
+  }
+  return chave;
+}
+
+/**
+ * Os `textos` da v2 como itens `reservado`: assim eles passam pelo MESMO editor de
+ * corpo, pelo mesmo `patchDoItem` e pelo mesmo Restaurar que o nudge já usa.
+ *
+ * As chaves do nudge e do botão de lista ficam de fora: a v2 também as lista em
+ * `CHAVES_TEXTO`, mas elas já chegam como `nudge`/`rotulo_lista`, com `teto`/`limite`, e
+ * aparecem em "Textos soltos". Desenhá-las duas vezes seria ter dois campos para o
+ * mesmo texto, e o rascunho de um não apareceria no outro.
+ */
+export function itensDosTextos(dados: FluxoResposta): ReservadoFluxo[] {
+  const jaMostradas = new Set([CHAVE_NUDGE, CHAVE_ROTULO_LISTA, dados.nudge?.id, dados.rotulo_lista?.id]);
+  return (dados.textos ?? [])
+    .filter((texto) => !jaMostradas.has(texto.chave))
+    .map((texto: TextoFluxo) => ({
+      chave: texto.chave,
+      id: texto.chave,
+      tipo: "reservado",
+      rotulo_interno: texto.rotulo_interno || rotuloDoTexto(texto.chave),
+      corpo: texto.corpo,
+      corpo_default: texto.corpo_default,
+      editaveis: ["corpo"],
+      editado: texto.editado ?? texto.corpo !== texto.corpo_default,
+    }));
+}
+
+/** É um texto da vitrine (v2), e não o nudge nem o botão de lista? */
+function ehTextoVitrine(item: ItemFluxo): item is ReservadoFluxo {
+  if (item.tipo !== "reservado") return false;
+  // Sem chamar `ehRotuloLista`: ela é type guard, e o ramo falso dela tiraria
+  // `ReservadoFluxo` da união — o resto desta linha viraria `never` para o compilador.
+  const lista = item.chave === CHAVE_ROTULO_LISTA || typeof item.limite === "number";
+  return !lista && item.chave !== CHAVE_NUDGE && typeof item.teto !== "number";
 }
 
 /** O que o operador digitou e ainda não salvou, por item. */
@@ -236,7 +332,10 @@ export function problemasDoItem(item: ItemFluxo, rascunho?: RascunhoItem): Probl
         });
       }
     } else if (!corpo.trim()) {
-      problemas.push({ campo: "corpo", mensagem: "o corpo do nudge não pode ficar vazio" });
+      problemas.push({
+        campo: "corpo",
+        mensagem: ehTextoVitrine(item) ? "o texto não pode ficar vazio" : "o corpo do nudge não pode ficar vazio",
+      });
     }
     return problemas;
   }
@@ -271,11 +370,64 @@ export function problemasDoItem(item: ItemFluxo, rascunho?: RascunhoItem): Probl
   return problemas;
 }
 
+// ── Cards (v2) ────────────────────────────────────────────────────────────────
+
+/**
+ * A chave do rascunho de um card. Inclui o NÓ porque o mesmo `id` de card pode existir
+ * em duas vitrines (`microlote` está na de atacado e na de marca própria): rascunhos
+ * só pelo id de card vazariam de uma tela para a outra.
+ */
+export function chaveRascunhoCard(noId: string, cardId: string): string {
+  return `${noId}#card:${cardId}`;
+}
+
+/**
+ * A chave do `PUT`/`DELETE` do card: a do servidor, ou a forma canônica
+ * `card:<nó>:<id>` — nunca o atalho `card:<id>`, que o backend recusa (400) quando o
+ * id existe em duas vitrines.
+ */
+export function chaveDoCard(noId: string, card: CardFluxo): string {
+  return card.chave || `card:${noId}:${card.id}`;
+}
+
+/** O card tem override? O servidor diz; sem o campo, compara com o default. */
+function cardEditado(card: CardFluxo): boolean {
+  return card.editado ?? card.corpo !== card.corpo_default;
+}
+
+/** O tamanho estimado do card depois de o backend trocar cada `{preco:…}` pelo preço. */
+export function tamanhoCard(corpo: string): number {
+  return corpo.replace(MARCADOR_PRECO, PRECO_ESTIMADO).length;
+}
+
+/**
+ * O que impede o `PUT` do card AQUI. Só o que não depende do preço: vazio e quebras de
+ * linha. O tamanho fica com o servidor (ver o cabeçalho do módulo).
+ */
+export function problemasDoCard(corpo: string, limiteQuebras: number = LIMITE_QUEBRAS_CARD): string[] {
+  const problemas: string[] = [];
+  if (!corpo.trim()) problemas.push("o texto do card não pode ficar vazio");
+  const quebras = (corpo.match(/\n/g) ?? []).length;
+  if (quebras > limiteQuebras) {
+    problemas.push(`o card tem ${quebras} quebras de linha; a Meta aceita no máximo ${limiteQuebras} quebras de linha`);
+  }
+  return problemas;
+}
+
+/** Algum card deste nó tem rascunho diferente do servidor? Alimenta o "· não salvo". */
+function cardsNaoSalvos(item: ItemFluxo, rascunhos: Rascunhos): boolean {
+  if (item.tipo !== "no" || !item.cards) return false;
+  return item.cards.some((card) => {
+    const corpo = rascunhos[chaveRascunhoCard(item.id, card.id)]?.corpo;
+    return corpo !== undefined && corpo !== card.corpo;
+  });
+}
+
 /** Quebra o texto em pedaços, marcando os `{marcadores}` — a prévia os destaca. */
-export function fragmentarMarcadores(texto: string): { texto: string; marcador: boolean }[] {
+export function fragmentarMarcadores(texto: string, padrao: RegExp = MARCADOR): { texto: string; marcador: boolean }[] {
   const pedacos: { texto: string; marcador: boolean }[] = [];
   let ultimo = 0;
-  for (const achado of texto.matchAll(MARCADOR)) {
+  for (const achado of texto.matchAll(padrao)) {
     const inicio = achado.index ?? 0;
     if (inicio > ultimo) pedacos.push({ texto: texto.slice(ultimo, inicio), marcador: false });
     pedacos.push({ texto: achado[0], marcador: true });
@@ -306,6 +458,8 @@ export function ValeriaFlowEditor({ dados, salvar, restaurar, salvando, erro }: 
   // então clicar num ramo e clicar numa tela nunca podem discordar.
   const [selecionadoId, setSelecionadoId] = useState<string>(() => dados.no_entrada);
   const [rascunhos, setRascunhos] = useState<Rascunhos>({});
+  /** O card cujo último `PUT`/`DELETE` voltou recusado: é nele que a recusa aparece. */
+  const [cardRecusado, setCardRecusado] = useState<string | null>(null);
 
   const atual = indice.get(selecionadoId) ?? indice.get(grupos[0]?.itens[0]?.id ?? "");
 
@@ -354,6 +508,19 @@ export function ValeriaFlowEditor({ dados, salvar, restaurar, salvando, erro }: 
     if (restaurado) descartar(item.id);
   }
 
+  // O card grava SOZINHO, pela chave dele (`card:<nó>:<id>`), e o rascunho dele mora
+  // sob a chave que inclui o nó. Recusado, o rascunho FICA: o 422 do preço resolvido diz o
+  // que encurtar, e apagar o texto junto obrigaria o operador a redigitar.
+  async function aoGravarCard(noId: string, card: CardFluxo, corpo: string | null) {
+    if (salvando) return;
+    const chave = chaveRascunhoCard(noId, card.id);
+    setCardRecusado(null);
+    const nodeId = chaveDoCard(noId, card);
+    const feito = corpo === null ? await restaurar(nodeId) : await salvar(nodeId, { corpo });
+    if (feito) descartar(chave);
+    else setCardRecusado(chave);
+  }
+
   const problemaCorpo = problemas.find((problema) => problema.campo === "corpo");
 
   return (
@@ -400,7 +567,8 @@ export function ValeriaFlowEditor({ dados, salvar, restaurar, salvando, erro }: 
         <h3 className={`${CLASSE_ROTULO} hidden px-1.5 pb-1.5 lg:block`}>{grupo.rotulo}</h3>
         {grupo.itens.map((candidato) => {
           const ativo = candidato.id === item.id;
-          const naoSalvo = Boolean(patchDoItem(candidato, rascunhos[candidato.id]));
+          const naoSalvo =
+            Boolean(patchDoItem(candidato, rascunhos[candidato.id])) || cardsNaoSalvos(candidato, rascunhos);
           return (
             <button
               key={candidato.id}
@@ -475,6 +643,17 @@ export function ValeriaFlowEditor({ dados, salvar, restaurar, salvando, erro }: 
             )}
           </div>
 
+          {item.tipo === "no" && item.cards && item.cards.length > 0 && (
+            <CardsDoNo
+              no={item}
+              rascunhos={rascunhos}
+              salvando={salvando}
+              erro={erro}
+              cardRecusado={cardRecusado}
+              aoMudar={(chave, corpo) => escrever(chave, { corpo })}
+              aoGravar={(card, corpo) => void aoGravarCard(item.id, card, corpo)}
+            />
+          )}
           {item.tipo === "no" && <CamposDoNo no={item} rascunho={rascunho} travado={gravandoEste} problemas={problemas} aoMudar={escreverRotulo} />}
           {item.tipo === "terminal" && <EfeitosDoTerminal terminal={item} prazos={dados.prazos} />}
           {item.tipo === "reservado" && typeof item.teto === "number" && (
@@ -515,7 +694,9 @@ export function ValeriaFlowEditor({ dados, salvar, restaurar, salvando, erro }: 
               <span className="text-[11px] text-[#7b7b78]">Nada alterado.</span>
             ) : null}
 
-            {erro && <span className="basis-full text-[11px] text-[#a4261b]">{erro}</span>}
+            {/* A recusa de um card já aparece DENTRO do card; repeti-la aqui faria o
+                operador procurar o problema no corpo da tela. */}
+            {erro && !cardRecusado && <span className="basis-full text-[11px] text-[#a4261b]">{erro}</span>}
           </div>
         </div>
 
@@ -535,6 +716,7 @@ export function ValeriaFlowEditor({ dados, salvar, restaurar, salvando, erro }: 
 function rotuloDoCampoCorpo(item: ItemFluxo): string {
   if (item.tipo === "no") return "Texto da tela";
   if (item.tipo === "terminal") return "Texto do desfecho";
+  if (ehTextoVitrine(item)) return "Texto";
   if (ehRotuloLista(item)) return "Rótulo do botão que abre a folha";
   return "Texto do reoferecimento";
 }
@@ -543,20 +725,151 @@ function explicacaoDoItem(item: ItemFluxo, dados: FluxoResposta): string {
   if (item.tipo === "no") {
     if (item.tela === "lista")
       return `Tela de lista: o corpo, o botão que abre a folha e até ${dados.limites.max_linhas_lista} linhas — cada linha aceita ${dados.limites.titulo_lista} caracteres.`;
+    if (item.tela === "carrossel")
+      return `Vitrine: o texto da tela, os cards do carrossel (cada um com foto e até ${LIMITE_CARD} caracteres depois dos preços) e até ${dados.limites.max_botoes} botões.`;
     if (item.tela === "foto_botoes")
       return `Foto no cabeçalho + até ${dados.limites.max_botoes} botões de ${dados.limites.rotulo_botao} caracteres.`;
     return `Até ${dados.limites.max_botoes} botões de resposta, de ${dados.limites.rotulo_botao} caracteres cada.`;
   }
   if (item.tipo === "terminal") return "Desfecho: o que a ValerIA faz quando a conversa chega aqui.";
+  // Antes de `ehRotuloLista`: o ramo falso daquele type guard tira `ReservadoFluxo`
+  // da união, e estas leituras de `chave` não compilariam depois dele.
+  if (ehTextoVitrine(item)) {
+    if (item.chave === CHAVE_REGRAS_ATACADO) return "As regras do atacado, que acompanham a tabela de preços da vitrine.";
+    if (item.chave === CHAVE_COMO_FUNCIONA_PL)
+      return "Como funciona a marca própria. Os {marcadores} são preenchidos com o catálogo no envio.";
+    return "Resposta fixa que a ValerIA manda para esta dúvida.";
+  }
   if (ehRotuloLista(item)) return "O botão azul que abre a folha de opções nas telas de lista.";
   return "O reoferecimento que o motor manda quando o lead não toca em nada.";
 }
 
-function Contador({ atual, limite, ruim }: { atual: number; limite: number | null; ruim: boolean }) {
+function Contador({
+  atual,
+  limite,
+  ruim,
+  testId,
+  title,
+}: {
+  atual: number;
+  limite: number | null;
+  ruim: boolean;
+  testId?: string;
+  title?: string;
+}) {
   return (
-    <span className={`shrink-0 text-[11px] tabular-nums ${ruim ? "font-medium text-[#a4261b]" : "text-[#7b7b78]"}`}>
+    <span
+      data-testid={testId}
+      title={title}
+      className={`shrink-0 text-[11px] tabular-nums ${ruim ? "font-medium text-[#a4261b]" : "text-[#7b7b78]"}`}
+    >
       {limite === null ? `${atual} caracteres` : `${atual}/${limite}`}
     </span>
+  );
+}
+
+/**
+ * Os cards do carrossel (v2). Cada um com caixa, contador, Salvar e Restaurar PRÓPRIOS:
+ * o card grava pela chave `card:<id>`, separado do corpo e dos botões do nó.
+ */
+function CardsDoNo({
+  no,
+  rascunhos,
+  salvando,
+  erro,
+  cardRecusado,
+  aoMudar,
+  aoGravar,
+}: {
+  no: NoFluxo;
+  rascunhos: Rascunhos;
+  salvando: string | null;
+  erro: string | null;
+  cardRecusado: string | null;
+  aoMudar: (chave: string, corpo: string) => void;
+  aoGravar: (card: CardFluxo, corpo: string | null) => void;
+}) {
+  return (
+    <section className="space-y-2">
+      <div className="flex items-baseline justify-between gap-2">
+        <h4 className={CLASSE_ROTULO}>Cards do carrossel</h4>
+        <span className="text-[10px] uppercase tracking-[0.5px] text-[#7b7b78]">preço = catálogo</span>
+      </div>
+      {(no.cards ?? []).map((card) => {
+        const chave = chaveRascunhoCard(no.id, card.id);
+        const rascunho = rascunhos[chave]?.corpo;
+        const corpo = rascunho ?? card.corpo;
+        const mudou = rascunho !== undefined && rascunho !== card.corpo;
+        const limite = card.limite ?? LIMITE_CARD;
+        const tamanho = tamanhoCard(corpo);
+        const problemas = problemasDoCard(corpo, card.limite_quebras ?? LIMITE_QUEBRAS_CARD);
+        const gravandoEste = salvando === chaveDoCard(no.id, card);
+        const recusa = erro && cardRecusado === chave ? erro : null;
+        const longo = tamanho > limite;
+        const editado = cardEditado(card);
+        return (
+          <div key={card.id} data-testid={`card-${card.id}`} className="rounded-[6px] border border-[#dedbd6] bg-[#faf9f6] p-2.5">
+            <div className="mb-1 flex items-baseline justify-between gap-2">
+              <label htmlFor={`valeria-flow-card-${no.id}-${card.id}`} className="min-w-0 truncate text-[11px] text-[#7b7b78]">
+                Card <span className="rounded-[4px] bg-white px-1 py-0.5 tabular-nums">{card.id}</span>
+                {editado && <span> · editado</span>}
+              </label>
+              <Contador
+                atual={tamanho}
+                limite={limite}
+                ruim={longo || problemas.length > 0}
+                testId={`contador-card-${card.id}`}
+                title="Cada {preco:…} conta como o preço que vai sair. O servidor confere com o preço real ao salvar."
+              />
+            </div>
+            <textarea
+              id={`valeria-flow-card-${no.id}-${card.id}`}
+              aria-label={`Texto do card ${card.id}`}
+              aria-invalid={longo || problemas.length > 0}
+              rows={3}
+              value={corpo}
+              disabled={gravandoEste}
+              onChange={(evento) => aoMudar(chave, evento.target.value)}
+              className={`${CLASSE_CAMPO} resize-y leading-[19px] ${longo || problemas.length ? CLASSE_CAMPO_RUIM : ""}`}
+            />
+            {problemas.map((problema) => (
+              <p key={problema} className="mt-1 text-[11px] text-[#a4261b]">
+                {problema}
+              </p>
+            ))}
+            {longo && !problemas.length && (
+              <p className="mt-1 text-[11px] text-[#a4261b]">
+                Passa de {limite} caracteres com os preços trocados — o servidor deve recusar.
+              </p>
+            )}
+            {recusa && <p className="mt-1 text-[11px] text-[#a4261b]">{recusa}</p>}
+            <div className="mt-1.5 flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                aria-label={`Salvar card ${card.id}`}
+                disabled={!mudou || problemas.length > 0 || Boolean(salvando)}
+                onClick={() => aoGravar(card, corpo)}
+                className="rounded-[6px] bg-[#111111] px-2.5 py-1 text-[12px] font-medium text-white transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                {gravandoEste ? "Salvando…" : "Salvar card"}
+              </button>
+              {editado && (
+                <button
+                  type="button"
+                  aria-label={`Restaurar card ${card.id}`}
+                  disabled={Boolean(salvando)}
+                  onClick={() => aoGravar(card, null)}
+                  title="Apaga o override deste card — o texto volta ao do código."
+                  className="rounded-[6px] border border-[#dedbd6] bg-white px-2.5 py-1 text-[12px] text-[#111111] transition-colors hover:bg-[#faf9f6] disabled:opacity-40"
+                >
+                  Restaurar
+                </button>
+              )}
+            </div>
+          </div>
+        );
+      })}
+    </section>
   );
 }
 
@@ -711,6 +1024,12 @@ interface PreviaProps {
   mudo: boolean;
   legenda: string;
   nota?: string;
+  /** Só nas vitrines da v2: os cards do carrossel, com o rascunho já aplicado. */
+  cards?: { id: string; corpo: string }[];
+  /** Troca a nota genérica de `{marcador}` (a regra da v1) pela regra do item. */
+  notaMarcador?: string;
+  /** O padrão de marcador: o da v1 por omissão; os itens da v2 passam `MARCADOR_V2`. */
+  padraoMarcador?: RegExp;
 }
 
 /** Escolhe o que a prévia recebe, a partir do item selecionado. Narra a união. */
@@ -725,12 +1044,25 @@ function PreviaDoItem({
 }) {
   const rascunho = rascunhos[item.id];
   const corpo = corpoEfetivo(item, rascunho);
-  const rotuloLista = corpoEfetivo(dados.rotulo_lista, rascunhos[dados.rotulo_lista.id]);
+  const rotuloLista = dados.rotulo_lista
+    ? corpoEfetivo(dados.rotulo_lista, rascunhos[dados.rotulo_lista.id])
+    : "";
 
   if (item.tipo === "no") {
+    const cards = item.cards?.map((card) => ({
+      id: card.id,
+      corpo: rascunhos[chaveRascunhoCard(item.id, card.id)]?.corpo ?? card.corpo,
+    }));
     return (
       <PreviaWhatsApp
         corpo={corpo}
+        cards={cards}
+        padraoMarcador={cards?.length ? MARCADOR_V2 : undefined}
+        notaMarcador={
+          cards?.length
+            ? "Cada {preco:…} vira o preço do catálogo no envio. Se um produto do card estiver sem preço, o card inteiro não sai."
+            : undefined
+        }
         tela={item.tela}
         linhas={item.botoes.map((botao) => ({
           id: botao.id,
@@ -765,6 +1097,24 @@ function PreviaDoItem({
         mudo={!corpo.trim()}
         legenda={item.id}
         nota={item.prazos ? "As três linhas da folha vêm do código, não desta tela." : undefined}
+      />
+    );
+  }
+
+  // Texto da vitrine (v2): mensagem de texto puro. Antes de `ehRotuloLista` pelo mesmo
+  // motivo de `explicacaoDoItem`.
+  if (ehTextoVitrine(item)) {
+    return (
+      <PreviaWhatsApp
+        corpo={corpo}
+        tela={null}
+        linhas={[]}
+        foto={null}
+        rotuloLista={rotuloLista}
+        mudo={false}
+        legenda={item.chave}
+        padraoMarcador={MARCADOR_V2}
+        notaMarcador="Os {marcadores} são preenchidos com os valores do catálogo no envio."
       />
     );
   }
@@ -816,13 +1166,15 @@ function PreviaDoItem({
  * branca, linhas de botão em `#027EB5` separadas por fio de cabelo, hora em
  * `#667781`. Fonte de SISTEMA — é um telefone, não a tipografia desta página.
  */
-export function PreviaWhatsApp({ corpo, tela, linhas, foto, rotuloLista, mudo, legenda, nota }: PreviaProps) {
+export function PreviaWhatsApp({ corpo, tela, linhas, foto, rotuloLista, mudo, legenda, nota, cards, notaMarcador, padraoMarcador }: PreviaProps) {
   // Pela MESMA função que a bolha usa: um `MARCADOR.test()` aqui mexeria no
   // `lastIndex` de um regex `/g` compartilhado e faria a segunda chamada mentir.
-  const pedacos = fragmentarMarcadores(corpo);
-  const temMarcador = pedacos.some((pedaco) => pedaco.marcador);
+  const pedacos = fragmentarMarcadores(corpo, padraoMarcador);
+  const temMarcador =
+    pedacos.some((pedaco) => pedaco.marcador) ||
+    Boolean(cards?.some((card) => fragmentarMarcadores(card.corpo, MARCADOR_V2).some((pedaco) => pedaco.marcador)));
 
-  const comBotoes = tela === "botoes" || tela === "foto_botoes";
+  const comBotoes = tela === "botoes" || tela === "foto_botoes" || tela === "carrossel";
   const comLista = tela === "lista";
 
   return (
@@ -908,6 +1260,34 @@ export function PreviaWhatsApp({ corpo, tela, linhas, foto, rotuloLista, mudo, l
           </div>
         )}
 
+        {/* O carrossel da vitrine: um card por produto, com a foto no topo. */}
+        {cards && cards.length > 0 && (
+          <ul aria-label="Cards do carrossel" className="flex gap-2 overflow-x-auto pb-1">
+            {cards.map((card) => (
+              <li
+                key={card.id}
+                className="w-[172px] shrink-0 overflow-hidden rounded-[7.5px] bg-white shadow-[0_1px_0.5px_rgba(11,20,26,0.13)]"
+              >
+                <div aria-hidden="true" className="flex h-[72px] items-center justify-center bg-[#d9d2c8] text-[10px] text-[#5b5751]">
+                  foto · {card.id}
+                </div>
+                <p className="whitespace-pre-wrap break-words px-2 py-1.5 text-[12px] leading-[16px] text-[#111b21]">
+                  {!card.corpo.trim() && <span className="italic text-[#667781]">(sem texto)</span>}
+                  {fragmentarMarcadores(card.corpo, MARCADOR_V2).map((pedaco, indice) =>
+                    pedaco.marcador ? (
+                      <span key={indice} className="border-b border-dashed border-[#667781] text-[#667781]">
+                        {pedaco.texto}
+                      </span>
+                    ) : (
+                      pedaco.texto
+                    ),
+                  )}
+                </p>
+              </li>
+            ))}
+          </ul>
+        )}
+
         {/* A folha que abre ao tocar: numa lista são os botões do nó; num desfecho de
             adiamento são os 30/60/90 do código. Sem ela, editar o rótulo de uma linha
             de lista não mudaria nada visível. */}
@@ -932,7 +1312,8 @@ export function PreviaWhatsApp({ corpo, tela, linhas, foto, rotuloLista, mudo, l
 
       {(temMarcador || nota) && (
         <div className="space-y-1 border-t border-[#dedbd6] bg-[#faf9f6] px-2.5 py-1.5">
-          {temMarcador && (
+          {temMarcador && notaMarcador && <p className="text-[10px] leading-[14px] text-[#7b7b78]">{notaMarcador}</p>}
+          {temMarcador && !notaMarcador && (
             <p className="text-[10px] leading-[14px] text-[#7b7b78]">
               A linha com <code className="rounded-[3px] bg-white px-1">{"{marcador}"}</code> é CORTADA do envio quando o
               valor não existe — o lead não lê o marcador, lê uma mensagem sem aquela linha.

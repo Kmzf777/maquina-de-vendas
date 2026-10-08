@@ -12,7 +12,7 @@
  * fechado, e que reapareceria aqui em silêncio.
  */
 import { describe, expect, it } from "vitest";
-import { mensagemDeErro } from "./valeria-flow-shared";
+import { FLOW_V1, FLOW_V2, mensagemDeErro, queryDoFluxo, versaoCurta } from "./valeria-flow-shared";
 
 describe("mensagemDeErro", () => {
   it("prefere `detail` (FastAPI) e aceita `error` (o proxy do Next)", () => {
@@ -38,5 +38,19 @@ describe("mensagemDeErro", () => {
       "a migration 20260929_valeria_botoes.sql ainda não foi aplicada neste banco — " +
       "aplique-a no Supabase antes de editar ou ativar";
     expect(mensagemDeErro({ detail: migration }, "padrão")).toBe(migration);
+  });
+});
+
+describe("queryDoFluxo / versaoCurta", () => {
+  it("a v1 não leva query (as URLs de sempre); a v2 leva `?flow_id=`", () => {
+    expect(queryDoFluxo(FLOW_V1)).toBe("");
+    expect(queryDoFluxo(FLOW_V2)).toBe("?flow_id=valeria_botoes_v2");
+  });
+
+  it("dá 'v1'/'v2' só para os fluxos da ValerIA de Botões", () => {
+    expect(versaoCurta("valeria_botoes_v1")).toBe("v1");
+    expect(versaoCurta("valeria_botoes_v2")).toBe("v2");
+    expect(versaoCurta("recuperacao_v1")).toBeNull();
+    expect(versaoCurta(null)).toBeNull();
   });
 });
