@@ -77,7 +77,7 @@ developer tokens que não o usavam; vale para nós).
 |---|---|---|---|---|
 | `lead` | `lead_events` `entrada` com `ctwa_clid` ou `gclid` | `occurred_at` | `LeadSubmitted` | ação LEAD |
 | `qualified` | `leads.metadata.handoff.at` preenchido | `handoff.at` | `QualifiedLead` | ação QUALIFIED |
-| `opportunity` | 1º entre `quotes.status='enviado'` e entrada do deal em `proposta_enviada` (`lead_events` `etapa`) | o que vier primeiro | `InitiateCheckout` | ação OPPORTUNITY |
+| `opportunity` | 1º entre `quotes.status in ('enviado','aprovado','convertido')` (`quoted_at`) e entrada do deal em `proposta_enviada` (`lead_events` `etapa`) | o que vier primeiro | `InitiateCheckout` | ação OPPORTUNITY |
 | `purchase` | `sales` com `status <> 'cancelada'` | `sold_at` | `Purchase` | ação PURCHASE |
 
 **Clique atribuído** = a `entrada` mais recente do lead com ID de clique da plataforma e
@@ -87,7 +87,10 @@ developer tokens que não o usavam; vale para nós).
 1. Existe clique atribuído da plataforma (Meta: `ctwa_clid`; Google: `gclid`/`gbraid`/`wbraid`).
 2. Janela clique→evento: Meta ≤ 7 dias (janela de atribuição padrão por clique); Google ≤ 90 dias.
 3. `ja_era_cliente = true` → só `purchase`.
-4. `qualified` com `handoff.motivo` começando pelo fluxo de Recuperação → não elegível.
+4. `qualified` não elegível quando `handoff.motivo` começa com `bot de recuperação` (reativação da
+   base), `IA temporariamente indisponível` (fallback de LLM fora do ar — 510 repasses no total, 20
+   com clique em 30 dias) ou `ESCALONAMENTO` (reclamação). Com clique, sobram ~280 repasses em 30
+   dias (~65/semana).
 5. Varredura olha só eventos dos últimos 90 dias (Google) / 7 dias (Meta).
 
 Dados de 08/10/2026: 31 das 40 vendas com clique fecharam até 7 dias depois da entrada.
@@ -104,6 +107,8 @@ create table ad_conversions (
   click_id        text not null,          -- ctwa_clid | gclid | gbraid | wbraid
   click_id_type   text not null,          -- 'ctwa_clid' | 'gclid' | 'gbraid' | 'wbraid'
   click_at        timestamptz not null,
+  campaign_name   text null,              -- campanha_nome da entrada (para a aba)
+  dedupe_key      text not null unique,   -- '{platform}:{stage}:{click_id}' | '{platform}:purchase:{sale_id}'
   event_at        timestamptz not null,
   event_id        text not null,          -- determinístico; vira event_id (Meta) / transactionId (Google)
   segment         text not null,          -- 'atacado' | 'private_label' | 'geral'
@@ -119,11 +124,7 @@ create table ad_conversions (
   sent_at         timestamptz null,
   created_at      timestamptz not null default now()
 );
--- dedup: etapas de funil uma vez por clique; venda uma vez por venda
-create unique index ad_conversions_funnel_uidx on ad_conversions (platform, click_id, stage)
-  where stage <> 'purchase';
-create unique index ad_conversions_purchase_uidx on ad_conversions (platform, sale_id)
-  where stage = 'purchase';
+-- dedup por dedupe_key (coluna UNIQUE simples: o upsert do PostgREST não mira índice parcial)
 create index ad_conversions_due_idx on ad_conversions (next_attempt_at) where status = 'pendente';
 
 create table ad_conversion_values (
@@ -139,7 +140,7 @@ create table ad_conversion_values (
 - `event_id` = `{stage}:{click_id_hash8}:{lead_id}` para funil, `purchase:{sale_id}` para venda.
 - **Leads:** colunas novas `gbraid`, `wbraid` + `TRACKING_COLUMNS`, `lp_webhook` e o trigger de
   `entrada` passam a considerá-las.
-- **Aposentado:** `conversion_events` (vazia) é removida pela migration só se `count(*) = 0`;
+- **Aposentado:** `conversion_events` (vazia) fica no banco sem uso — o script de mesclagem a referencia;
   `pipeline_stages.conversion_event/value` ficam no banco sem uso (sem DROP de coluna).
 - Migrations seguem o padrão do repo: aplicadas à mão, idempotentes, `begin … commit`.
 
@@ -157,8 +158,14 @@ Tudo em `backend/app/conversions/` (pacote novo; `campaigns/` já está grande):
 | `values.py` | Leitura de `ad_conversion_values`; fallback `null` (envia sem valor) se faltar linha. |
 | `router.py` | `GET /api/conversions/ads` (lista + contadores, filtros) para a aba. |
 
-**Worker:** `("conversions", "periodic", _conversions_tick, 300)` em `TASK_SPECS`. Cada tick: varre,
-depois envia até 100 pendentes. 5 min de latência é irrelevante numa janela de 7 dias.
+**Worker:** duas entradas em `TASK_SPECS`: `conversions-sweep` (periódica, 1800 s) e
+`conversions-send` (periódica, 300 s, até 100 pendentes por tick). 30 min de latência é irrelevante
+numa janela de 7 dias, e a varredura relê ~3 mil leads de 90 dias — não precisa rodar a cada 5 min.
+Dados pessoais (e-mail, telefone) **não** vão para a fila: o sender lê o lead e aplica o hash na hora.
+
+**Normalização para hash:** Meta → telefone só dígitos com DDI (`5534...`); Google → E.164 com `+`
+(`+5534...`) e e-mail Gmail sem pontos antes do `@`. Venda com `status='cancelada'` na hora do envio
+→ `ignorado`.
 
 **Retentativa:** 1 min, 5 min, 30 min, 2 h, 12 h; na 6ª falha → `erro`. Erro permanente (4xx de
 validação, permissão) → `erro` direto. Evento que saiu da janela antes do envio → `fora_da_janela`.
