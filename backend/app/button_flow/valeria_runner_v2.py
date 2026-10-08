@@ -51,7 +51,9 @@ from datetime import datetime, timezone
 
 from app.agent import catalog as _catalogo
 from app.button_flow import config, effects, valeria_classifier, valeria_content, valeria_tabela
+from app.button_flow import runner as _irmao
 from app.button_flow import valeria_engine as motor_v1
+from app.button_flow import valeria_registry as reg1
 from app.button_flow import valeria_engine_v2 as motor
 from app.button_flow import valeria_registry_v2 as r2
 from app.button_flow import valeria_runner as v1
@@ -103,6 +105,22 @@ def no_atual_v2(estado) -> str | None:
         return None
     node = estado.get("node")
     return node if isinstance(node, str) and node else None
+
+
+# Desfechos da v1 que encerram o atendimento em SILÊNCIO para sempre (o motor da v1
+# devolve `ignorar` neles). Lidos pela v2 como "estado alheio", recomeçariam o lead
+# como primeiro contato no dia da troca de perfil — então a v2 os respeita.
+_ENCERRADOS_NA_V1 = frozenset({"T_HUMANO", "T_FIM"})
+
+
+def encerrado_na_v1(estado) -> bool:
+    """True para o lead que a v1 deixou em `T_HUMANO`/`T_FIM` (silêncio definitivo).
+
+    Só esses dois: v1 no meio do fluxo, `T_ADIADO` e Recuperação seguem recomeçando
+    na v2 como primeiro contato, como antes.
+    """
+    return (isinstance(estado, dict) and estado.get("flow") == reg1.FLOW_ID
+            and estado.get("node") in _ENCERRADOS_NA_V1)
 
 
 def _ramo(estado, no: str | None) -> str | None:
@@ -504,9 +522,11 @@ class _Saida:
                     logger.error("%s carrossel recusado conv=%s — botões com foto: %s", _LOG,
                                  self.conversation.get("id"), exc, exc_info=True)
                     return urls[0]
+                # SEM `message_type`: o CRM (frontend lib/message-preview.ts) só lê o
+                # `content` de None/"text"/"button"; "interactive" virava "📎 Mídia" e o
+                # vendedor não via o que o lead recebeu.
                 await self._registrar(
-                    "\n\n".join([corpo, *(texto for _, texto in cards)]), resultado,
-                    message_type="interactive")
+                    "\n\n".join([corpo, *(texto for _, texto in cards)]), resultado)
                 self.viu.append("vitrine")
                 return None
             logger.warning("%s foto de card não publicada em %s — cards como texto", _LOG, no.id)
@@ -620,6 +640,13 @@ async def _executar_turno(
     pediu_saida = isinstance(evento, Texto) and (
         normalizar(evento.conteudo) in motor_v1.FRASES_OPTOUT
         or valeria_classifier.pediu_para_sair_v2(evento.conteudo))
+    # Lead que a v1 encerrou em silêncio: o turno não acontece (como `ignorar`). Só o
+    # pedido de saída passa — o opt-out vence o encerramento, na v1 e aqui.
+    if not pediu_saida and encerrado_na_v1(estado):
+        logger.info("%s lead encerrado na v1 (%s) — v2 não recomeça conv=%s", _LOG,
+                    estado.get("node"), conversation_id)
+        return None
+
     # O pedido de saída vence o detector do robô do lead (a v1 faz o mesmo com a
     # lista exata, dentro de `_e_robo_do_lead`).
     if not pediu_saida and await v1._e_robo_do_lead(lead, conversation_id, evento):
@@ -779,6 +806,12 @@ async def repassar_parado(*, lead: dict, conversation: dict, channel: dict, prov
         # As MESMAS guardas de um turno: kill switch, human_control, card movido pelo
         # vendedor e blacklist (`_motivo_para_nao_rodar`), mais o opt-out.
         if not config.enabled(r2.FLOW_ID):
+            return False
+        # A conversa ainda é da v2? (perfil do canal trocado, fluxo desligado...)
+        fluxo = await asyncio.to_thread(_irmao.fluxo_efetivo, conversation, channel)
+        if fluxo != r2.FLOW_ID:
+            logger.info("%s repasse automático: conversa não é mais da v2 (%s) conv=%s",
+                        _LOG, fluxo, conversation_id)
             return False
         if lead.get("opt_out") is True:
             return False

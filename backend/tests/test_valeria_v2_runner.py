@@ -95,6 +95,8 @@ def turno(monkeypatch):
     """Dirige `processar_inbound` da v2 com banco, CRM, catálogo e LLM dublados."""
     monkeypatch.setenv("VALERIA_BOTOES_ENABLED", "on")
     monkeypatch.setattr(irmao, "is_lead_blacklisted", lambda _lead_id: False)
+    # O despacho resolveria o perfil do canal no banco; aqui a conversa é da v2.
+    monkeypatch.setattr(irmao, "fluxo_efetivo", lambda _c, _ch: r2.FLOW_ID)
 
     registro = {"efeitos": [], "salvas": [], "notas": [], "gravacoes": [],
                 "historico": [], "score": [], "classificacoes": [], "kw_efeitos": []}
@@ -206,7 +208,9 @@ async def test_primeiro_contato_atacado_manda_carrossel_tabela_e_acoes(turno):
 
     salvas = turno.registro["salvas"]
     assert len(salvas) == 3
-    assert salvas[0]["message_type"] == "interactive"
+    # Sem tipo de mídia: o CRM (lib/message-preview.ts) lê `content` só de
+    # None/"text"/"button" — "interactive" aparecia como "📎 Mídia" para o vendedor.
+    assert salvas[0]["message_type"] is None
     assert r2.NOS["VA"].corpo in salvas[0]["content"] and "R$ 97,70" in salvas[0]["content"]
     assert all(s["sent_by"] == "valeria_botoes" for s in salvas)
 
@@ -529,6 +533,40 @@ async def test_frase_exata_de_saida_nao_gasta_llm(turno):
 # Guardas
 # ═══════════════════════════════════════════════════════════════════════════
 @pytest.mark.asyncio
+@pytest.mark.parametrize("terminal", ["T_HUMANO", "T_FIM"])
+async def test_lead_encerrado_na_v1_nao_recomeca_na_v2(turno, terminal):
+    """Na v1 esses leads estão em silêncio para sempre; a troca de perfil não os reabre."""
+    turno.conversa["flow_state"] = {"flow": "valeria_botoes_v1", "node": terminal, "nudges": 3}
+    estado = await turno("oi, ainda tem café?")
+    assert turno.motivo is None
+    assert turno.provedor.chamadas == []
+    assert turno.registro["efeitos"] == []
+    assert turno.registro["gravacoes"] == []
+    turno.classificar.assert_not_called()
+    assert estado == {"flow": "valeria_botoes_v1", "node": terminal, "nudges": 3}
+
+
+@pytest.mark.asyncio
+async def test_lead_encerrado_na_v1_que_pede_para_sair_e_honrado(turno):
+    """O opt-out vence o encerramento — na v1 também (Meta/LGPD)."""
+    turno.conversa["flow_state"] = {"flow": "valeria_botoes_v1", "node": "T_FIM", "nudges": 0}
+    estado = await turno("pare")
+    assert estado["node"] == "T_OPTOUT" and estado["flow"] == r2.FLOW_ID
+    assert turno.registro["efeitos"][0].optout is True
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("estado_v1", [
+    {"flow": "valeria_botoes_v1", "node": "N1", "nudges": 0},
+    {"flow": "valeria_botoes_v1", "node": "T_ADIADO", "nudges": 0},
+    {"flow": "recuperacao_v1", "node": "aguardando_prazo"},
+])
+async def test_outros_estados_alheios_recomecam_como_primeiro_contato(turno, estado_v1):
+    turno.conversa["flow_state"] = dict(estado_v1)
+    estado = await turno("oi")
+    assert turno.provedor.tipos() == ["lista"]
+    assert estado["node"] == "N0" and estado["flow"] == r2.FLOW_ID
+@pytest.mark.asyncio
 async def test_kill_switch_desligado_nao_faz_nada(turno, monkeypatch):
     monkeypatch.setenv("VALERIA_BOTOES_ENABLED", "off")
     estado = await turno(PRONTA_ATACADO)
@@ -634,6 +672,21 @@ async def test_repassar_parado_ganha_a_trava_e_repassa(turno, monkeypatch):
     assert "Origem do repasse: automático — parado há 2h em QA2" in nota
     assert turno.conversa["flow_state"]["node"] == "T_HANDOFF"
     assert turno.conversa["flow_state"]["repasse_auto"]
+
+
+@pytest.mark.asyncio
+async def test_repassar_parado_so_roda_se_a_conversa_ainda_e_da_v2(turno, monkeypatch):
+    sb = _SupabaseFalso(ganha=True)
+    monkeypatch.setattr(v2, "get_supabase", lambda: sb)
+    monkeypatch.setattr(irmao, "fluxo_efetivo", lambda _c, _ch: "valeria_botoes_v1")
+    turno.conversa["flow_state"] = _no(None, "QA2", ramo="atacado")
+    ganhou = await v2.repassar_parado(
+        lead=turno.lead, conversation=turno.conversa, channel={"mode": "ai"},
+        provider=turno.provedor, horas=3)
+    assert ganhou is False
+    assert sb.banco["updates"] == []
+    assert turno.provedor.chamadas == []
+    assert turno.registro["efeitos"] == []
 
 
 @pytest.mark.asyncio
