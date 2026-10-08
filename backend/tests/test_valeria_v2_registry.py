@@ -232,6 +232,7 @@ def test_terminais_reusam_os_da_v1_e_t_kit():
     assert kit.vendedor == v1.VENDEDOR_ATACADO and kit.handoff and kit.silenciar_ia
     assert kit.tags == (v1.TAG_QUALIFICADO, "Botões: Kit amostra") and r.TAG_KIT == "Botões: Kit amostra"
     assert "R$" not in kit.corpo
+    assert kit.corpo == "perfeito, já chamei o João Brás aqui pra combinar o kit com você"
 
 
 def test_tipos_e_folha_de_prazos_sao_os_da_v1():
@@ -267,6 +268,9 @@ def test_cards_e_fotos_do_contrato():
     assert len(va["classico"].skus) == 5 and len(va["suave"].skus) == 5
     assert all("Clássico" in s for s in va["classico"].skus)
     assert all("Suave" in s for s in va["suave"].skus)
+    for cid in ("classico", "suave"):
+        linhas = va[cid].corpo.split("\n")
+        assert linhas[2].startswith("500g moído {preco:") and " · grão {preco:" in linhas[2], cid
     assert set(va["microlote"].skus) == {"Microlote — Moído 250g", "Microlote — Em Grãos 250g"}
 
 

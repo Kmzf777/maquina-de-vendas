@@ -112,7 +112,7 @@ def _corpo_tradicional(cabecalho: str, skus: tuple[str, ...]) -> str:
     return (
         f"{cabecalho}\n"
         f"250g: moído {{preco:{m250}}} · grão {{preco:{g250}}}\n"
-        f"500g {{preco:{m500}}} · {{preco:{g500}}} · 1kg grão {{preco:{g1kg}}}"
+        f"500g moído {{preco:{m500}}} · grão {{preco:{g500}}} · 1kg grão {{preco:{g1kg}}}"
     )
 
 
@@ -491,7 +491,8 @@ TERMINAIS: dict[str, Terminal] = {
         id="T_KIT", rotulo_interno="Handoff · João Brás (kit amostra)",
         vendedor=VENDEDOR_ATACADO,
         # Sem preço nem composição: pendentes com o João (§4).
-        corpo="perfeito, já chamei o João Brás aqui pra combinar o kit com você 😊",
+        # Sem emoji: regra de voz do handoff (auditoria 08/07, ver T_HANDOFF na v1).
+        corpo="perfeito, já chamei o João Brás aqui pra combinar o kit com você",
         tags=(TAG_QUALIFICADO, TAG_KIT),
         silenciar_ia=True,
         handoff=True,
