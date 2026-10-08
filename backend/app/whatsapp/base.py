@@ -69,6 +69,16 @@ class WhatsAppProvider(ABC):
             f"{type(self).__name__} não suporta send_interactive_list"
         )
 
+    async def send_interactive_carousel(self, to: str, body: str, cards: list[dict]) -> dict:
+        """Envia um carrossel interativo (2 a 10 cards com imagem, texto e botões).
+
+        cards: [{"image_url": str, "body": str, "buttons": [(id, titulo), ...]}].
+        Como send_interactive_list: default não-suportado; só a Meta e o mock sobrescrevem.
+        """
+        raise NotImplementedError(
+            f"{type(self).__name__} não suporta send_interactive_carousel"
+        )
+
     @abstractmethod
     async def mark_read(self, message_id: str, remote_jid: str = "") -> dict: ...
 

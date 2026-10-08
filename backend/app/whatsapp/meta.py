@@ -403,6 +403,46 @@ class MetaCloudClient(WhatsAppProvider):
             )
         return result
 
+    async def send_interactive_carousel(self, to: str, body: str, cards: list[dict]) -> dict:
+        """Carrossel interativo: 2 a 10 cards com imagem, texto e botões de resposta.
+
+        Mensagem de SESSÃO (sem template e sem catálogo) — doc da Meta
+        "interactive-media-carousel-messages", conferida em 07/10/2026. A Meta exige
+        o mesmo número de botões em todos os cards; validamos aqui porque um 400
+        da Meta no meio do inbound custa a vitrine inteira.
+        """
+        if not 2 <= len(cards) <= 10:
+            raise ValueError(f"send_interactive_carousel aceita de 2 a 10 cards, recebeu {len(cards)}")
+        qtd = {len(c.get("buttons") or []) for c in cards}
+        if len(qtd) != 1 or not 1 <= next(iter(qtd)) <= 2:
+            raise ValueError("todos os cards precisam do mesmo número de botões (1 ou 2)")
+        montados = []
+        for i, c in enumerate(cards):
+            texto = c.get("body") or ""
+            if not c.get("image_url") or len(texto) > 160 or texto.count("\n") > 2:
+                raise ValueError(f"card {i} inválido (imagem obrigatória, texto ≤160 e ≤2 quebras)")
+            botoes = []
+            for bid, titulo in c["buttons"]:
+                if len(titulo) > 20:
+                    raise ValueError(f"botão {bid!r} com título > 20 caracteres")
+                botoes.append({"type": "quick_reply", "quick_reply": {"id": bid, "title": titulo}})
+            montados.append({
+                "card_index": i,
+                "header": {"type": "image", "image": {"link": c["image_url"]}},
+                "body": {"text": texto},
+                "action": {"buttons": botoes},
+            })
+        result = await self._post({
+            "messaging_product": "whatsapp",
+            **_recipient_field(to),
+            "type": "interactive",
+            "interactive": {"type": "carousel", "body": {"text": body},
+                            "action": {"cards": montados}},
+        }, request_type="send_interactive_carousel")
+        if not isinstance(result, dict) or "messages" not in result:
+            raise RuntimeError(f"Meta send_interactive_carousel rejected (missing messages): {result!r}")
+        return result
+
     async def send_audio(self, to: str, audio_url: str) -> dict:
         return await self._post({
             "messaging_product": "whatsapp",
