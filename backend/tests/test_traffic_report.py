@@ -34,6 +34,13 @@ def test_derive_channel_google_by_gclid():
     assert derive_channel({"gclid": "abc"}) == "Google Ads"
 
 
+def test_derive_channel_google_by_gbraid_ou_wbraid():
+    # clique de iOS do Google: mesma regra do gclid (espelha fn_lead_canal da 20261008)
+    assert derive_channel({"gbraid": "abc"}) == "Google Ads"
+    assert derive_channel({"wbraid": "abc"}) == "Google Ads"
+    assert derive_channel({"gbraid": "g", "fbclid": "f"}) == "Google Ads"
+
+
 def test_derive_channel_meta_by_fbclid():
     assert derive_channel({"fbclid": "x"}) == "Meta Ads"
 

@@ -50,6 +50,40 @@ def test_entrada_so_dispara_nas_colunas_de_rastreio():
     assert colunas == {"ctwa_clid", "gclid", "fbclid", "meta_ad_id", "utm_source", "utm_campaign"}
 
 
+SQL_ADS = (
+    Path(__file__).resolve().parents[2]
+    / "supabase" / "migrations" / "20261008_ad_conversions.sql"
+).read_text(encoding="utf-8")
+
+
+def test_entrada_20261008_amplia_o_gatilho_com_gbraid_wbraid():
+    """A 20261008 recria o trigger: as colunas da 20261006b + gbraid/wbraid (cliques iOS do Google)."""
+    m = re.search(r"after insert or update of ([a-z_, ]+?)\s+on public\.leads", SQL_ADS)
+    assert m
+    colunas = {c.strip() for c in m.group(1).split(",")}
+    assert colunas == {"ctwa_clid", "gclid", "gbraid", "wbraid", "fbclid", "meta_ad_id",
+                       "utm_source", "utm_campaign"}
+
+
+def test_canal_google_do_python_e_do_sql_mais_recente_usam_os_mesmos_click_ids():
+    """derive_channel (Python) e fn_lead_canal (20261008) devem tratar gclid/gbraid/wbraid como
+    Google Ads; a 20261006b (anterior) só conhecia gclid."""
+    corpo = SQL_ADS.split("function public.fn_lead_canal(")[1].split("$$;")[0]
+    google = corpo.split("'Google Ads'")[0]
+    for col in ("p_gclid", "p_gbraid"):
+        assert f"fn_lead_txt({col}) <> ''" in google
+    for col in ("gclid", "gbraid", "wbraid"):
+        assert tr.derive_channel({col: "x"}) == "Google Ads", col
+    assert "p_wbraid" in corpo  # a regra de wbraid fica na própria função
+    assert "gbraid" not in SQL and "wbraid" not in SQL  # 20261006b é anterior ao rastreio iOS
+
+
+def test_rastreio_20261008_conta_gbraid_wbraid_como_rastreio():
+    corpo = SQL_ADS.split("function public.fn_lead_tem_rastreio(")[1].split("$$;")[0]
+    assert "fn_lead_txt(p_gbraid) <> ''" in corpo and "fn_lead_txt(p_wbraid) <> ''" in corpo
+    assert "gbraid" in tr._LEAD_COLS and "wbraid" in tr._LEAD_COLS
+
+
 @pytest.mark.parametrize(
     "marcador, constante",
     [
@@ -63,6 +97,20 @@ def test_canal_sql_usa_as_mesmas_listas_do_derive_channel(marcador, constante):
     assert m, marcador
     itens = {s.strip().strip("'") for s in m.group(1).split(",")}
     assert itens == set(constante)
+
+
+@pytest.mark.parametrize(
+    "marcador, constante",
+    [
+        ("_META_AD_SOURCES", tr._META_AD_SOURCES),
+        ("_GOOGLE_AD_SOURCES", tr._GOOGLE_AD_SOURCES),
+        ("_PAID_CHANNEL_MEDIUMS", tr._PAID_CHANNEL_MEDIUMS),
+    ],
+)
+def test_canal_sql_20261008_usa_as_mesmas_listas_do_derive_channel(marcador, constante):
+    m = re.search(r"array\[([^\]]*)\]\)\s*--\s*" + marcador + r"\b", SQL_ADS)
+    assert m, marcador
+    assert {s.strip().strip("'") for s in m.group(1).split(",")} == set(constante)
 
 
 def test_canal_sql_devolve_os_rotulos_do_derive_channel():

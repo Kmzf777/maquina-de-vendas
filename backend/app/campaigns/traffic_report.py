@@ -132,7 +132,8 @@ def derive_channel(lead: dict[str, Any]) -> str:
     exige um meio pago (cpc/pmax/…) para não confundir com SEO orgânico; 'metaads' é inequívoco.
     Retorna Google Ads/Meta Ads/Orgânico/Sem rastreio.
     """
-    if _s(lead.get("gclid")):
+    # gbraid/wbraid: cliques de iOS do Google (sem gclid); mesma regra do gclid.
+    if _s(lead.get("gclid")) or _s(lead.get("gbraid")) or _s(lead.get("wbraid")):
         return "Google Ads"
     if _s(lead.get("fbclid")) or _s(lead.get("ctwa_clid")) or _s(lead.get("meta_ad_id")):
         return "Meta Ads"
@@ -473,7 +474,7 @@ def build_report_summary(report: dict[str, Any], leads: list[dict[str, Any]],
 
 
 _PERIOD_DAYS = {"7d": 7, "30d": 30, "90d": 90}
-_LEAD_COLS = ("id, name, phone, created_at, gclid, fbclid, ctwa_clid, "
+_LEAD_COLS = ("id, name, phone, created_at, gclid, gbraid, wbraid, fbclid, ctwa_clid, "
               "utm_source, utm_medium, utm_campaign, traffic_type")
 
 
