@@ -53,14 +53,12 @@ devolve ao humano.
 """
 from __future__ import annotations
 
-import asyncio
 import json
 import logging
-import os
 import re
 
 from app.agent.gemini_client import generate, user_content
-from app.button_flow import engine
+from app.button_flow import _llm_comum, engine
 
 logger = logging.getLogger(__name__)
 
@@ -269,23 +267,12 @@ _NUNCA_E_SAIR = (
 
 def modelo() -> str:
     """Modelo do classificador. Env RECUPERACAO_CLASSIFIER_MODEL."""
-    return (os.getenv("RECUPERACAO_CLASSIFIER_MODEL") or "").strip() or _MODELO_PADRAO
+    return _llm_comum.ler_modelo("RECUPERACAO_CLASSIFIER_MODEL", _MODELO_PADRAO)
 
 
 def timeout_segundos() -> float:
     """Teto de espera pela classificação. Env RECUPERACAO_CLASSIFIER_TIMEOUT_S."""
-    bruto = (os.getenv("RECUPERACAO_CLASSIFIER_TIMEOUT_S") or "").strip()
-    if not bruto:
-        return _TIMEOUT_PADRAO
-    try:
-        valor = float(bruto)
-    except ValueError:
-        logger.warning(
-            "[BUTTON FLOW] RECUPERACAO_CLASSIFIER_TIMEOUT_S invalido (%r) — usando %.1fs",
-            bruto, _TIMEOUT_PADRAO,
-        )
-        return _TIMEOUT_PADRAO
-    return valor if valor > 0 else _TIMEOUT_PADRAO
+    return _llm_comum.ler_timeout("RECUPERACAO_CLASSIFIER_TIMEOUT_S", _TIMEOUT_PADRAO)
 
 
 def _sem_pontuacao(texto: str) -> str:
@@ -356,39 +343,16 @@ def _proteger_saida(classe: str, texto: str) -> str:
     return classe
 
 
-def _budget_estourado() -> bool:
-    """True se o kill-switch diário está ativo. Fail-open: erro aqui não bloqueia.
-
-    Import tardio pelo mesmo motivo de app/buffer/parking.py:438 — budget_guard puxa
-    o cliente Supabase e não deve carregar no import deste módulo.
-    """
-    try:
-        from app.agent import budget_guard
-        return budget_guard.is_exceeded()
-    except Exception as exc:
-        logger.warning("[BUTTON FLOW] falha ao ler o budget guard (seguindo): %s", exc)
-        return False
+# Teto de gasto e registro de uso vivem em `_llm_comum` (compartilhados com a
+# ValerIA v2). Os nomes antigos ficam aqui para quem importa ou patcha por eles.
+_budget_estourado = _llm_comum.budget_estourado
 
 
 def _contabilizar(resultado, modelo_usado: str, lead_id: str | None) -> None:
     """Grava a linha em token_usage. Fail-soft: contabilidade nunca derruba o turno."""
-    try:
-        uso = getattr(resultado, "usage_metadata", None)
-        if not uso:
-            return
-        from app.agent import token_tracker
-        token_tracker.track_token_usage(
-            lead_id=lead_id,
-            stage="",
-            model=modelo_usado,
-            call_type="button_flow_classify",
-            prompt_tokens=uso.prompt_token_count or 0,
-            completion_tokens=uso.billed_output_tokens or 0,
-            cached_tokens=uso.cached_content_token_count or 0,
-            reasoning_tokens=uso.thoughts_token_count or 0,
-        )
-    except Exception as exc:
-        logger.warning("[BUTTON FLOW] falha ao contabilizar token_usage (ignorado): %s", exc)
+    _llm_comum.contabilizar(
+        resultado, modelo_usado, lead_id, call_type="button_flow_classify",
+    )
 
 
 async def classificar(
@@ -439,17 +403,18 @@ async def classificar(
 
     modelo_usado = modelo()
     try:
-        resultado = await asyncio.wait_for(
-            generate(
-                modelo_usado,
-                contents=[user_content(_montar_entrada(limpo, historico_curto))],
-                system_instruction=INSTRUCAO_SISTEMA,
-                json_mode=True,
-                thinking_off=True,
-                temperature=0.0,
-                max_output_tokens=_MAX_OUTPUT_TOKENS,
-            ),
+        # `generate` resolvido AQUI, no namespace deste módulo: é o ponto que os testes
+        # patcham (`app.button_flow.classifier.generate`).
+        resultado = await _llm_comum.chamar_com_timeout(
+            generate,
+            modelo_usado,
             timeout=timeout_segundos(),
+            contents=[user_content(_montar_entrada(limpo, historico_curto))],
+            system_instruction=INSTRUCAO_SISTEMA,
+            json_mode=True,
+            thinking_off=True,
+            temperature=0.0,
+            max_output_tokens=_MAX_OUTPUT_TOKENS,
         )
     except Exception as exc:
         logger.warning(
