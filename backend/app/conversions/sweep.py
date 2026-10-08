@@ -16,6 +16,7 @@ from app.conversions.eligibility import (
     WINDOW, Click, attributed_click, build_dedupe_key, build_event_id, clicks_from_entradas,
     clicks_from_lead_fallback, parse_ts, qualified_handoff_ok, segment_for, stage_allowed,
 )
+from app.db.paginacao import paginar
 from app.db.supabase import get_supabase
 
 logger = logging.getLogger(__name__)
@@ -23,7 +24,6 @@ logger = logging.getLogger(__name__)
 # A maior janela (Google, 90 dias): nada mais velho que isso ainda pode ser enviado.
 LOOKBACK = WINDOW["google"]
 PLATFORMS = ("meta", "google")
-_PAGE = 1000   # teto de linhas por resposta do PostgREST
 _CHUNK = 200   # ids por `.in_()`: 200 uuids ≈ 8 KB de URL, o limite seguro do repo
 _TZ_BR = timezone(timedelta(hours=-3))
 _OPP_QUOTE_STATUS = ["enviado", "aprovado", "convertido"]
@@ -151,8 +151,13 @@ def build_candidates(*, lead: dict[str, Any], entradas: list[dict[str, Any]], sa
             continue
         at = _sale_at(s)
         if at and s.get("id"):
-            valor = float(s["value"]) if s.get("value") is not None else None
-            eventos.append(("purchase", at, valor, s["id"], None))
+            if s.get("value") is None:
+                # Venda sem valor ensinaria "venda de R$ 0" ao lance por valor: fica fora até ter
+                # valor (a varredura de 30 min pega quando for preenchido).
+                logger.warning("[CONVERSOES] venda %s do lead %s sem valor: não enfileirada",
+                               s["id"], lead.get("id"))
+                continue
+            eventos.append(("purchase", at, float(s["value"]), s["id"], None))
 
     out: dict[str, dict[str, Any]] = {}
     for stage, event_at, value, sale_id, own_click in eventos:
@@ -175,19 +180,6 @@ def build_candidates(*, lead: dict[str, Any], entradas: list[dict[str, Any]], sa
 
 # ── I/O ─────────────────────────────────────────────────────────────────────
 
-def _paged(query_factory) -> list[dict[str, Any]]:
-    """Pagina com `.range()` até vir página incompleta. A query precisa de `.order()` estável,
-    senão o Postgres pode repetir/pular linhas entre páginas."""
-    rows: list[dict[str, Any]] = []
-    i = 0
-    while True:
-        page = query_factory().range(i, i + _PAGE - 1).execute().data or []
-        rows.extend(page)
-        if len(page) < _PAGE:
-            return rows
-        i += _PAGE
-
-
 def _chunks(ids: list[str]):
     for i in range(0, len(ids), _CHUNK):
         yield ids[i:i + _CHUNK]
@@ -196,10 +188,10 @@ def _chunks(ids: list[str]):
 def _candidate_lead_ids(sb, since: str) -> list[str]:
     """Leads com clique nos últimos 90 dias: pela linha do tempo e, para o lead que nunca ganhou
     `entrada`, pelos IDs de clique gravados no próprio lead."""
-    ids = {r["lead_id"] for r in _paged(
+    ids = {r["lead_id"] for r in paginar(
         lambda: sb.table("lead_events").select("lead_id")
         .eq("event_type", "entrada").gte("occurred_at", since).order("id")) if r.get("lead_id")}
-    ids |= {r["id"] for r in _paged(
+    ids |= {r["id"] for r in paginar(
         lambda: sb.table("leads").select("id").gte("created_at", since)
         .or_("ctwa_clid.not.is.null,gclid.not.is.null,gbraid.not.is.null,wbraid.not.is.null")
         .order("id")) if r.get("id")}
@@ -222,20 +214,20 @@ def run_sweep(now: datetime | None = None) -> int:
     values = {(v["segment"], v["stage"]): float(v["value"])
               for v in (sb.table("ad_conversion_values").select("segment,stage,value").execute().data or [])}
     lead_ids = _candidate_lead_ids(sb, since)
-    total = novos = falhas = 0
+    total = novos = falhas = blocos_falhos = 0
     for bloco in _chunks(lead_ids):
-        leads = _paged(lambda: sb.table("leads").select(
+        leads = paginar(lambda: sb.table("leads").select(
             "id,stage,ja_era_cliente,metadata,created_at,ctwa_clid,gclid,gbraid,wbraid"
         ).in_("id", bloco).order("id"))
         # Todas as entradas do lead, sem corte de data: o clique atribuído é o mais recente
         # ANTES do evento, e o filtro de janela é do build_candidates.
-        entradas = _by_lead(_paged(lambda: sb.table("lead_events").select("id,lead_id,occurred_at,metadata")
+        entradas = _by_lead(paginar(lambda: sb.table("lead_events").select("id,lead_id,occurred_at,metadata")
                                    .eq("event_type", "entrada").in_("lead_id", bloco).order("id")))
-        sales = _by_lead(_paged(lambda: sb.table("sales").select("id,lead_id,sold_at,created_at,value,status")
+        sales = _by_lead(paginar(lambda: sb.table("sales").select("id,lead_id,sold_at,created_at,value,status")
                                 .in_("lead_id", bloco).gte("sold_at", since).order("id")))
-        quotes = _by_lead(_paged(lambda: sb.table("quotes").select("id,lead_id,status,quoted_at,created_at")
+        quotes = _by_lead(paginar(lambda: sb.table("quotes").select("id,lead_id,status,quoted_at,created_at")
                                  .in_("lead_id", bloco).in_("status", _OPP_QUOTE_STATUS).order("id")))
-        propostas = _by_lead(_paged(lambda: sb.table("lead_events").select("id,lead_id,occurred_at")
+        propostas = _by_lead(paginar(lambda: sb.table("lead_events").select("id,lead_id,occurred_at")
                                     .eq("event_type", "etapa").eq("metadata->>para_key", "proposta_enviada")
                                     .in_("lead_id", bloco).order("id")))
 
@@ -256,11 +248,18 @@ def run_sweep(now: datetime | None = None) -> int:
                 falhas += 1
                 logger.exception("[CONVERSOES] varredura: falha ao montar candidatos do lead %s", lid)
         if rows:
-            res = sb.table("ad_conversions").upsert(rows, on_conflict="dedupe_key", ignore_duplicates=True).execute()
+            try:
+                res = sb.table("ad_conversions").upsert(rows, on_conflict="dedupe_key", ignore_duplicates=True).execute()
+            except Exception:
+                # Um bloco recusado (timeout, linha ruim) não impede os outros; a próxima
+                # varredura (30 min) tenta de novo — o upsert é idempotente.
+                blocos_falhos += 1
+                logger.exception("[CONVERSOES] varredura: falha no upsert de um bloco (%d linhas)", len(rows))
+                continue
             total += len(rows)
             # Com ignore-duplicates o PostgREST devolve só as linhas de fato inseridas.
             if isinstance(getattr(res, "data", None), list):
                 novos += len(res.data)
-    logger.info("[CONVERSOES] varredura: %d leads, %d candidatos, %d novos na fila, %d leads com falha",
-                len(lead_ids), total, novos, falhas)
+    logger.info("[CONVERSOES] varredura: %d leads, %d candidatos, %d novos na fila, %d leads com falha, "
+                "%d blocos com falha no upsert", len(lead_ids), total, novos, falhas, blocos_falhos)
     return total

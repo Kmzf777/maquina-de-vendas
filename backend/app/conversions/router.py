@@ -6,19 +6,19 @@ Só admin: exige o JWT de admin aqui (`exigir_admin`, o mesmo das rotas de atrib
 lead e valor de venda — a proteção não pode ficar só na proxy.
 """
 from collections import Counter
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import Any
 from zoneinfo import ZoneInfo
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 
 from app.campaigns.traffic_router import exigir_admin
-from app.conversions.sweep import _paged
+from app.db.paginacao import paginar
 from app.db.supabase import get_supabase
 
 router = APIRouter(prefix="/api/conversions", tags=["conversions"])
 _TZ = ZoneInfo("America/Sao_Paulo")
-_PERIODS = {"7d": 7, "30d": 30, "90d": 90}
+_PERIODS = {"7d": 7, "30d": 30, "90d": 90, "all": None}
 _LIMIT = 1000  # teto do PostgREST; acima disso a UI avisa que a lista está truncada
 
 
@@ -27,13 +27,24 @@ def summarize(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return [{"stage": s, "platform": p, "status": st, "n": n} for (s, p, st), n in sorted(c.items())]
 
 
+def _dia(v: str, campo: str) -> datetime:
+    try:
+        d = date.fromisoformat(v)
+    except ValueError:
+        raise HTTPException(status_code=422, detail=f"{campo} inválido (use AAAA-MM-DD)") from None
+    return datetime(d.year, d.month, d.day, tzinfo=_TZ)
+
+
 def _range(period: str, date_from: str | None, date_to: str | None) -> tuple[str | None, str | None]:
-    # Datas do filtro são dias do calendário de São Paulo; o fim é exclusivo (dia seguinte 00h).
+    """Datas do filtro são dias do calendário de São Paulo; o fim é exclusivo (dia seguinte 00h).
+    Data ou período inválido → 422 (antes caía em 500 ou, no período, virava "tudo" calado)."""
+    if period not in _PERIODS:
+        raise HTTPException(status_code=422, detail=f"period inválido (use {', '.join(_PERIODS)})")
     if date_from or date_to:
-        ini = datetime.fromisoformat(date_from).replace(tzinfo=_TZ).isoformat() if date_from else None
-        fim = (datetime.fromisoformat(date_to).replace(tzinfo=_TZ) + timedelta(days=1)).isoformat() if date_to else None
+        ini = _dia(date_from, "date_from").isoformat() if date_from else None
+        fim = (_dia(date_to, "date_to") + timedelta(days=1)).isoformat() if date_to else None
         return ini, fim
-    days = _PERIODS.get(period)
+    days = _PERIODS[period]
     if not days:
         return None, None
     return (datetime.now(timezone.utc) - timedelta(days=days)).isoformat(), None
@@ -65,5 +76,5 @@ def conversions_ads(period: str = "30d", date_from: str | None = None, date_to: 
     )).order("event_at", desc=True).limit(_LIMIT).execute().data or []
     # Contadores sobre TODAS as linhas do filtro, não só as 1000 da lista: select leve paginado
     # (ordem estável por id, senão o Postgres pode repetir/pular linhas entre páginas).
-    todas = _paged(lambda: filtrar(sb.table("ad_conversions").select("stage,platform,status")).order("id"))
+    todas = paginar(lambda: filtrar(sb.table("ad_conversions").select("stage,platform,status")).order("id"))
     return {"rows": rows, "counts": summarize(todas), "truncated": len(rows) == _LIMIT}

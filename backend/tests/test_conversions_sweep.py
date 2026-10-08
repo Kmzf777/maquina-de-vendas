@@ -330,21 +330,62 @@ def test_run_sweep_quebra_os_ids_em_blocos_de_200(monkeypatch):
     assert sorted(n for t, n in ins if t == "leads") == [50, 200, 200]
 
 
-def test_paged_segue_ate_a_pagina_incompleta():
-    paginas = [[{"i": n} for n in range(1000)], [{"i": n} for n in range(1000)], [{"i": 1}]]
-    ranges = []
+def test_sweep_usa_o_paginador_compartilhado():
+    from app.db.paginacao import paginar
+    assert sweep_mod.paginar is paginar
 
-    class _P:
-        def range(self, a, b):
-            ranges.append((a, b))
-            return self
 
-        def execute(self):
-            return MagicMock(data=paginas[len(ranges) - 1])
+def test_upsert_que_falha_num_bloco_nao_derruba_os_outros(monkeypatch, caplog):
+    """Um bloco de 200 leads com upsert recusado (timeout, linha ruim) não pode impedir os blocos
+    seguintes de entrar na fila."""
+    ids = [f"00000000-0000-0000-0000-{i:012d}" for i in range(450)]
+    h = {"at": (CLICK + timedelta(hours=1)).isoformat(), "motivo": "ok"}
+    tables = {"lead_events": [{"lead_id": i, "event_type": "entrada", "occurred_at": CLICK.isoformat(),
+                               "metadata": {"ctwa_clid": f"C{n}"}} for n, i in enumerate(ids)],
+              "leads": [_lead(id=i, ctwa_clid=f"C{n}", metadata={"handoff": h}) for n, i in enumerate(ids)],
+              "sales": [], "quotes": [], "ad_conversion_values": []}
+    upserts, log = [], []
+    chamadas = [0]
 
-    rows = sweep_mod._paged(lambda: _P())
-    assert len(rows) == 2001
-    assert ranges == [(0, 999), (1000, 1999), (2000, 2999)]
+    def _sb():
+        sb = _fake_sb(tables, upserts, log)
+        orig = sb.table.side_effect
+
+        def _table(name):
+            if name != "ad_conversions":
+                return orig(name)
+            q = MagicMock()
+
+            def _up(rows, **kw):
+                chamadas[0] += 1
+                if chamadas[0] == 1:
+                    raise RuntimeError("statement timeout")
+                upserts.append((rows, kw))
+                return MagicMock(data=rows)
+            q.upsert.side_effect = _up
+            return q
+        sb.table.side_effect = _table
+        return sb
+    monkeypatch.setattr(sweep_mod, "get_supabase", _sb)
+    with caplog.at_level("ERROR"):
+        total = sweep_mod.run_sweep(now=NOW)
+    assert chamadas[0] == 3
+    assert [len(rows) for rows, _ in upserts] == [200, 50]
+    assert total == 250
+    assert any("falha no upsert" in r.getMessage() for r in caplog.records)
+
+
+def test_venda_sem_valor_nao_entra(caplog):
+    """Purchase sem valor ensinaria venda de R$ 0 ao algoritmo: fica fora (e avisa no log)."""
+    sales = [{"id": "S1", "lead_id": "L1", "sold_at": (CLICK + timedelta(days=1)).isoformat(), "value": None,
+              "status": "registrada"},
+             {"id": "S2", "lead_id": "L1", "sold_at": (CLICK + timedelta(days=1)).isoformat(), "value": 50,
+              "status": "registrada"}]
+    with caplog.at_level("WARNING"):
+        rows = build_candidates(lead=_lead(), entradas=ENTRADAS, sales=sales, opportunity_at=None,
+                                values=VALUES, now=NOW)
+    assert _keys(rows) == ["meta:purchase:S2"]
+    assert any("S1" in r.getMessage() for r in caplog.records)
 
 
 def test_um_lead_quebrado_nao_derruba_a_varredura(monkeypatch):

@@ -163,3 +163,9 @@ def test_conversion_dashboard_fail_soft():
     assert out["kpis"] == {"meta_sent": 0, "google_sent": 0, "pending": 0, "purchase_value": 0.0}
     assert out["value_by_traffic"] == {"paid": 0.0, "organic": 0.0, "unknown": 0.0}
     assert all(d["qualified"] == 0 for d in out["timeseries"])
+
+
+def test_analytics_usa_o_paginador_compartilhado():
+    from app.db.paginacao import paginar
+    assert ca.paginar is paginar
+    assert not hasattr(ca, "_fetch_all")

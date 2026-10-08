@@ -135,3 +135,42 @@ def test_endpoint_recusa_quem_nao_e_admin(monkeypatch):
     assert r.status_code == 403
     r = c.get("/api/conversions/ads", headers={"Authorization": f"Bearer {tok('admin')}"})
     assert r.status_code == 200
+
+
+@pytest.mark.parametrize("qs", ["period=1y", "period=", "date_from=2026-13-01", "date_to=ontem",
+                                "date_from=2026-10-01&date_to=x"])
+def test_filtro_invalido_e_422(monkeypatch, admin_app, qs):
+    monkeypatch.setattr(router_mod, "get_supabase", lambda: _sb([], [], []))
+    assert TestClient(admin_app).get(f"/api/conversions/ads?{qs}").status_code == 422
+
+
+@pytest.mark.parametrize("qs", ["period=7d", "period=90d", "period=all", "date_from=2026-10-01",
+                                "date_from=2026-10-01&date_to=2026-10-07"])
+def test_filtro_valido(monkeypatch, admin_app, qs):
+    monkeypatch.setattr(router_mod, "get_supabase", lambda: _sb([], [], []))
+    assert TestClient(admin_app).get(f"/api/conversions/ads?{qs}").status_code == 200
+
+
+def test_period_all_nao_filtra_data():
+    assert router_mod._range("all", None, None) == (None, None)
+
+
+def test_router_usa_o_paginador_compartilhado():
+    from app.db.paginacao import paginar
+    assert router_mod.paginar is paginar
+
+
+# ── /api/conversions/dashboard (seção do Dashboard) ──────────────────────────
+
+def test_dashboard_exige_admin(monkeypatch):
+    from app.campaigns import conversions_router
+    monkeypatch.setattr(conversions_router, "conversion_dashboard", lambda: {"kpis": {}})
+    from app.main import app
+    assert TestClient(app).get("/api/conversions/dashboard").status_code == 401
+
+
+def test_dashboard_com_admin(monkeypatch, admin_app):
+    from app.campaigns import conversions_router
+    monkeypatch.setattr(conversions_router, "conversion_dashboard", lambda: {"kpis": {"x": 1}})
+    r = TestClient(admin_app).get("/api/conversions/dashboard")
+    assert r.status_code == 200 and r.json() == {"kpis": {"x": 1}}

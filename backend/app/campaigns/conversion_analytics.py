@@ -14,6 +14,7 @@ from datetime import date, datetime, timedelta, timezone
 from typing import Any
 from zoneinfo import ZoneInfo
 
+from app.db.paginacao import paginar
 from app.db.supabase import get_supabase
 
 logger = logging.getLogger(__name__)
@@ -120,23 +121,6 @@ def to_timeseries_events(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return [{"event": r.get("stage"), "created_at": r.get("event_at")} for r in dedupe_conversions(rows)]
 
 
-_PAGE = 1000
-
-
-def _fetch_all(build_query) -> list[dict[str, Any]]:
-    """Pagina com `.range()` até vir página incompleta — o PostgREST corta em 1.000 linhas
-    sem avisar. `build_query` é chamado a cada página (o builder acumula estado) e precisa
-    de `.order()` por chave única para as páginas não se sobreporem."""
-    out: list[dict[str, Any]] = []
-    offset = 0
-    while True:
-        data = build_query().range(offset, offset + _PAGE - 1).execute().data or []
-        out.extend(data)
-        if len(data) < _PAGE:
-            return out
-        offset += _PAGE
-
-
 def _count_ad_conversions(**eq) -> int:
     try:
         q = get_supabase().table("ad_conversions").select("id", count="exact")
@@ -158,7 +142,7 @@ def conversion_dashboard() -> dict[str, Any]:
     purchase_rows: list[dict[str, Any]] = []
     try:
         cutoff = (datetime.now(timezone.utc) - timedelta(days=30)).isoformat()
-        ts_rows = _fetch_all(
+        ts_rows = paginar(
             lambda: get_supabase().table("ad_conversions")
             .select("lead_id, stage, sale_id, event_at")
             .eq("status", "enviado").gte("event_at", cutoff).order("id")
@@ -166,7 +150,7 @@ def conversion_dashboard() -> dict[str, Any]:
     except Exception as exc:
         logger.error("conversion_dashboard: falha no fetch da série: %s", exc)
     try:
-        purchase_rows = dedupe_conversions(_fetch_all(
+        purchase_rows = dedupe_conversions(paginar(
             lambda: get_supabase().table("ad_conversions")
             .select("lead_id, stage, sale_id, value, leads(traffic_type)")
             .eq("status", "enviado").eq("stage", "purchase").order("id")
