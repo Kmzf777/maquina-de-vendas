@@ -86,9 +86,26 @@ def _send(row: dict[str, Any], lead: dict[str, Any]) -> SendResult:
         return SendResult(ok=False, permanent=False, error=f"exceção: {exc!r}"[:500])
 
 
+def _ready_platforms() -> list[str]:
+    """Plataformas ligadas E configuradas. Ligada sem configuração (variável faltando, modo teste
+    da Meta sem código de teste) é pulada inteira: nenhuma linha é reivindicada nem gasta
+    tentativa, e o tick avisa uma vez no log. Ao configurar, a fila sai sozinha."""
+    prontas = []
+    for p, c in _CLIENTS.items():
+        if not c.enabled():
+            continue
+        falta = c.missing_config()
+        if falta:
+            logger.warning("[CONVERSOES] %s ligada mas sem configuração (%s): nada sai da fila",
+                           p, ", ".join(falta))
+            continue
+        prontas.append(p)
+    return prontas
+
+
 def run_sender(now: datetime | None = None, limit: int = 100) -> dict[str, int]:
     now = now or datetime.now(timezone.utc)
-    platforms = [p for p, c in _CLIENTS.items() if c.enabled()]
+    platforms = _ready_platforms()
     counts = {"enviado": 0, "pendente": 0, "erro": 0, "fora_da_janela": 0, "ignorado": 0}
     if not platforms:
         return counts
@@ -115,6 +132,9 @@ def run_sender(now: datetime | None = None, limit: int = 100) -> dict[str, int]:
             continue
         if outside_window(row, now):
             upd = {"status": "fora_da_janela", "claimed_at": None}
+        elif row.get("stage") == "purchase" and not row.get("sale_id"):
+            # A venda foi apagada depois de enfileirada (FK `on delete set null`).
+            upd = {"status": "ignorado", "claimed_at": None, "last_error": "venda removida antes do envio"}
         elif row.get("sale_id") in canceladas:
             upd = {"status": "ignorado", "claimed_at": None, "last_error": "venda cancelada antes do envio"}
         else:

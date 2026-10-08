@@ -120,6 +120,50 @@ def _env(monkeypatch, test_mode="false"):
     monkeypatch.setenv("CONVERSIONS_META_ENABLED", "true")
     monkeypatch.setenv("CONVERSIONS_GOOGLE_ENABLED", "false")
     monkeypatch.setenv("CONVERSIONS_TEST_MODE", test_mode)
+    monkeypatch.setenv("META_CAPI_DATASET_ID", "DS1")
+    monkeypatch.setenv("META_CAPI_ACCESS_TOKEN", "TOK")
+    monkeypatch.setenv("META_WABA_ID", "WABA9")
+    monkeypatch.setenv("META_CAPI_TEST_EVENT_CODE", "TEST1")
+
+
+def _google_env(monkeypatch):
+    monkeypatch.setenv("CONVERSIONS_GOOGLE_ENABLED", "true")
+    for v in ("GOOGLE_ADS_CUSTOMER_ID", "GOOGLE_ADS_CLIENT_ID", "GOOGLE_ADS_CLIENT_SECRET", "GOOGLE_ADS_REFRESH_TOKEN"):
+        monkeypatch.setenv(v, "x")
+
+
+def test_run_sender_plataforma_sem_config_nao_reivindica_linhas(monkeypatch, caplog):
+    """Variável faltando: a plataforma é pulada inteira (nada sai da fila, nenhuma tentativa
+    gasta) e o tick avisa no log uma vez — em vez de cada linha virar `erro`."""
+    _env(monkeypatch)
+    monkeypatch.delenv("META_CAPI_DATASET_ID")
+    called = MagicMock()
+    monkeypatch.setattr(sender_mod, "get_supabase", called)
+    with caplog.at_level("WARNING"):
+        counts = sender_mod.run_sender(now=NOW)
+    assert sum(counts.values()) == 0
+    called.assert_not_called()
+    avisos = [r for r in caplog.records if "META_CAPI_DATASET_ID" in r.getMessage()]
+    assert len(avisos) == 1
+
+
+def test_run_sender_meta_em_modo_teste_sem_codigo_e_pulada(monkeypatch):
+    _env(monkeypatch, test_mode="true")
+    monkeypatch.delenv("META_CAPI_TEST_EVENT_CODE")
+    called = MagicMock()
+    monkeypatch.setattr(sender_mod, "get_supabase", called)
+    assert sum(sender_mod.run_sender(now=NOW).values()) == 0
+    called.assert_not_called()
+
+
+def test_run_sender_so_reivindica_a_plataforma_configurada(monkeypatch):
+    _env(monkeypatch)
+    monkeypatch.delenv("META_CAPI_ACCESS_TOKEN")
+    _google_env(monkeypatch)
+    sb, log = _fake_sb([])
+    monkeypatch.setattr(sender_mod, "get_supabase", lambda: sb)
+    sender_mod.run_sender(now=NOW)
+    assert ("in_", ("platform", ["google"])) in log
 
 
 def test_run_sender_envia_e_grava(monkeypatch):
@@ -192,3 +236,17 @@ def test_run_sender_modo_teste_limita_lote_e_mantem_pendente(monkeypatch):
     assert counts["enviado"] == 0 and counts["pendente"] == 1
     assert ("limit", (sender_mod.TEST_MODE_LIMIT,)) in log and sender_mod.TEST_MODE_LIMIT == 10
     assert _updates(log)[-1]["last_response"]["modo_teste"] is True
+
+
+def test_run_sender_venda_removida_vira_ignorado(monkeypatch):
+    """Venda apagada depois de enfileirada: a FK zera `sale_id` (on delete set null)."""
+    _env(monkeypatch)
+    sb, log = _fake_sb([_qrow(stage="purchase", sale_id=None)])
+    monkeypatch.setattr(sender_mod, "get_supabase", lambda: sb)
+    send = MagicMock()
+    monkeypatch.setattr(sender_mod.meta, "send", send)
+    counts = sender_mod.run_sender(now=NOW)
+    assert counts["ignorado"] == 1
+    send.assert_not_called()
+    assert _updates(log)[-1] == {"status": "ignorado", "claimed_at": None,
+                                 "last_error": "venda removida antes do envio"}

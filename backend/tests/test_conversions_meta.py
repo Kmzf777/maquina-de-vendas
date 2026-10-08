@@ -114,10 +114,56 @@ def test_send_is_transient_da_meta_e_respeitado(monkeypatch):
     assert not r.ok and not r.permanent
 
 
-def test_send_sem_config_e_permanente(monkeypatch):
+def test_send_sem_config_e_transitorio(monkeypatch):
+    """Variável faltando se resolve configurando o servidor: entra no backoff, não vira `erro`."""
     monkeypatch.delenv("META_CAPI_DATASET_ID", raising=False)
     r = meta.send(ROW, LEAD)
-    assert not r.ok and r.permanent and "META_CAPI_DATASET_ID" in r.error
+    assert not r.ok and not r.permanent and "META_CAPI_DATASET_ID" in r.error
+
+
+def test_modo_teste_sem_codigo_nao_chama_a_meta(monkeypatch):
+    """Sem test_event_code o evento iria como REAL — e o modo teste não consome a linha, então
+    o mesmo evento real sairia de novo a cada 6 h. Não envia nada."""
+    _env(monkeypatch)
+    monkeypatch.setenv("CONVERSIONS_TEST_MODE", "true")
+    monkeypatch.delenv("META_CAPI_TEST_EVENT_CODE", raising=False)
+
+    def handler(req):
+        raise AssertionError("não podia chamar a Meta")
+
+    r = meta.send(ROW, LEAD, transport=httpx.MockTransport(handler))
+    assert not r.ok and not r.permanent
+    assert r.error == "modo teste ligado sem META_CAPI_TEST_EVENT_CODE"
+    monkeypatch.setenv("META_CAPI_TEST_EVENT_CODE", "  ")
+    r = meta.send(ROW, LEAD, transport=httpx.MockTransport(handler))
+    assert not r.ok and not r.permanent
+
+
+def test_modo_teste_com_codigo_envia(monkeypatch):
+    _env(monkeypatch)
+    monkeypatch.setenv("CONVERSIONS_TEST_MODE", "true")
+    monkeypatch.setenv("META_CAPI_TEST_EVENT_CODE", "TEST123")
+    seen = {}
+
+    def handler(req):
+        seen["body"] = req.content
+        return httpx.Response(200, json={"events_received": 1})
+
+    assert meta.send(ROW, LEAD, transport=httpx.MockTransport(handler)).ok
+    assert b"TEST123" in seen["body"]
+
+
+def test_configured(monkeypatch):
+    _env(monkeypatch)
+    assert meta.configured() and meta.missing_config() == []
+    monkeypatch.delenv("META_CAPI_ACCESS_TOKEN")
+    assert not meta.configured() and meta.missing_config() == ["META_CAPI_ACCESS_TOKEN"]
+    _env(monkeypatch)
+    monkeypatch.setenv("CONVERSIONS_TEST_MODE", "true")
+    monkeypatch.delenv("META_CAPI_TEST_EVENT_CODE", raising=False)
+    assert not meta.configured() and meta.missing_config() == ["META_CAPI_TEST_EVENT_CODE"]
+    monkeypatch.setenv("META_CAPI_TEST_EVENT_CODE", "T1")
+    assert meta.configured()
 
 
 def test_enabled(monkeypatch):

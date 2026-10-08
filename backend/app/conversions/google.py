@@ -29,6 +29,21 @@ def enabled() -> bool:
     return _truthy("CONVERSIONS_GOOGLE_ENABLED")
 
 
+# Credenciais da conta (valem para todas as linhas). O ID da ação é por etapa e é checado linha
+# a linha no `send`.
+_REQUIRED = ("GOOGLE_ADS_CUSTOMER_ID", "GOOGLE_ADS_CLIENT_ID", "GOOGLE_ADS_CLIENT_SECRET",
+             "GOOGLE_ADS_REFRESH_TOKEN")
+
+
+def missing_config() -> list[str]:
+    return [v for v in _REQUIRED if not (os.getenv(v) or "").strip()]
+
+
+def configured() -> bool:
+    """O sender pula a plataforma (nem reivindica linhas) enquanto isto for False."""
+    return not missing_config()
+
+
 def _digits(v: str | None) -> str:
     return "".join(ch for ch in (v or "") if ch.isdigit())
 
@@ -99,10 +114,11 @@ def _error_message(resp: httpx.Response) -> str:
 
 
 def send(row: dict[str, Any], lead: dict[str, Any], *, transport: httpx.BaseTransport | None = None) -> SendResult:
-    for var in ("GOOGLE_ADS_CUSTOMER_ID", "GOOGLE_ADS_CLIENT_ID", "GOOGLE_ADS_CLIENT_SECRET",
-                "GOOGLE_ADS_REFRESH_TOKEN", _action_env(row["stage"])):
-        if not os.getenv(var):
-            return SendResult(ok=False, permanent=True, error=f"{var} não configurado")
+    # Falta de configuração (inclusive o ID da ação desta etapa) se resolve no servidor: não é
+    # permanente, entra no backoff em vez de virar `erro` de vez.
+    for var in (*_REQUIRED, _action_env(row["stage"])):
+        if not (os.getenv(var) or "").strip():
+            return SendResult(ok=False, permanent=False, error=f"{var} não configurado")
     body = build_request(row, lead)
     try:
         with httpx.Client(timeout=_TIMEOUT, transport=transport) as client:

@@ -43,6 +43,28 @@ def enabled() -> bool:
     return _truthy("CONVERSIONS_META_ENABLED")
 
 
+_REQUIRED = ("META_CAPI_DATASET_ID", "META_CAPI_ACCESS_TOKEN", "META_WABA_ID")
+_TEST_MODE_SEM_CODIGO = "modo teste ligado sem META_CAPI_TEST_EVENT_CODE"
+
+
+def _test_code() -> str:
+    return (os.getenv("META_CAPI_TEST_EVENT_CODE") or "").strip()
+
+
+def missing_config() -> list[str]:
+    """Variáveis que faltam para a Meta funcionar. Em modo teste o código de teste também é
+    obrigatório: sem ele o evento sairia como real (ver `send`)."""
+    falta = [v for v in _REQUIRED if not (os.getenv(v) or "").strip()]
+    if _truthy("CONVERSIONS_TEST_MODE") and not _test_code():
+        falta.append("META_CAPI_TEST_EVENT_CODE")
+    return falta
+
+
+def configured() -> bool:
+    """O sender pula a plataforma (nem reivindica linhas) enquanto isto for False."""
+    return not missing_config()
+
+
 def build_event(row: dict[str, Any], lead: dict[str, Any], *, waba_id: str) -> dict[str, Any]:
     user_data: dict[str, Any] = {
         "whatsapp_business_account_id": waba_id,
@@ -69,7 +91,7 @@ def build_event(row: dict[str, Any], lead: dict[str, Any], *, waba_id: str) -> d
 
 def build_payload(event: dict[str, Any]) -> dict[str, Any]:
     payload: dict[str, Any] = {"data": [event]}
-    code = os.getenv("META_CAPI_TEST_EVENT_CODE")
+    code = _test_code()
     if _truthy("CONVERSIONS_TEST_MODE") and code:
         payload["test_event_code"] = code
     return payload
@@ -93,9 +115,15 @@ def _transient_graph_error(body: Any) -> bool:
 
 
 def send(row: dict[str, Any], lead: dict[str, Any], *, transport: httpx.BaseTransport | None = None) -> SendResult:
-    for var in ("META_CAPI_DATASET_ID", "META_CAPI_ACCESS_TOKEN", "META_WABA_ID"):
-        if not os.getenv(var):
-            return SendResult(ok=False, permanent=True, error=f"{var} não configurado")
+    # Falta de configuração se resolve no servidor: não é permanente (entra no backoff). O sender
+    # já pula a plataforma enquanto `configured()` for False; isto é a segunda trava.
+    for var in _REQUIRED:
+        if not (os.getenv(var) or "").strip():
+            return SendResult(ok=False, permanent=False, error=f"{var} não configurado")
+    # Modo teste sem código de teste mandaria um evento REAL — e o sucesso em modo teste não
+    # consome a linha, então o mesmo evento real sairia de novo a cada 6 h. Não chama a Meta.
+    if _truthy("CONVERSIONS_TEST_MODE") and not _test_code():
+        return SendResult(ok=False, permanent=False, error=_TEST_MODE_SEM_CODIGO)
     version = os.getenv("META_CAPI_API_VERSION") or "v25.0"
     url = f"{GRAPH}/{version}/{os.getenv('META_CAPI_DATASET_ID')}/events"
     payload = build_payload(build_event(row, lead, waba_id=os.getenv("META_WABA_ID")))

@@ -57,10 +57,28 @@ def test_build_request(monkeypatch):
     assert len(req["events"]) == 1
 
 
-def test_sem_action_id_da_etapa_e_permanente(monkeypatch):
+def test_sem_action_id_da_etapa_e_transitorio(monkeypatch):
+    """Falta de configuração se resolve no servidor: backoff, não `erro` direto."""
     _env(monkeypatch)
+    monkeypatch.delenv("GOOGLE_ADS_CONVERSION_ACTION_LEAD", raising=False)
     r = google.send({**ROW, "stage": "lead"}, LEAD)
-    assert not r.ok and r.permanent and "GOOGLE_ADS_CONVERSION_ACTION_LEAD" in r.error
+    assert not r.ok and not r.permanent and "GOOGLE_ADS_CONVERSION_ACTION_LEAD" in r.error
+
+
+def test_sem_credencial_e_transitorio(monkeypatch):
+    _env(monkeypatch)
+    monkeypatch.delenv("GOOGLE_ADS_REFRESH_TOKEN")
+    r = google.send(ROW, LEAD)
+    assert not r.ok and not r.permanent and "GOOGLE_ADS_REFRESH_TOKEN" in r.error
+
+
+def test_configured_checa_so_as_credenciais_da_conta(monkeypatch):
+    # O ID da ação é por etapa: falta dele é tratada linha a linha no send, não aqui.
+    _env(monkeypatch)
+    monkeypatch.delenv("GOOGLE_ADS_CONVERSION_ACTION_LEAD", raising=False)
+    assert google.configured() and google.missing_config() == []
+    monkeypatch.delenv("GOOGLE_ADS_CLIENT_SECRET")
+    assert not google.configured() and google.missing_config() == ["GOOGLE_ADS_CLIENT_SECRET"]
 
 
 def _transport(status, body):
