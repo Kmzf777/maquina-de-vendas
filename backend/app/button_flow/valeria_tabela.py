@@ -7,8 +7,8 @@ skus, exige_min_lot), então não importa o tipo em runtime.
 from __future__ import annotations
 
 import re
-from decimal import Decimal, InvalidOperation
-from typing import TYPE_CHECKING
+from decimal import ROUND_HALF_UP, Decimal
+from typing import TYPE_CHECKING, NamedTuple
 
 if TYPE_CHECKING:  # pragma: no cover
     from app.button_flow.valeria_registry import Card
@@ -21,49 +21,58 @@ PACOTES_EXEMPLO_PL = 100
 _MARCADOR = re.compile(r"\{preco:([^}]+)\}")
 
 
-# --------------------------------------------------------------- leitura
-
-def precos_por_nome(produtos: list[dict], setor: str) -> dict[str, str]:
-    """{products.name: price_formatted} só de ativos com preço, no setor dado."""
-    saida: dict[str, str] = {}
-    for p in produtos or []:
-        if p.get("sector") != setor or not p.get("is_active"):
-            continue
-        preco = (p.get("price_formatted") or "").strip()
-        if preco and p.get("name"):
-            saida[p["name"]] = preco
-    return saida
-
-
-def min_lots_por_nome(produtos: list[dict], setor: str) -> dict[str, str]:
-    """{products.name: min_lot} dos ativos do setor que têm min_lot."""
-    saida: dict[str, str] = {}
-    for p in produtos or []:
-        if p.get("sector") != setor or not p.get("is_active"):
-            continue
-        lote = (p.get("min_lot") or "").strip()
-        if lote and p.get("name"):
-            saida[p["name"]] = lote
-    return saida
-
-
 # ------------------------------------------------------------ formatação
 
-def _parse(preco: str) -> Decimal | None:
-    """'R$ 1.169,70' -> Decimal('1169.70')."""
-    limpo = re.sub(r"[^\d,.]", "", preco or "")
-    limpo = limpo.replace(".", "").replace(",", ".")
-    try:
-        return Decimal(limpo)
-    except (InvalidOperation, ValueError):
+_PRECO_RE = re.compile(r"^\s*R\$\s*(\d{1,3}(?:\.\d{3})+|\d+)(?:,(\d{1,2}))?\s*$")
+_CENTAVO = Decimal("0.01")
+
+
+def _parse(preco: object) -> Decimal | None:
+    """'R$ 1.169,70' -> Decimal('1169.70'). Estrito: qualquer outra coisa ou valor <= 0 vira None."""
+    if not isinstance(preco, str):
         return None
+    m = _PRECO_RE.match(preco)
+    if not m:
+        return None
+    valor = Decimal(m.group(1).replace(".", "") + "." + (m.group(2) or "0"))
+    return valor if valor > 0 else None
 
 
 def _formatar(valor: Decimal) -> str:
     """Decimal -> 'R$ 2.670,00' (milhar com ponto, decimal com vírgula)."""
+    valor = valor.quantize(_CENTAVO, ROUND_HALF_UP)
     s = f"{valor:,.2f}"
     s = s.replace(",", "X").replace(".", ",").replace("X", ".")
     return f"R$ {s}"
+
+
+# --------------------------------------------------------------- leitura
+
+def precos_por_nome(produtos: list[dict], setor: str) -> dict[str, str]:
+    """{products.name: price_formatted} só de ativos no setor com preço válido.
+
+    Preço que não passa no parse estrito é descartado: preço errado é pior que sem preço.
+    """
+    saida: dict[str, str] = {}
+    for p in produtos or []:
+        if p.get("sector") != setor or not p.get("is_active"):
+            continue
+        preco = p.get("price_formatted")
+        if isinstance(preco, str) and p.get("name") and _parse(preco) is not None:
+            saida[p["name"]] = preco.strip()
+    return saida
+
+
+def min_lots_por_nome(produtos: list[dict], setor: str) -> dict[str, str]:
+    """{products.name: min_lot} dos ativos do setor que têm min_lot (texto)."""
+    saida: dict[str, str] = {}
+    for p in produtos or []:
+        if p.get("sector") != setor or not p.get("is_active"):
+            continue
+        lote = p.get("min_lot")
+        if isinstance(lote, str) and lote.strip() and p.get("name"):
+            saida[p["name"]] = lote.strip()
+    return saida
 
 
 # ------------------------------------------------------------------ card
@@ -85,93 +94,95 @@ def resolver_card(card: "Card", precos: dict[str, str], min_lots: dict[str, str]
 
 # ---------------------------------------------------------------- tabela
 
-def _slot(precos: dict[str, str], rotulo: str, classico: str | None, suave: str | None = None) -> str | None:
-    """'moído X' ou, se Clássico e Suave diferem, 'moído Clássico X · Suave Y'."""
-    c = precos.get(classico) if classico else None
-    s = precos.get(suave) if suave else None
-    if c and s and c != s:
-        return f"{rotulo} Clássico {c} · Suave {s}"
-    valor = c or s
-    return f"{rotulo} {valor}" if valor else None
+class Slot(NamedTuple):
+    """Um trecho da linha: `rotulo` + preço(s) das `variantes` [(nome, sku)].
+
+    Se as variantes presentes têm preços diferentes, imprime todas com o nome;
+    se iguais, imprime um preço só (com o nome apenas quando `nomear`).
+    `por_kg` acrescenta o preço por kg (preço do pacote de 2kg / 2).
+    """
+    rotulo: str
+    variantes: tuple[tuple[str, str], ...]
+    nomear: bool = False
+    por_kg: bool = False
 
 
-def _juntar(partes: list[str | None], sep: str = " · ") -> str:
-    return sep.join(p for p in partes if p)
+def _cs(tipo: str, formato: str) -> tuple[tuple[str, str], ...]:
+    return (("Clássico", f"Canastra Clássico — {tipo} {formato}"),
+            ("Suave", f"Canastra Suave — {tipo} {formato}"))
 
 
-def _linhas_atacado(p: dict[str, str]) -> list[str]:
-    linhas: list[str] = []
+# Cada grupo: (cabeçalho, linhas). Linha = (prefixo, slots). Prefixo None = linha única
+# "cabeçalho + slots"; com prefixo, o cabeçalho vai sozinho e cada linha começa pelo prefixo.
+# Grupos/slots sem nenhum SKU ativo somem; SKU ausente dentro de um slot é ignorado.
+GRUPOS_ATACADO: tuple = (
+    ("☕ Clássico · Suave", (
+        ("250g", (Slot("moído", _cs("Moído", "250g")), Slot("grão", _cs("Em Grãos", "250g")))),
+        ("500g", (Slot("moído", _cs("Moído", "500g")), Slot("grão", _cs("Em Grãos", "500g")))),
+        ("1kg", (Slot("grão", _cs("Em Grãos", "1kg")),)),
+    )),
+    ("☕ Canela  ", ((None, (Slot("250g moído", (("", "Canastra Canela — Moído 250g"),)),)),)),
+    ("☕ Microlote  ", ((None, (Slot("250g", (("moído", "Microlote — Moído 250g"),
+                                              ("grão", "Microlote — Em Grãos 250g"))),)),)),
+    ("☕ Néctar de Minas  ", ((None, (
+        Slot("Gourmet 1kg", (("", "Néctar de Minas Gourmet — Em Grãos 1kg"),)),
+        Slot("moído 500g", (("", "Néctar de Minas Gourmet — Moído 500g"),)),
+        Slot("Blend 1kg", (("", "Néctar de Minas Blend Arábica+Robusta — Em Grãos 1kg"),)),
+    )),)),
+    ("📦 Granel 2kg em grão  ", ((None, (
+        Slot("", (("Clássico", "Granel Canastra Clássico — 2kg em grãos"),
+                  ("Suave", "Granel Canastra Suave — 2kg em grãos")), nomear=True, por_kg=True),
+        Slot("Néctar", (("Espresso", "Granel Néctar de Minas Espresso — 2kg em grãos"),
+                        ("Intenso", "Granel Néctar de Minas Intenso — 2kg em grãos"))),
+    )),)),
+    ("☕ ", ((None, (
+        Slot("Cápsulas (10 un)", (("Clássico", "Cápsula Canastra Clássico — Display 10 cápsulas"),
+                                  ("Canela", "Cápsula Canastra Canela — Display 10 cápsulas"))),
+        Slot("Drip (10 sachês)", (("", "Drip Coffee Canastra Suave — Display 10 sachês"),)),
+    )),)),
+    ("⚙️ ", ((None, (
+        Slot("Moedor profissional", (("", "Moedor Elétrico Profissional — Unitário"),)),
+        Slot("Moedor + 10 granel", (("", "Moedor + 10 pacotes granel"),)),
+    )),)),
+)
 
-    def cs(formato: str, tipo: str) -> tuple[str, str]:
-        return (f"Canastra Clássico — {tipo} {formato}", f"Canastra Suave — {tipo} {formato}")
 
-    cabecalho_cs = []
-    for fmt, label in (("250g", "250g "), ("500g", "500g "), ("1kg", "1kg  ")):
-        moido = _slot(p, "moído", *cs(fmt, "Moído")) if fmt != "1kg" else None
-        grao = _slot(p, "grão", *cs(fmt, "Em Grãos"))
-        corpo = _juntar([moido, grao])
-        if corpo:
-            cabecalho_cs.append(f"{label} {corpo}")
-    if cabecalho_cs:
-        linhas.append("☕ Clássico · Suave")
-        linhas.extend(cabecalho_cs)
+def _com_kg(preco: str, por_kg: bool) -> str:
+    if not por_kg:
+        return preco
+    valor = _parse(preco)
+    return f"{preco} ({_formatar(valor / 2)}/kg)" if valor is not None else preco
 
-    canela = _slot(p, "250g moído", "Canastra Canela — Moído 250g")
-    if canela:
-        linhas.append(f"☕ Canela  {canela}")
 
-    micro_m, micro_g = p.get("Microlote — Moído 250g"), p.get("Microlote — Em Grãos 250g")
-    if micro_m and micro_g and micro_m != micro_g:
-        micro = f"250g moído {micro_m} · grão {micro_g}"
-    elif micro_m or micro_g:
-        micro = f"250g {micro_m or micro_g}"
+def _render_slot(slot: Slot, precos: dict[str, str]) -> str | None:
+    presentes = [(nome, precos[sku]) for nome, sku in slot.variantes if sku in precos]
+    if not presentes:
+        return None
+    if len({p for _, p in presentes}) > 1:
+        texto = " · ".join(f"{n} {_com_kg(p, slot.por_kg)}".strip() for n, p in presentes)
     else:
-        micro = ""
-    if micro:
-        linhas.append(f"☕ Microlote  {micro}")
+        texto = _com_kg(presentes[0][1], slot.por_kg)
+        if slot.nomear:
+            texto = f"{'/'.join(n for n, _ in presentes)} {texto}"
+    return f"{slot.rotulo} {texto}".strip()
 
-    nectar = _juntar([
-        _slot(p, "Gourmet 1kg", "Néctar de Minas Gourmet — Em Grãos 1kg"),
-        _slot(p, "moído 500g", "Néctar de Minas Gourmet — Moído 500g"),
-        _slot(p, "Blend 1kg", "Néctar de Minas Blend Arábica+Robusta — Em Grãos 1kg"),
-    ])
-    if nectar:
-        linhas.append(f"☕ Néctar de Minas  {nectar}")
 
-    granel_c = p.get("Granel Canastra Clássico — 2kg em grãos")
-    granel_s = p.get("Granel Canastra Suave — 2kg em grãos")
-    granel_n = _juntar([p.get("Granel Néctar de Minas Espresso — 2kg em grãos"),
-                        p.get("Granel Néctar de Minas Intenso — 2kg em grãos")])
-    base = granel_c or granel_s
-    partes_granel: list[str] = []
-    if base:
-        valor = _parse(base)
-        por_kg = f" ({_formatar(valor / 2)}/kg)" if valor is not None else ""
-        if granel_c and granel_s and granel_c != granel_s:
-            partes_granel.append(f"Clássico {granel_c} · Suave {granel_s}{por_kg}")
+def _linhas_atacado(precos: dict[str, str]) -> list[str]:
+    saida: list[str] = []
+    for cabecalho, linhas in GRUPOS_ATACADO:
+        corpos: list[tuple[str | None, str]] = []
+        for prefixo, slots in linhas:
+            partes = [r for r in (_render_slot(sl, precos) for sl in slots) if r]
+            if partes:
+                corpos.append((prefixo, " · ".join(partes)))
+        if not corpos:
+            continue
+        if corpos[0][0] is None:
+            saida.append(f"{cabecalho}{corpos[0][1]}")
         else:
-            partes_granel.append(f"Clássico/Suave {base}{por_kg}")
-    nec = [p[n] for n in ("Granel Néctar de Minas Espresso — 2kg em grãos",
-                          "Granel Néctar de Minas Intenso — 2kg em grãos") if n in p]
-    if nec:
-        partes_granel.append(f"Néctar {nec[0]}" if len(set(nec)) == 1 else "Néctar " + " / ".join(nec))
-    if partes_granel:
-        linhas.append(f"📦 Granel 2kg em grão  {' · '.join(partes_granel)}")
-
-    caps = p.get("Cápsula Canastra Clássico — Display 10 cápsulas") or p.get("Cápsula Canastra Canela — Display 10 cápsulas")
-    drip = p.get("Drip Coffee Canastra Suave — Display 10 sachês")
-    cd = _juntar([f"Cápsulas (10 un) {caps}" if caps else None,
-                  f"Drip (10 sachês) {drip}" if drip else None])
-    if cd:
-        linhas.append(f"☕ {cd}")
-
-    moedor = _juntar([
-        f"Moedor profissional {p['Moedor Elétrico Profissional — Unitário']}" if "Moedor Elétrico Profissional — Unitário" in p else None,
-        f"Moedor + 10 granel {p['Moedor + 10 pacotes granel']}" if "Moedor + 10 pacotes granel" in p else None,
-    ])
-    if moedor:
-        linhas.append(f"⚙️ {moedor}")
-    return linhas
+            saida.append(cabecalho)
+            saida.extend(f"{pre:<4}  {corpo}" for pre, corpo in corpos)
+    return saida
 
 
 def tabela_atacado(precos: dict[str, str], regras: str) -> str | None:

@@ -74,3 +74,75 @@ def test_total_pl_e_como_funciona():
     assert t.total_pl(precos) == "R$ 2.670,00"
     assert "R$ 2.670,00" in t.como_funciona_pl(precos, "exemplo: 100 pacotes = {total_pl} + fotolito")
     assert t.como_funciona_pl({}, "x {total_pl}") is None
+
+
+import pytest
+
+def _ps(nome, preco, setor="Atacado", lote=None):
+    return {"sector": setor, "name": nome, "price_formatted": preco, "min_lot": lote, "is_active": True}
+
+@pytest.mark.parametrize("ruim", ["R$ 28.70", "R$ 1.5", "R$ -5,00", "consulte 2 dias", "R$ 0,00",
+                                  "sob consulta", "R$ 28,700", "28,70", "R$ 1.23,00"])
+def test_preco_malformado_e_descartado(ruim):
+    assert t.precos_por_nome([_ps("A", ruim)], "Atacado") == {}
+
+def test_preco_nao_string_e_ignorado():
+    ps = [_ps("A", 28.7), _ps("B", None), _ps("C", "R$ 1,00", lote=50), _ps("D", "R$ 2,00", lote="100 un")]
+    assert t.precos_por_nome(ps, "Atacado") == {"C": "R$ 1,00", "D": "R$ 2,00"}
+    assert t.min_lots_por_nome(ps, "Atacado") == {"D": "100 un"}
+
+def test_milhar_parse_e_formato():
+    assert t.precos_por_nome([_ps("A", "R$ 1.234,50"), _ps("B", "R$ 949,00"), _ps("C", "R$ 949")], "Atacado") == {
+        "A": "R$ 1.234,50", "B": "R$ 949,00", "C": "R$ 949"}
+    assert t.total_pl({t.SKU_BASE_PL: "R$ 1.234,50"}) == "R$ 123.450,00"
+    assert t.total_pl({t.SKU_BASE_PL: "R$ 26,705"}) is None
+
+def test_arredondamento_half_up_no_por_kg():
+    p = {"Granel Canastra Clássico — 2kg em grãos": "R$ 169,70", "Granel Canastra Suave — 2kg em grãos": "R$ 169,70"}
+    assert "R$ 84,85/kg" in t.tabela_atacado(p, "")
+    p = {"Granel Canastra Clássico — 2kg em grãos": "R$ 100,01"}
+    assert "R$ 50,01/kg" in t.tabela_atacado(p, "")   # 50,005 -> 50,01
+
+def _atacado(**troca):
+    d = dict(ATACADO); d.update(troca)
+    return t.precos_por_nome([_ps(n, p) for n, p in d.items()], "Atacado")
+
+def test_classico_diferente_de_suave():
+    txt = t.tabela_atacado(_atacado(**{"Canastra Suave — Moído 250g": "R$ 29,70"}), "")
+    assert "250g  moído Clássico R$ 28,70 · Suave R$ 29,70 · grão R$ 31,70" in txt
+
+def test_microlote_moido_diferente_de_grao():
+    txt = t.tabela_atacado(_atacado(**{"Microlote — Em Grãos 250g": "R$ 33,70"}), "")
+    assert "☕ Microlote  250g moído R$ 32,70 · grão R$ 33,70" in txt
+
+def test_granel_diferente_e_unico():
+    txt = t.tabela_atacado(_atacado(**{"Granel Canastra Suave — 2kg em grãos": "R$ 171,70"}), "")
+    assert "Clássico R$ 169,70 (R$ 84,85/kg) · Suave R$ 171,70 (R$ 85,85/kg)" in txt
+    p = _atacado(); del p["Granel Canastra Suave — 2kg em grãos"]
+    assert "Clássico R$ 169,70 (R$ 84,85/kg)" in t.tabela_atacado(p, "") and "Clássico/Suave" not in t.tabela_atacado(p, "")
+    p = _atacado(); del p["Granel Canastra Clássico — 2kg em grãos"]
+    assert "Suave R$ 169,70 (R$ 84,85/kg)" in t.tabela_atacado(p, "") and "Clássico/Suave" not in t.tabela_atacado(p, "")
+
+def test_capsulas_diferentes_imprime_ambas():
+    txt = t.tabela_atacado(_atacado(**{"Cápsula Canastra Canela — Display 10 cápsulas": "R$ 23,90"}), "")
+    assert "Cápsulas (10 un) Clássico R$ 22,90 · Canela R$ 23,90" in txt
+
+def test_exige_min_lot_sem_o_sku_em_min_lots_some():
+    card = NS(id="x", corpo="{preco:A}", skus=("A",), exige_min_lot="100 un")
+    assert t.resolver_card(card, {"A": "R$ 1,00"}, {}) is None
+
+def test_layout_completo_da_tabela_atacado():
+    txt = t.tabela_atacado(t.precos_por_nome(produtos(), "Atacado"), regras="REGRAS")
+    assert txt == (
+        "tabela atacado — preço por pacote 📋\n\n"
+        "☕ Clássico · Suave\n"
+        "250g  moído R$ 28,70 · grão R$ 31,70\n"
+        "500g  moído R$ 52,70 · grão R$ 54,70\n"
+        "1kg   grão R$ 97,70\n"
+        "☕ Canela  250g moído R$ 28,70\n"
+        "☕ Microlote  250g R$ 32,70\n"
+        "☕ Néctar de Minas  Gourmet 1kg R$ 88,70 · moído 500g R$ 39,70 · Blend 1kg R$ 79,70\n"
+        "📦 Granel 2kg em grão  Clássico/Suave R$ 169,70 (R$ 84,85/kg) · Néctar R$ 166,70\n"
+        "☕ Cápsulas (10 un) R$ 22,90 · Drip (10 sachês) R$ 24,90\n"
+        "⚙️ Moedor profissional R$ 949,00 · Moedor + 10 granel R$ 599,00\n\n"
+        "REGRAS")
