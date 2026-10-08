@@ -50,6 +50,10 @@ class DecisaoV2(v1.Decisao):
     faq: str | None = None
     # "completa" (carrossel+texto+ações) | "tabela" (texto+ações) | "acoes" (só
     # ações) | "nenhuma". Diferente de "nenhuma" só com proximo_no em VA/VP.
+    # Em "tabela" e "acoes", o runner MONTA A 3ª MENSAGEM (a dos botões de ação)
+    # a partir de `mensagem` — corpo E botoes —, não de `CORPO_ACOES` fixo: ela
+    # traz `CORPO_ACOES` no caso normal e o corpo do nudge no RUIDO (com
+    # `marcar_nudge=True`). Ignorar `mensagem` ali engole o reoferecimento.
     vitrine: str = "nenhuma"
     # Texto da "Origem do repasse" na nota ao vendedor (spec §5.3).
     repasse_motivo: str | None = None
@@ -245,7 +249,8 @@ class _Ctx:
         return self.tela(retorno, faq=faq_id, **extra)
 
     # ── 6. Clique ──────────────────────────────────────────────────────────
-    def clique(self, clique: Clique, botoes: tuple) -> DecisaoV2:
+    def clique(self, clique: Clique, botoes: tuple, *, escrito: str | None = None) -> DecisaoV2:
+        """Clique (ou texto que o classificador leu como botão, em `escrito`)."""
         card = self._casar_card(clique.payload)
         if card is not None:
             criterios = {"purchase_intent": "clear"} if self.ramo == "atacado" else {}
@@ -254,7 +259,7 @@ class _Ctx:
         botao = v1._casar(self.no_atual, clique, botoes, self.est)
         if botao is None:
             return self.ruido(botoes)
-        return self._seguir(botao)
+        return self._seguir(botao, escrito)
 
     def _casar_card(self, payload: str | None) -> reg1.Card | None:
         if not payload or not payload.startswith(_PREFIXO_CARD):
@@ -264,14 +269,19 @@ class _Ctx:
         card_id = payload[len(_PREFIXO_CARD):]
         return next((c for c in cards if c.id == card_id), None)
 
-    def _seguir(self, botao: reg1.Botao) -> DecisaoV2:
-        """Rota de um botão casado, pelo `destino` declarado."""
+    def _seguir(self, botao: reg1.Botao, escrito: str | None = None) -> DecisaoV2:
+        """Rota de um botão casado, pelo `destino` declarado.
+
+        `escrito` é o texto do lead quando o "clique" veio do classificador: a
+        nota ao vendedor diz o que ele ESCREVEU, não um toque que não houve.
+        """
         respostas = {**self.respostas, self.no_atual: botao.id}
         memoria: dict = {"respostas": respostas, "ruidos": 0}
         criterios = dict(botao.grava)
         if self.ramo == "atacado" and botao.id == "pedido":
             criterios["purchase_intent"] = "clear"
-        motivo = f'clicou "{botao.rotulo}"'
+        motivo = (f'escreveu "{escrito[:_LIMITE_TEXTO_MOTIVO]}"' if escrito is not None
+                  else f'clicou "{botao.rotulo}"')
         destino = botao.destino
 
         if destino.startswith("faq:"):
@@ -287,7 +297,10 @@ class _Ctx:
             return self.handoff(motivo, memoria=memoria, criterios=criterios)
 
         if destino == "regra:QP2":
-            destino = r.REGRA_QP2.get((respostas.get("QP1"), botao.id), "T_HANDOFF_PL")
+            # flow_state corrompido (QP1 lista/dict) não pode estourar o hash da chave.
+            qp1 = respostas.get("QP1")
+            qp1 = qp1 if isinstance(qp1, str) else None
+            destino = r.REGRA_QP2.get((qp1, botao.id), "T_HANDOFF_PL")
 
         extra: dict = {}
         if destino in r.DUVIDAS_DO_RAMO.values():
@@ -310,7 +323,7 @@ class _Ctx:
         if ev.classe == "BOTAO":
             alvo = self._botao_classificado(ev.botao_id, botoes)
             if alvo is not None:
-                return self.clique(Clique(payload=alvo, titulo=""), botoes)
+                return self.clique(Clique(payload=alvo, titulo=""), botoes, escrito=conteudo)
             return self.ruido(botoes)
 
         if ev.classe == "FAQ":

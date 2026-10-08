@@ -552,3 +552,68 @@ def test_mesma_entrada_mesma_saida():
     est = _est("VA")
     ev = _clique("card:microlote")
     assert _decidir("VA", ev, est) == _decidir("VA", ev, est)
+
+
+# ── Follow-ups da revisão ───────────────────────────────────────────────────
+def test_faq_em_t_adiar_responde_e_reoferece_os_prazos():
+    d = _decidir("T_ADIAR", _tc("FAQ", "e o frete?", faq_id="frete"),
+                 _est("T_ADIAR", ramo="private_label"))
+    assert d.faq == "frete"
+    assert d.proximo_no == "T_ADIAR"
+    assert d.mensagem.botoes == r.BOTOES_PRAZO
+    assert d.efeitos.tags == ()          # o terminal não é reaplicado
+    assert d.efeitos.recontato_dias is None
+
+
+def test_preco_em_consumo_vai_para_humano():
+    d = _decidir("C1", _tc("FAQ", "quanto custa?", faq_id="preco"), _est("C1", ramo=None))
+    assert d.proximo_no == "T_HUMANO"
+    assert d.repasse_motivo == "PERGUNTA: quanto custa?"
+
+
+def test_preco_em_exportacao_vai_para_arthur():
+    d = _decidir("E3", _tc("FAQ", "qual o preço FOB?", faq_id="preco"), _est("E3", ramo=None))
+    assert d.proximo_no == "T_HANDOFF_ARTHUR"
+    assert d.repasse_motivo == "PERGUNTA: qual o preço FOB?"
+
+
+def test_retorno_corrompido_vai_para_humano():
+    d = _decidir("VD_A", _clique("faq_frete"), _est("VD_A", retorno="NO_QUE_SUMIU"))
+    assert d.proximo_no == "T_HUMANO"
+
+
+def test_retorno_nao_texto_cai_na_vitrine_do_ramo():
+    d = _decidir("VD_A", _clique("faq_frete"), _est("VD_A", retorno=["VA"]))
+    assert d.proximo_no == "VA"
+    assert d.faq == "frete"
+
+
+def test_botao_classificado_em_t_adiar_mantem_dias():
+    d = _decidir("T_ADIAR", _tc("BOTAO", "daqui uns 2 meses", botao_id="snooze60"),
+                 _est("T_ADIAR", ramo="private_label"))
+    assert d.proximo_no == "T_ADIADO"
+    assert d.efeitos.recontato_dias == 60
+
+
+@pytest.mark.parametrize("qp1", [["criar_zero"], {"x": 1}, 7, None])
+def test_respostas_qp1_corrompida_nao_estoura(qp1):
+    est = _est("QP2", ramo="private_label", respostas={"QP1": qp1})
+    d = _decidir("QP2", _clique("menos100"), est)
+    assert d.proximo_no == "T_HANDOFF_PL"
+
+
+def test_botao_classificado_que_repassa_usa_o_texto_no_motivo():
+    d = _decidir("QA2", _tc("BOTAO", "uns 200 kg por mês", botao_id="mais100"), _est("QA2"))
+    assert d.proximo_no == "T_HANDOFF"
+    assert d.repasse_motivo == 'escreveu "uns 200 kg por mês"'
+
+
+def test_botao_classificado_handoff_especial_usa_o_texto_no_motivo():
+    d = _decidir("VK", _tc("BOTAO", "x" * 300, botao_id="vendedor"), _est("VK"))
+    assert d.proximo_no == "T_HANDOFF"
+    assert d.repasse_motivo == f'escreveu "{"x" * 200}"'
+
+
+def test_clique_que_repassa_continua_com_rotulo_no_motivo():
+    d = _decidir("QA2", _clique("mais100"), _est("QA2"))
+    assert d.repasse_motivo == 'clicou "Mais de 100 kg"'
