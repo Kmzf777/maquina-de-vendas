@@ -27,6 +27,8 @@ export interface LeadOriginInput {
   utm_medium: string | null;
   utm_campaign: string | null;
   gclid: string | null;
+  gbraid: string | null;
+  wbraid: string | null;
   fbclid: string | null;
   ctwa_clid: string | null;
   meta_ad_id: string | null;
@@ -35,7 +37,7 @@ export interface LeadOriginInput {
 }
 
 export const LEAD_ORIGIN_COLUMNS =
-  "traffic_type, utm_source, utm_medium, utm_campaign, gclid, fbclid, ctwa_clid, meta_ad_id, channel, metadata";
+  "traffic_type, utm_source, utm_medium, utm_campaign, gclid, gbraid, wbraid, fbclid, ctwa_clid, meta_ad_id, channel, metadata";
 
 // Mesmas listas do backend (traffic_report.py). 'instagram'/'facebook' crus são orgânico.
 const META_AD_SOURCES = new Set(["metaads", "meta_ads", "meta-ads", "meta", "facebook_ads", "facebookads", "fb_ads"]);
@@ -65,14 +67,16 @@ function lpFunnel(metadata: Record<string, unknown> | null): string | null {
 
 /**
  * Plataforma paga do lead (Google/Meta), mesma ordem de `derive_channel`:
- * gclid > click-ids/anúncio Meta/utm_source Meta > utm_source+utm_medium Google.
+ * click-id Google (gclid/gbraid/wbraid) > click-ids/anúncio Meta/utm_source Meta >
+ * utm_source+utm_medium Google.
  * `null` quando nenhum sinal específico de plataforma bate (pode ainda ser pago
  * genérico via `traffic_type`, tratado à parte em `describeLeadOrigin`).
  */
 export function paidPlatform(lead: LeadOriginInput): "google" | "meta" | null {
   const source = s(lead.utm_source).toLowerCase();
   const medium = s(lead.utm_medium).toLowerCase();
-  if (s(lead.gclid)) return "google";
+  // gbraid/wbraid são o click-id do Google em iOS (sem gclid); derive_channel conta os três.
+  if (s(lead.gclid) || s(lead.gbraid) || s(lead.wbraid)) return "google";
   if (s(lead.fbclid) || s(lead.ctwa_clid) || s(lead.meta_ad_id) || META_AD_SOURCES.has(source)) return "meta";
   if (GOOGLE_AD_SOURCES.has(source) && PAID_MEDIUMS.has(medium)) return "google";
   return null;

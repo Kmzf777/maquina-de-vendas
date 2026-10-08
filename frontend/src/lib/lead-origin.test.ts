@@ -1,9 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { describeLeadOrigin, paidPlatform, resolveGoogleCampaignName, type LeadOriginInput } from "./lead-origin";
+import { LEAD_ORIGIN_COLUMNS, describeLeadOrigin, paidPlatform, resolveGoogleCampaignName, type LeadOriginInput } from "./lead-origin";
 
 const base: LeadOriginInput = {
   traffic_type: null, utm_source: null, utm_medium: null, utm_campaign: null,
-  gclid: null, fbclid: null, ctwa_clid: null, meta_ad_id: null, channel: null, metadata: null,
+  gclid: null, gbraid: null, wbraid: null, fbclid: null, ctwa_clid: null, meta_ad_id: null, channel: null,
+  metadata: null,
 };
 const lead = (p: Partial<LeadOriginInput>): LeadOriginInput => ({ ...base, ...p });
 
@@ -30,6 +31,20 @@ describe("describeLeadOrigin", () => {
   it("utm_source metaads → Meta Ads", () => {
     expect(describeLeadOrigin(lead({ utm_source: "metaads", utm_campaign: "lp-atacado" }), null))
       .toMatchObject({ kind: "pago", channel: "Meta Ads", detail: "lp-atacado" });
+  });
+  it("gbraid/wbraid (iOS) → Google Ads, como gclid", () => {
+    for (const p of [{ gbraid: "b" }, { wbraid: "w" }]) {
+      expect(describeLeadOrigin(lead({ ...p, utm_campaign: "pmax" }), "PMAX | Atacado"))
+        .toEqual({ kind: "pago", channel: "Google Ads", detail: "PMAX | Atacado", funnel: null });
+    }
+  });
+  it("a rota seleciona gbraid/wbraid do lead", () => {
+    const cols = LEAD_ORIGIN_COLUMNS.split(",").map((c) => c.trim());
+    expect(cols).toEqual(expect.arrayContaining(["gclid", "gbraid", "wbraid"]));
+  });
+  it("gbraid vence meta_ad_id", () => {
+    expect(paidPlatform(lead({ gbraid: "b", meta_ad_id: "m" }))).toBe("google");
+    expect(paidPlatform(lead({ wbraid: "w", ctwa_clid: "c" }))).toBe("google");
   });
   it("gclid vence meta_ad_id", () => {
     expect(describeLeadOrigin(lead({ gclid: "g", meta_ad_id: "m" }), null).channel).toBe("Google Ads");

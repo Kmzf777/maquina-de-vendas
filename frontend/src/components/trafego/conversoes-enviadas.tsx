@@ -158,7 +158,7 @@ export function ConversoesEnviadas({ period, dateFrom, dateTo, refreshTick }: {
                       {STATUS_LABEL[r.status] ?? r.status}
                     </div>
                     {r.last_error && (
-                      <div className="text-[12px] text-[#7b7b78] mt-0.5 max-w-[320px]">{traduzErro(r.last_error)}</div>
+                      <div className="text-[12px] text-[#7b7b78] mt-0.5 max-w-[320px]">{traduzErro(r.last_error, r.platform)}</div>
                     )}
                   </td>
                 </tr>
