@@ -141,9 +141,10 @@ def test_tabela_com_lead_id_nao_coberta_aborta():
     m.verificar_cobertura(set(m.TABELAS_COBERTAS))
 
 
-def test_cobertura_bate_com_as_21_tabelas_de_producao():
+def test_cobertura_bate_com_as_22_tabelas_de_producao():
+    # 22ª: ad_conversions (20261008_ad_conversions.sql) — fila de conversões para Meta/Google.
     producao = {
-        "broadcast_leads", "campaign_enrollments", "campaign_execution_log", "conversations",
+        "ad_conversions", "broadcast_leads", "campaign_enrollments", "campaign_execution_log", "conversations",
         "conversion_events", "deals", "follow_up_jobs", "follow_up_jobs_incidente_20261003",
         "lead_bling_contacts", "lead_daily_sends", "lead_events", "lead_notes",
         "lead_qualification_scores", "lead_seller_feelings", "lead_tags", "lp_email_jobs",

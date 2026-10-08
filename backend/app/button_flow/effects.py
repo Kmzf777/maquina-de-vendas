@@ -473,10 +473,10 @@ def _aplicar_handoff(lead: dict, conversation_id: str, *,
     Gravar só um dos dois deixa metade dos consumidores cego.
 
     E um TERCEIRO registro, para um leitor diferente dos dois: o card vai para "Quer
-    repor" no Kanban. É A conversão do agente — a etapa nasceu com
-    `conversion_event='qualified'`, então cada entrada nela vira uma linha
-    deduplicada em `conversion_events` (automation/triggers.py), que é a métrica do
-    agente sem escrever uma linha de código para isso.
+    repor" no Kanban. É A conversão do agente — a métrica dele é a contagem de
+    entradas nessa etapa. (Até 10/2026 a etapa também disparava conversão de anúncio
+    via `conversion_event`; esse gatilho foi removido — a conversão de anúncio agora
+    sai da varredura de app/conversions/sweep.py.)
 
     `vendedor` é QUEM recebe o lead, e os três registros têm de dizer o mesmo nome.
     Ausente = `SUPERVISOR_NAME`, que é o único vendedor da Recuperação; era

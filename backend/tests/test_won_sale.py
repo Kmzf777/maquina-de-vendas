@@ -47,74 +47,52 @@ def test_mark_deal_won_updates_deal_and_returns_lead():
 
 
 # --------------------------------------------------------------------------- #
-# Endpoint — marks won synchronously, schedules fire_stage_conversion as BackgroundTask
+# Endpoint — marca a venda como ganha. A conversão de compra NÃO sai daqui: a varredura
+# de app/conversions/sweep.py acha a venda e enfileira em ad_conversions.
 # --------------------------------------------------------------------------- #
 
-def test_won_endpoint_schedules_dispatch_and_returns_ok():
-    from fastapi import BackgroundTasks
+def test_won_endpoint_marks_won_and_returns_ok():
     from app.leads.router import mark_lead_won, WonSalePayload
 
-    bg = BackgroundTasks()
     with patch("app.leads.service.get_lead", return_value={"id": "L1"}), \
          patch("app.campaigns.sales.mark_deal_won",
                return_value={"lead": {"id": "L1", "ctwa_clid": "c"}, "deals_updated": 1,
-                             "deal_id": "D1"}) as mdw:
-        resp = asyncio.run(mark_lead_won("L1", WonSalePayload(value=99.0, currency="BRL"), bg))
+                             "deal_id": "D1"}) as mdw, \
+         patch("app.leads.reposicao.ensure_reposicao_deal") as erd:
+        resp = asyncio.run(mark_lead_won("L1", WonSalePayload(value=99.0, currency="BRL")))
 
     assert resp == {"status": "ok", "deals_updated": 1}
-    mdw.assert_called_once()
-    # Disparo da conversão foi agendado fora do caminho crítico (não chamado inline).
-    assert len(bg.tasks) == 1
+    mdw.assert_called_once_with("L1", value=99.0, currency="BRL", deal_id=None)
+    erd.assert_called_once_with("L1", deal_id="D1")
 
 
 def test_won_endpoint_404_when_lead_missing():
-    from fastapi import BackgroundTasks, HTTPException
+    from fastapi import HTTPException
     from app.leads.router import mark_lead_won, WonSalePayload
 
     with patch("app.leads.service.get_lead", return_value=None):
         with pytest.raises(HTTPException) as exc:
-            asyncio.run(mark_lead_won("missing", WonSalePayload(), BackgroundTasks()))
+            asyncio.run(mark_lead_won("missing", WonSalePayload()))
     assert exc.value.status_code == 404
 
 
-def test_won_endpoint_fires_purchase_via_orchestrator():
-    """mark_deal_won returns deal_id 'D1' → /won schedules fire_stage_conversion with event='purchase' and deal_id='D1'."""
-    from fastapi import BackgroundTasks
+def test_won_endpoint_sem_deal_nao_chama_reposicao():
+    """mark_deal_won sem deal atualizado → não garante card de reposição."""
     from app.leads.router import mark_lead_won, WonSalePayload
 
-    bg = BackgroundTasks()
-    lead_data = {"id": "L1", "ctwa_clid": "abc123"}
-
-    # fire_stage_conversion is imported locally inside the endpoint, so patch at the source module.
-    with patch("app.leads.service.get_lead", return_value=lead_data), \
+    with patch("app.leads.service.get_lead", return_value={"id": "L1"}), \
          patch("app.campaigns.sales.mark_deal_won",
-               return_value={"lead": lead_data, "deals_updated": 1, "deal_id": "D1",
-                             "value": 99.0, "currency": "BRL"}), \
-         patch("app.campaigns.conversions.fire_stage_conversion") as mock_fsc:
-        resp = asyncio.run(mark_lead_won("L1", WonSalePayload(value=99.0, currency="BRL"), bg))
-
-    assert resp == {"status": "ok", "deals_updated": 1}
-    # Exactly one background task scheduled.
-    assert len(bg.tasks) == 1
-    task = bg.tasks[0]
-    # Positional args: lead, deal_id, event
-    assert task.args[1] == "D1"
-    assert task.args[2] == "purchase"
-
-
-def test_won_endpoint_no_background_task_when_no_deal_id():
-    """If mark_deal_won returns no deal_id (e.g. no deal found), no background task is scheduled."""
-    from fastapi import BackgroundTasks
-    from app.leads.router import mark_lead_won, WonSalePayload
-
-    bg = BackgroundTasks()
-    lead_data = {"id": "L1"}
-
-    with patch("app.leads.service.get_lead", return_value=lead_data), \
-         patch("app.campaigns.sales.mark_deal_won",
-               return_value={"lead": lead_data, "deals_updated": 0, "deal_id": None,
-                             "value": None, "currency": "BRL"}):
-        resp = asyncio.run(mark_lead_won("L1", WonSalePayload(), bg))
+               return_value={"lead": {"id": "L1"}, "deals_updated": 0, "deal_id": None,
+                             "value": None, "currency": "BRL"}), \
+         patch("app.leads.reposicao.ensure_reposicao_deal") as erd:
+        resp = asyncio.run(mark_lead_won("L1", WonSalePayload()))
 
     assert resp == {"status": "ok", "deals_updated": 0}
-    assert len(bg.tasks) == 0
+    erd.assert_not_called()
+
+
+def test_won_endpoint_nao_dispara_conversao():
+    """O caminho antigo (campaigns/conversions.py) foi removido; o módulo não pode voltar."""
+    import importlib.util
+    assert importlib.util.find_spec("app.campaigns.conversions") is None
+    assert importlib.util.find_spec("app.campaigns.capi_dispatcher") is None

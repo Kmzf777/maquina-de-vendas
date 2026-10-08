@@ -668,15 +668,8 @@ def _execute_action(enrollment: dict, node: dict, lead: dict) -> bool:
                 update["lost_reason"] = cfg["lost_reason"]
             sb.table("deals").update(update).eq("id", deal_id).execute()
             agiu = True
-            # F9: dispara a conversão associada à etapa de destino (move_deal_stage /
-            # mark_deal_won). Usa helper compartilhado com triggers._maybe_fire_stage_conversion.
-            # Fail-soft — qualquer erro loga warning e NÃO interrompe o tick.
-            if action_type in ("mark_deal_won", "move_deal_stage"):
-                try:
-                    from app.campaigns.conversions import fire_conversion_for_deal_stage
-                    fire_conversion_for_deal_stage(enrollment["lead_id"], deal_id)
-                except Exception as exc:
-                    logger.warning("[AUTOMATION] %s: falha ao disparar conversão: %s", action_type, exc)
+            # A conversão de anúncio da etapa de destino não sai mais daqui — a varredura
+            # de app/conversions/sweep.py enfileira em `ad_conversions`.
         # deal_id continua None (nenhum deal do enrollment nem do lead): sem alvo,
         # `agiu` permanece False.
 

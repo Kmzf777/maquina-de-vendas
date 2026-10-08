@@ -211,10 +211,13 @@ def vendas_gemeas(pares, vendas):
 
 # So mover: nenhuma unicidade envolvendo lead_id (ou, em `conversations`, colisao em
 # (lead_id, channel_id) derruba a transacao do par inteiro — preferivel a fundir conversas).
+# `ad_conversions`: a unica unicidade e `dedupe_key` (plataforma + etapa + clique/venda, sem
+# lead_id). Trocar o lead_id nao muda a chave, entao o UPDATE nunca colide; duas linhas com a
+# mesma chave nem chegam a existir (a UNIQUE ja barrou na insercao da varredura).
 SO_MOVER = (
     "sales", "deals", "quotes", "lead_notes", "lead_events", "conversations", "messages",
     "messages_archive", "conversion_events", "campaign_execution_log", "lp_email_jobs",
-    "token_usage",
+    "token_usage", "ad_conversions",
 )
 
 # Com unicidade: a linha do duplicado que colidiria com uma do sobrevivente e APAGADA (o

@@ -203,21 +203,10 @@ class TestNaoPoluiSerieDeAnuncio:
             "precisa ser reavaliada"
         )
 
-    def test_um_evento_fora_do_vocabulario_tambem_nao_serve(self):
-        """Por que não inventar um evento próprio ('recuperacao_quer_repor').
-
-        Ele ficaria fora da série (test acima), mas dois consumidores caem no nome
-        CRU quando não reconhecem o evento: o CAPI mandaria um evento inventado para
-        a Meta, e o CSV de conversões offline escreveria esse nome na coluna
-        "Conversion Name" — uma ação inexistente reprova o arquivo inteiro no Google
-        Ads. Dispara só para lead com ctwa_clid/gclid; 1 dos 1.208 tem ctwa_clid.
-        """
-        from app.campaigns.capi_dispatcher import meta_event_name
-        from app.campaigns.google_export import conversion_name_for
-
-        inventado = "recuperacao_quer_repor"
-        assert meta_event_name(inventado) == inventado
-        assert conversion_name_for(inventado) == inventado
+    # `test_um_evento_fora_do_vocabulario_tambem_nao_serve` saiu em 10/2026: exercitava
+    # `capi_dispatcher.meta_event_name` e `google_export.conversion_name_for`, que foram
+    # removidos com o gatilho de conversão por etapa do Kanban (ver
+    # docs/superpowers/specs/2026-10-08-conversoes-ads-design.md §7).
 
 
 # ── 2. Evidência de opt-out ─────────────────────────────────────────────────
