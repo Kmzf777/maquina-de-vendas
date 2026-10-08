@@ -97,7 +97,7 @@ def turno(monkeypatch):
     monkeypatch.setattr(irmao, "is_lead_blacklisted", lambda _lead_id: False)
 
     registro = {"efeitos": [], "salvas": [], "notas": [], "gravacoes": [],
-                "historico": [], "score": [], "classificacoes": []}
+                "historico": [], "score": [], "classificacoes": [], "kw_efeitos": []}
     conversa = {"id": "C1", "stage": "atacado", "flow_state": None}
     lead = {"id": "L1", "phone": "5534988861441", "wa_id": "5534988861441",
             "name": "Roner", "human_control": False, "metadata": {}}
@@ -119,8 +119,9 @@ def turno(monkeypatch):
             raise linhas
         return linhas
 
-    def _aplicar(efeitos, **_kw):
+    def _aplicar(efeitos, **kw):
         registro["efeitos"].append(efeitos)
+        registro["kw_efeitos"].append(kw)
         return True
 
     monkeypatch.setattr(v1, "_reler_estado", lambda c: c.get("flow_state"))
@@ -272,9 +273,10 @@ async def test_catalogo_vazio_avisa_e_repassa(turno):
     turno.catalogo["linhas"] = []
     estado = await turno(PRONTA_ATACADO)
     p = turno.provedor
-    assert p.tipos() == ["texto", "texto", "cartao"]
-    assert p.chamadas[0][1] == "nossa tabela tá sendo atualizada; o João te manda agora"
-    assert p.chamadas[1][1] == r2.TERMINAIS["T_HANDOFF"].corpo
+    # UMA mensagem só (sem o corpo do terminal) e o cartão do vendedor.
+    assert p.tipos() == ["texto", "cartao"]
+    assert p.chamadas[0][1] == (
+        "nossa tabela tá sendo atualizada; já chamei o João Brás aqui pra te passar os valores")
     assert estado["node"] == "T_HANDOFF" and estado["ramo"] == "atacado"
     assert any(e.handoff for e in turno.registro["efeitos"])
     nota = turno.registro["notas"][-1]
@@ -286,6 +288,7 @@ async def test_catalogo_vazio_avisa_e_repassa(turno):
 async def test_catalogo_fora_do_ar_tambem_repassa(turno):
     turno.catalogo["linhas"] = RuntimeError("PostgREST fora")
     estado = await turno(PRONTA_PL)
+    assert turno.registro["kw_efeitos"][-1]["nota_sem_qualificacao"] is False
     assert turno.provedor.chamadas[0][1].startswith("nossa tabela tá sendo atualizada")
     assert estado["node"] == "T_HANDOFF_PL"
 
@@ -432,11 +435,13 @@ async def test_fluxo_pl_ate_o_handoff_com_a_nota(turno):
     assert estado["node"] == "T_HANDOFF_PL"
     assert turno.provedor.chamadas[-2][1] == r2.TERMINAIS["T_HANDOFF_PL"].corpo
     assert turno.provedor.chamadas[-1][0] == "cartao"
+    # A v2 escreve o resumo; a nota genérica da v1 ("Nenhuma qualificação") não sai.
+    assert turno.registro["kw_efeitos"][-1]["nota_sem_qualificacao"] is False
     nota = turno.registro["notas"][-1]
     assert nota.splitlines() == [
         "[ValerIA botões v2] Marca própria",
         "Marca: Já tenho a marca · Quantidade: 100 a 500",
-        "Viu: vitrine + tabela",
+        "Viu: vitrine + como funciona",
         'Mensagens escritas pelo lead: "uns 300 pacotes"',
         'Origem do repasse: escreveu "uns 300 pacotes"',
     ]
@@ -545,6 +550,7 @@ async def test_repassar_parado_ganha_a_trava_e_repassa(turno, monkeypatch):
     assert p.tipos() == ["texto", "cartao"]
     assert p.chamadas[0][1] == "vou deixar o João te chamando por aqui pra seguir com você 🙂"
     assert turno.registro["efeitos"][0].handoff is True
+    assert turno.registro["kw_efeitos"][0]["nota_sem_qualificacao"] is False
     nota = turno.registro["notas"][-1]
     assert "Negócio: Loja ou empório" in nota
     assert "Origem do repasse: automático — parado há 2h em QA2" in nota
@@ -578,3 +584,27 @@ async def test_repassar_parado_com_banco_fora_nao_levanta(turno, monkeypatch):
         provider=turno.provedor, horas=5)
     assert ganhou is False
     assert turno.provedor.chamadas == []
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# A nota genérica da v1 no `effects` (follow-up do Task 8)
+# ═══════════════════════════════════════════════════════════════════════════
+def test_effects_sem_a_nota_generica_quando_a_v2_pede():
+    """A v2 grava o resumo de verdade; "Nenhuma qualificação" o contradiria."""
+    from app.button_flow.engine import Efeitos
+    from tests.test_button_flow_effects_2026_08_20 import _crm_mockado
+
+    terminal = r2.TERMINAIS["T_HANDOFF"]
+    with _crm_mockado(deal=None) as crm:
+        ok = effects.aplicar(
+            Efeitos(tags=terminal.tags, handoff=True, silenciar_ia=True,
+                    vendedor=terminal.vendedor),
+            lead={"id": "lead-1", "metadata": {}}, conversation_id="c1",
+            fluxo=effects.FLUXO_VALERIA, nota_sem_qualificacao=False,
+        )
+    assert ok is True
+    notas = [c.args[1] for c in crm.obs.call_args_list]
+    assert len(notas) == 1
+    assert "[TRANSBORDO p/ " in notas[0]
+    assert notas[0].endswith(f"{effects.FLUXO_VALERIA}: lead pediu atendimento do vendedor.")
+    assert "Nenhuma qualificação" not in notas[0]

@@ -232,7 +232,16 @@ def test_conversa_da_v2_nao_roda_o_optout_deterministico(monkeypatch, valeria_li
     assert P._optout_deterministico_cabe(canal, _lead(), _conv(None)) is False
 
 
-# ── O stub do runner (Task 8 o substitui) ───────────────────────────────────
+# ── O runner v2 respeita o kill switch ──────────────────────────────────────
 @pytest.mark.asyncio
-async def test_stub_do_runner_v2_nao_faz_nada():
-    assert await valeria_runner_v2.processar_inbound(lead={}, conversation={}) is None
+async def test_runner_v2_com_kill_switch_desligado_nao_faz_nada(monkeypatch):
+    """Desligado, o runner sai antes de ler banco ou falar com a Meta."""
+    monkeypatch.setenv("VALERIA_BOTOES_ENABLED", "off")
+    provedor = MagicMock()
+    with patch.object(valeria_runner_v2.v1, "_reler_estado") as reler:
+        motivo = await valeria_runner_v2.processar_inbound(
+            lead={"id": "L1"}, conversation={"id": "C1"}, channel={},
+            provider=provedor, texto="oi")
+    assert motivo is None
+    reler.assert_not_called()
+    assert provedor.method_calls == []

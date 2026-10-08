@@ -35,9 +35,11 @@ passaria a mandar a conversa para a v1 no dia em que o humano a devolvesse).
    só o envio sabe o que de fato saiu.
 6. A MENSAGEM PRONTA DO ANÚNCIO não entra em "Mensagens escritas pelo lead": quem a
    escreveu foi o anúncio, e o ramo já está no cabeçalho da nota.
-7. `effects._aplicar_handoff` continua escrevendo a nota genérica da v1 ("Nenhuma
-   qualificação por conversa — abordar direto"); a nota da v2 sai LOGO DEPOIS, com o
-   resumo de verdade. Mudar o texto de `effects` é outra tarefa.
+7. A NOTA GENÉRICA DA v1 NÃO SAI. `effects.aplicar(..., nota_sem_qualificacao=False)`
+   tira do transbordo o "Nenhuma qualificação por conversa — abordar direto", que
+   contradiria o resumo da v2 (`montar_nota`), gravado logo depois.
+8. CATÁLOGO VAZIO = UMA MENSAGEM. O aviso já diz que o João foi chamado; o corpo do
+   terminal de handoff repetiria isso, então sai só o aviso + o cartão do vendedor.
 """
 from __future__ import annotations
 
@@ -66,7 +68,8 @@ _LOG = "[VALERIA V2]"
 # O mesmo `sent_by` da v1: o CRM e o detector de autoresponder já leem esse valor.
 SENT_BY = "valeria_botoes"
 
-MSG_TABELA_INDISPONIVEL = "nossa tabela tá sendo atualizada; o João te manda agora"
+MSG_TABELA_INDISPONIVEL = ("nossa tabela tá sendo atualizada; já chamei o João Brás aqui "
+                           "pra te passar os valores")
 MSG_REPASSE_AUTO = "vou deixar o João te chamando por aqui pra seguir com você 🙂"
 MOTIVO_SEM_TABELA = "tabela indisponível (catálogo sem preço) — repasse automático"
 # Marcador de preço que não resolveu no catálogo: nunca um número inventado, nunca o
@@ -318,7 +321,9 @@ def montar_nota(estado: dict, nos: dict, *, textos: list[str], motivo: str | Non
     jornada = []
     viu = estado.get("viu")
     if isinstance(viu, list) and viu:
-        jornada.append("Viu: " + " + ".join(str(v) for v in viu))
+        # A mensagem 2 da marca própria não é tabela: é o "como funciona" (§6.2).
+        nomes_viu = {"tabela": "como funciona"} if ramo == "private_label" else {}
+        jornada.append("Viu: " + " + ".join(nomes_viu.get(str(v), str(v)) for v in viu))
     faqs = estado.get("faqs")
     if isinstance(faqs, list) and faqs:
         duvidas = nos.get(r2.DUVIDAS_DO_RAMO.get(ramo or "", ""))
@@ -623,6 +628,8 @@ async def _aplicar_efeitos(decisao: DecisaoV2, *, lead: dict, conversation_id,
     avancar = await asyncio.to_thread(
         effects.aplicar, decisao.efeitos, lead=lead, conversation_id=conversation_id,
         evidencia=evidencia, fluxo=effects.FLUXO_VALERIA,
+        # A nota da v2 (`montar_nota`) substitui o "Nenhuma qualificação" da v1.
+        nota_sem_qualificacao=False,
     )
     if not avancar:
         # Só o opt-out devolve False (ver v1): sem `opt_out=true` gravado, nada sai.
@@ -654,20 +661,20 @@ async def _enviar(decisao: DecisaoV2, saida: _Saida, *, estado, no: str | None) 
 
 
 async def _repassar_sem_tabela(decisao: DecisaoV2, saida: _Saida) -> DecisaoV2:
-    """Sem preço nenhum: avisa, aplica o handoff do ramo e manda a tela dele + cartão."""
+    """Sem preço nenhum: UMA mensagem (o aviso já diz que o João foi chamado), o handoff
+    do ramo e o cartão do vendedor — sem o corpo do terminal, que repetiria o aviso."""
     ramo = r2.RAMO_DO_NO.get(decisao.proximo_no)
     destino = r2.HANDOFF_DO_RAMO.get(ramo or "", motor.ID_HUMANO)
     logger.error("%s sem tabela para %s — repasse para %s conv=%s", _LOG,
                  decisao.proximo_no, destino, saida.conversation.get("id"))
     nova = _decisao_de_terminal(destino, saida.conteudo.nos, saida.conteudo.terminais,
                                 memoria=dict(decisao.memoria), repasse_motivo=MOTIVO_SEM_TABELA)
-    await saida.texto(MSG_TABELA_INDISPONIVEL)
     await _aplicar_efeitos(nova, lead=saida.lead, conversation_id=saida.conversation.get("id"),
                            evidencia={"origem": "sem_tabela"})
-    await v1._enviar(nova, lead=saida.lead, conversation=saida.conversation,
-                     channel=saida.channel, provider=saida.provider,
-                     nos=saida.conteudo.nos, terminais=saida.conteudo.terminais,
-                     rotulo_lista=saida.conteudo.rotulo_lista)
+    if await saida.texto(MSG_TABELA_INDISPONIVEL):
+        await v1._enviar_cartao(saida.provider, saida.destino,
+                                saida.conteudo.terminais.get(destino), saida.channel,
+                                conversation=saida.conversation, lead=saida.lead)
     return nova
 
 
