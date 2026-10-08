@@ -89,6 +89,26 @@ def test_send_500_e_429_sao_transitorios(monkeypatch):
         assert not r.ok and not r.permanent
 
 
+def test_send_auth_e_permissao_sao_transitorios(monkeypatch):
+    """Token vencido/sem permissão se resolve gerando token novo — não pode matar a fila."""
+    _env(monkeypatch)
+    for status in (401, 403):
+        t = httpx.MockTransport(lambda req, s=status: httpx.Response(s, json={"error": {"message": "x", "code": 1}}))
+        r = meta.send(ROW, LEAD, transport=t)
+        assert not r.ok and not r.permanent, status
+    for code in (190, 102, 10, 200, 299, 4, 17, 32, 341, 613):
+        t = httpx.MockTransport(lambda req, c=code: httpx.Response(400, json={"error": {"message": "x", "type": "OAuthException", "code": c}}))
+        r = meta.send(ROW, LEAD, transport=t)
+        assert not r.ok and not r.permanent, code
+
+
+def test_send_is_transient_da_meta_e_respeitado(monkeypatch):
+    _env(monkeypatch)
+    t = httpx.MockTransport(lambda req: httpx.Response(400, json={"error": {"message": "x", "code": 100, "is_transient": True}}))
+    r = meta.send(ROW, LEAD, transport=t)
+    assert not r.ok and not r.permanent
+
+
 def test_send_sem_config_e_permanente(monkeypatch):
     monkeypatch.delenv("META_CAPI_DATASET_ID", raising=False)
     r = meta.send(ROW, LEAD)

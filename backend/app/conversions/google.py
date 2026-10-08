@@ -114,7 +114,9 @@ def send(row: dict[str, Any], lead: dict[str, Any], *, transport: httpx.BaseTran
         return SendResult(ok=False, permanent=False, error=f"rede: {exc}")
     if resp.status_code == 200:
         return SendResult(ok=True, response=resp.json())
-    permanent = 400 <= resp.status_code < 500 and resp.status_code not in (401, 429)
+    # 401/403 (credencial revogada, sem acesso à conta) se resolvem gerando token novo: a fila
+    # espera no backoff em vez de virar `erro` de vez.
+    permanent = 400 <= resp.status_code < 500 and resp.status_code not in (401, 403, 429)
     try:
         payload = resp.json()
     except ValueError:

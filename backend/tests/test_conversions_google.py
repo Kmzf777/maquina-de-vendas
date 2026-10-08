@@ -88,6 +88,14 @@ def test_send_400_permanente_500_transitorio(monkeypatch):
     assert not r.ok and not r.permanent
 
 
+def test_send_401_403_sao_transitorios(monkeypatch):
+    """Credencial revogada/sem acesso se resolve trocando o token — a fila espera."""
+    _env(monkeypatch)
+    for status in (401, 403):
+        r = google.send(ROW, LEAD, transport=_transport(status, {"error": {"message": "PERMISSION_DENIED"}}))
+        assert not r.ok and not r.permanent, status
+
+
 def test_token_falhou_e_transitorio(monkeypatch):
     _env(monkeypatch)
     t = httpx.MockTransport(lambda req: httpx.Response(500, json={}))

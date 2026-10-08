@@ -24,6 +24,10 @@ EVENT_NAMES = {
     "purchase": "Purchase",
 }
 _TIMEOUT = 15.0
+# Códigos da Graph API que se resolvem sem mudar o payload (guia "Handling Errors"): token
+# inválido/vencido (190, 102), permissão negada (10, 200–299) — gerar token novo resolve — e
+# limites/indisponibilidade (2, 4, 17, 32, 341, 613). Ficam no backoff em vez de virar `erro`.
+_TRANSIENT_CODES = {2, 4, 10, 17, 32, 102, 190, 341, 613}
 
 
 def _truthy(name: str) -> bool:
@@ -74,6 +78,15 @@ def _error_message(resp: httpx.Response) -> str:
         return f"HTTP {resp.status_code}: {resp.text[:300]}"
 
 
+def _transient_graph_error(body: Any) -> bool:
+    err = (body.get("error") if isinstance(body, dict) else None) or {}
+    if not isinstance(err, dict):
+        return False
+    code = err.get("code")
+    return bool(err.get("is_transient")) or code in _TRANSIENT_CODES \
+        or (isinstance(code, int) and 200 <= code <= 299)
+
+
 def send(row: dict[str, Any], lead: dict[str, Any], *, transport: httpx.BaseTransport | None = None) -> SendResult:
     for var in ("META_CAPI_DATASET_ID", "META_CAPI_ACCESS_TOKEN", "META_WABA_ID"):
         if not os.getenv(var):
@@ -88,10 +101,11 @@ def send(row: dict[str, Any], lead: dict[str, Any], *, transport: httpx.BaseTran
         return SendResult(ok=False, permanent=False, error=f"rede: {exc}")
     if resp.status_code == 200:
         return SendResult(ok=True, response=resp.json())
-    permanent = 400 <= resp.status_code < 500 and resp.status_code != 429
     body = None
     try:
         body = resp.json()
     except ValueError:
         pass
+    permanent = 400 <= resp.status_code < 500 and resp.status_code not in (401, 403, 429) \
+        and not _transient_graph_error(body)
     return SendResult(ok=False, permanent=permanent, error=_error_message(resp), response=body)
