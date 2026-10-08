@@ -120,16 +120,36 @@ class Botao:
 
 
 @dataclass(frozen=True)
+class Card:
+    """Um card do carrossel. O botão do card devolve o id `card:<id>` no webhook.
+
+    Só existe na v2 (valeria_registry_v2.py); mora aqui para que os dois fluxos
+    compartilhem os MESMOS tipos, como `Botao`, `No` e `Terminal`.
+    """
+    id: str                       # "classico"
+    foto: str                     # caminho sob backend/app/photos/
+    corpo: str                    # texto com marcadores {preco:<products.name exato>}
+    skus: tuple[str, ...]         # products.name que o card cita; todos ativos e com preço, senão o card não sai
+    exige_min_lot: str | None = None   # ex.: "100 un" — o card só sai se TODOS os skus tiverem esse min_lot
+    destino: str = ""             # nó para onde o toque no card leva (QA1 / QP1)
+    rotulo_botao: str = "Quero esse"
+
+
+@dataclass(frozen=True)
 class No:
     id: str
     rotulo_interno: str          # "N1 · Segmento" — só tela e log
-    tela: str                    # "botoes" | "lista" | "foto_botoes"
+    # "botoes" | "lista" | "foto_botoes" | "carrossel". "carrossel" é nó da v2
+    # (vitrine): `cards` vira o carrossel e `botoes` são os botões de ação.
+    tela: str
     corpo: str
     botoes: tuple[Botao, ...]
     ramo: str                    # "entrada"|"atacado"|"private_label"|"consumo"|"exportacao"
     foto: str | None = None      # caminho sob backend/app/photos/
     produto: str | None = None   # SKU declarado; o preço vem do catálogo no envio
     editaveis: tuple[str, ...] = ("corpo", "rotulos")
+    # Só nós `tela="carrossel"` da v2 têm cards; na v1 é sempre vazio.
+    cards: tuple[Card, ...] = ()
 
 
 @dataclass(frozen=True)
