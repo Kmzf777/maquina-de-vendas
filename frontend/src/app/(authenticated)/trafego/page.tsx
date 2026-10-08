@@ -68,8 +68,9 @@ export default function TrafegoPage() {
   };
 
   useEffect(() => {
-    if (roleLoading || role !== "admin") return;
-    // eslint-disable-next-line react-hooks/set-state-in-effect
+    // A aba "Conversões enviadas" busca os próprios dados: o relatório de campanhas (pesado) só
+    // é pedido quando a aba Campanhas está na tela — e de novo ao voltar para ela.
+    if (roleLoading || role !== "admin" || view !== "campanhas") return;
     setLoading(true);
     const q = (dateFrom || dateTo)
       ? `mode=${mode}${dateFrom ? `&date_from=${dateFrom}` : ""}${dateTo ? `&date_to=${dateTo}` : ""}`
@@ -79,7 +80,7 @@ export default function TrafegoPage() {
       .then((d: Report) => setReport(d))
       .catch(() => setReport(null))
       .finally(() => setLoading(false));
-  }, [period, mode, dateFrom, dateTo, role, roleLoading, refreshTick]);
+  }, [period, mode, dateFrom, dateTo, role, roleLoading, refreshTick, view]);
 
   if (!roleLoading && role !== "admin") {
     return <div className="p-8 text-[14px] text-[#7b7b78]">Acesso restrito a administradores.</div>;
@@ -102,6 +103,8 @@ export default function TrafegoPage() {
             {([["campanhas", "Campanhas"], ["conversoes", "Conversões enviadas"]] as const).map(([v, label]) => (
               <button
                 key={v}
+                type="button"
+                aria-pressed={view === v}
                 onClick={() => setView(v)}
                 className={`px-3 py-1.5 rounded-[4px] text-[13px] md:text-[14px] border border-[#111111] ${
                   view === v ? "bg-[#111111] text-white" : "bg-transparent text-[#111111]"

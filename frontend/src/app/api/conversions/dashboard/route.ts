@@ -1,19 +1,8 @@
-import { getCurrentUser } from "@/lib/supabase/pipeline-access";
+// Proxy admin-only de GET /api/conversions/dashboard (seção "Conversões (Ads)" do Dashboard).
+// Usa o adminProxy porque o endpoint do backend exige o JWT de admin (traffic_router.exigir_admin):
+// o payload traz receita de vendas e o backend é público — a checagem não pode ficar só aqui.
+import { adminProxy } from "@/app/api/valeria-flow/_shared";
 
 export async function GET() {
-  try {
-    const { role } = await getCurrentUser();
-    if (role !== "admin") return Response.json({ error: "forbidden" }, { status: 403 });
-  } catch {
-    return Response.json({ error: "unauthorized" }, { status: 401 });
-  }
-
-  const backendUrl = (process.env.NEXT_PUBLIC_FASTAPI_URL || "http://localhost:8000").replace(/\/+$/, "");
-  try {
-    const resp = await fetch(`${backendUrl}/api/conversions/dashboard`, { cache: "no-store" });
-    if (!resp.ok) return Response.json({ error: "dashboard_unavailable" }, { status: resp.status });
-    return Response.json(await resp.json());
-  } catch {
-    return Response.json({ error: "dashboard_unreachable" }, { status: 502 });
-  }
+  return adminProxy("/api/conversions/dashboard");
 }

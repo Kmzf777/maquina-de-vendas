@@ -39,7 +39,7 @@ describe("DEFAULT_STAGES", () => {
     expect(prot).toEqual(["fechado_ganho", "fechado_perdido"]);
   });
 
-  it("nunca preenche conversion_event — isso despacharia o card para Meta CAPI", () => {
+  it("não define conversion_event (campo aposentado: as conversões saem de ad_conversions)", () => {
     for (const s of DEFAULT_STAGES) {
       expect(s).not.toHaveProperty("conversion_event");
     }
