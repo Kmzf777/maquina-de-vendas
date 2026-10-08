@@ -18,6 +18,9 @@ class LandingPagePayload(BaseModel):
     # Rastreio de tráfego pago (preenchidos pelo JS da landing page a partir da URL).
     fbclid: str = ""
     gclid: str = ""
+    # O Google manda gbraid/wbraid no lugar do gclid em cliques de iPhone (ATT/iOS 14+).
+    gbraid: str = ""
+    wbraid: str = ""
     utm_source: str = ""
     utm_medium: str = ""
     utm_campaign: str = ""
@@ -46,6 +49,8 @@ async def landing_page_webhook(payload: LandingPagePayload, request: Request):
         "origem": payload.origem,
         "fbclid": payload.fbclid,
         "gclid": payload.gclid,
+        "gbraid": payload.gbraid,
+        "wbraid": payload.wbraid,
         "utm_source": payload.utm_source,
         "utm_medium": payload.utm_medium,
         "utm_campaign": payload.utm_campaign,

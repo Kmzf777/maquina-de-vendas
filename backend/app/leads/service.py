@@ -419,6 +419,8 @@ TRACKING_COLUMNS: tuple[str, ...] = (
     "meta_ad_id",    # ID do anúncio CTWA (referral.source_id) — liga o lead à campanha Meta
     "fbclid",        # Facebook click id (anúncio → site/LP)
     "gclid",         # Google click id (anúncio → site/LP)
+    "gbraid",        # Google click id de iOS (app → web)
+    "wbraid",        # Google click id de iOS (web → web)
     "utm_source",
     "utm_medium",
     "utm_campaign",
@@ -441,7 +443,7 @@ _PAID_SOURCES: frozenset[str] = frozenset(
 def derive_traffic_type(tracking: dict[str, Any] | None) -> str | None:
     """Classifica a origem do lead a partir do bag de rastreio.
 
-    'paid'    se houver click-id (gclid/fbclid/ctwa_clid) OU utm_medium pago;
+    'paid'    se houver click-id (gclid/gbraid/wbraid/fbclid/ctwa_clid) OU utm_medium pago;
     'organic' se houver qualquer sinal de UTM (source/medium/campaign) sem ser pago;
     None      se não houver sinal algum (não classifica — evita rotular leads sem origem).
     """
@@ -452,7 +454,7 @@ def derive_traffic_type(tracking: dict[str, Any] | None) -> str | None:
         val = tracking.get(key)
         return val.strip().lower() if isinstance(val, str) else ("" if val is None else str(val).lower())
 
-    if _v("gclid") or _v("fbclid") or _v("ctwa_clid"):
+    if _v("gclid") or _v("gbraid") or _v("wbraid") or _v("fbclid") or _v("ctwa_clid"):
         return "paid"
     if _v("utm_source") in _PAID_SOURCES:
         return "paid"
