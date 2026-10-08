@@ -12,22 +12,37 @@ import sys
 import httpx
 
 
+def _erro(resp: httpx.Response) -> str:
+    """Status + mensagem da Graph. Sem `raise_for_status()`: a mensagem dele traz a URL."""
+    try:
+        msg = (resp.json().get("error") or {}).get("message")
+    except (ValueError, AttributeError):
+        msg = None
+    return f"HTTP {resp.status_code}: {msg or resp.text[:300]}"
+
+
 def main() -> None:
-    waba = os.getenv("META_WABA_ID")
-    token = os.getenv("META_CAPI_ACCESS_TOKEN")
-    version = os.getenv("META_CAPI_API_VERSION") or "v25.0"
+    waba = (os.getenv("META_WABA_ID") or "").strip()
+    token = (os.getenv("META_CAPI_ACCESS_TOKEN") or "").strip()
+    version = (os.getenv("META_CAPI_API_VERSION") or "").strip() or "v25.0"
     if not waba or not token:
         sys.exit("defina META_WABA_ID e META_CAPI_ACCESS_TOKEN")
     url = f"https://graph.facebook.com/{version}/{waba}/dataset"
-    with httpx.Client(timeout=20) as c:
-        got = c.get(url, params={"access_token": token})
-        if got.status_code == 200:
-            existente = _extrair_id(got.json())
-            if existente:
-                print("dataset já existe:", existente)
-                return
-        resp = c.post(url, params={"access_token": token})
-    resp.raise_for_status()
+    # Token só no header: na query ele aparece no log do httpx e nas mensagens de erro.
+    headers = {"Authorization": f"Bearer {token}"}
+    try:
+        with httpx.Client(timeout=20, headers=headers) as c:
+            got = c.get(url)
+            if got.status_code == 200:
+                existente = _extrair_id(got.json())
+                if existente:
+                    print("dataset já existe:", existente)
+                    return
+            resp = c.post(url)
+    except httpx.HTTPError as exc:
+        sys.exit(f"falha de rede ao falar com a Meta: {type(exc).__name__}")
+    if resp.status_code != 200:
+        sys.exit(f"a Meta recusou a criação do dataset — {_erro(resp)}")
     print("dataset criado:", _extrair_id(resp.json()) or resp.json())
 
 

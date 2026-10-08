@@ -35,6 +35,20 @@ def meta_ads_enabled() -> bool:
     return bool(_token() and _account_id())
 
 
+def _auth_headers() -> dict[str, str]:
+    # Token no header, nunca na URL: o httpx loga a URL completa em INFO e a mensagem de
+    # `raise_for_status()` também a carrega (vazava `access_token=` no log do worker).
+    return {"Authorization": f"Bearer {_token()}"}
+
+
+def _next_sem_token(url: str | None) -> str | None:
+    """A Graph monta o `paging.next` com os parâmetros do request — inclusive `access_token`, se
+    ele tiver ido na query. Tira antes de seguir (o header já autentica)."""
+    if not url:
+        return None
+    return str(httpx.URL(url).copy_remove_param("access_token"))
+
+
 def parse_spend_rows(data: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """De insights.data → [{campaign_id, campaign_name, date, cost}]. Ignora malformados."""
     out: list[dict[str, Any]] = []
@@ -66,11 +80,10 @@ async def fetch_campaign_spend(date_from: str, date_to: str) -> list[dict[str, A
         "time_range": json.dumps({"since": date_from, "until": date_to}),
         "time_increment": "1",
         "limit": "500",
-        "access_token": _token(),
     }
     rows: list[dict[str, Any]] = []
     try:
-        async with httpx.AsyncClient(timeout=60.0) as client:
+        async with httpx.AsyncClient(timeout=60.0, headers=_auth_headers()) as client:
             next_url: str | None = url
             first = True
             for _ in range(100):  # guarda anti-loop de paginação
@@ -78,7 +91,7 @@ async def fetch_campaign_spend(date_from: str, date_to: str) -> list[dict[str, A
                 resp.raise_for_status()
                 payload = resp.json()
                 rows.extend(parse_spend_rows(payload.get("data") or []))
-                next_url = (payload.get("paging") or {}).get("next")
+                next_url = _next_sem_token((payload.get("paging") or {}).get("next"))
                 first = False
                 if not next_url:
                     break
@@ -119,11 +132,10 @@ async def fetch_ad_campaign_map(date_from: str, date_to: str) -> list[dict[str, 
         "fields": "ad_id,campaign_id,campaign_name",
         "time_range": json.dumps({"since": date_from, "until": date_to}),
         "limit": "500",
-        "access_token": _token(),
     }
     rows: list[dict[str, Any]] = []
     try:
-        async with httpx.AsyncClient(timeout=60.0) as client:
+        async with httpx.AsyncClient(timeout=60.0, headers=_auth_headers()) as client:
             next_url: str | None = url
             first = True
             for _ in range(100):
@@ -131,7 +143,7 @@ async def fetch_ad_campaign_map(date_from: str, date_to: str) -> list[dict[str, 
                 resp.raise_for_status()
                 payload = resp.json()
                 rows.extend(parse_ad_campaign_rows(payload.get("data") or []))
-                next_url = (payload.get("paging") or {}).get("next")
+                next_url = _next_sem_token((payload.get("paging") or {}).get("next"))
                 first = False
                 if not next_url:
                     break

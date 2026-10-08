@@ -36,3 +36,9 @@ def setup_logging(level: int = logging.INFO) -> None:
     else:
         handler.setFormatter(JsonFormatter())
     root.handlers = [handler]
+    # O httpx loga em INFO a URL COMPLETA de cada request ("HTTP Request: GET https://...").
+    # Com o token na query string (`access_token=` da Graph, em campaigns/meta_ads.py) o segredo
+    # ia parar no log do worker. Os clientes passaram a mandar o token no header, mas isto fica
+    # como segunda trava: só WARNING ou acima desses dois loggers chega ao log.
+    for nome in ("httpx", "httpcore"):
+        logging.getLogger(nome).setLevel(logging.WARNING)
