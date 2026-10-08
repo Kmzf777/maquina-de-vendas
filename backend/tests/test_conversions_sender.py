@@ -2,6 +2,8 @@
 from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock
 
+import pytest
+
 from app.conversions import sender as sender_mod
 from app.conversions.sender import BACKOFF, TEST_MODE_PAUSE, next_state, outside_window
 from app.conversions.types import SendResult
@@ -19,6 +21,13 @@ def _row(**kw):
 def test_outside_window_meta_pelo_evento():
     assert not outside_window(_row(), NOW)
     assert outside_window(_row(event_at=(NOW - timedelta(days=7, minutes=1)).isoformat()), NOW)
+
+
+def test_outside_window_meta_tem_margem_de_1_hora():
+    """Request lento/relógio diferente: um evento com 6 d 23 h 59 min chegaria à Meta já fora dos
+    7 dias e derrubaria o request. Margem de 1 h."""
+    assert not outside_window(_row(event_at=(NOW - timedelta(days=6, hours=22, minutes=59)).isoformat()), NOW)
+    assert outside_window(_row(event_at=(NOW - timedelta(days=6, hours=23, minutes=1)).isoformat()), NOW)
 
 
 def test_outside_window_google_pelo_clique():
@@ -54,20 +63,30 @@ def test_next_state_permanente_vira_erro_direto():
 
 def test_next_state_modo_teste_ok_nao_consome_a_linha():
     s = next_state(_row(attempts=1), SendResult(ok=True, response={"a": 1}), NOW, test_mode=True)
-    assert s["status"] == "pendente"
-    assert "attempts" not in s and "sent_at" not in s
+    assert "status" not in s and "attempts" not in s and "sent_at" not in s
     assert s["claimed_at"] is None and s["last_error"] is None
     assert s["last_response"] == {"modo_teste": True, "resposta": {"a": 1}}
     assert s["next_attempt_at"] == (NOW + TEST_MODE_PAUSE).isoformat()
     assert TEST_MODE_PAUSE == timedelta(hours=6)
 
 
-def test_next_state_modo_teste_falha_segue_regras_normais():
-    s = next_state(_row(), SendResult(ok=False, permanent=True, error="HTTP 400: bad"), NOW, test_mode=True)
-    assert s["status"] == "erro" and s["attempts"] == 1 and s["last_error"] == "HTTP 400: bad"
-    s = next_state(_row(), SendResult(ok=False, error="HTTP 500"), NOW, test_mode=True)
-    assert s["status"] == "pendente" and s["attempts"] == 1
-    assert s["next_attempt_at"] == (NOW + timedelta(seconds=BACKOFF[0])).isoformat()
+def test_next_state_modo_teste_falha_tambem_nao_consome_a_linha():
+    """Um erro de teste (ID de ação errado, payload ruim) é o que o teste quer mostrar — mas não
+    pode queimar a linha real: nem `erro`, nem tentativa gasta. Fica registrado em last_error."""
+    for res in (SendResult(ok=False, permanent=True, error="HTTP 400: bad", response={"e": 1}),
+                SendResult(ok=False, error="HTTP 500")):
+        s = next_state(_row(attempts=2), res, NOW, test_mode=True)
+        assert "status" not in s and "attempts" not in s, res
+        assert s["claimed_at"] is None and s["last_error"] == res.error
+        assert s["last_response"] == {"modo_teste": True, "resposta": res.response}
+        assert s["next_attempt_at"] == (NOW + TEST_MODE_PAUSE).isoformat()
+
+
+def test_next_state_erro_de_credencial_nao_gasta_tentativa():
+    s = next_state(_row(attempts=3), SendResult(ok=False, error="HTTP 401: x", auth_error=True), NOW)
+    assert "status" not in s and "attempts" not in s
+    assert s["claimed_at"] is None and s["last_error"] == "HTTP 401: x"
+    assert s["next_attempt_at"] == (NOW + timedelta(minutes=30)).isoformat()
 
 
 def test_run_sender_plataformas_desligadas_nao_toca_no_banco(monkeypatch):
@@ -80,11 +99,14 @@ def test_run_sender_plataformas_desligadas_nao_toca_no_banco(monkeypatch):
 
 
 class _Q:
-    """Query builder falso do supabase-py: qualquer filtro devolve a si mesmo."""
+    """Query builder falso do supabase-py: qualquer filtro devolve a si mesmo. O update de
+    claim (com `claimed_at` só) devolve a linha; `falhas_gravacao` faz o update final estourar."""
 
-    def __init__(self, data, log):
+    def __init__(self, data, log, falhas=None):
         self.data = data
         self.log = log
+        self.falhas = falhas if falhas is not None else [0]
+        self.final = False
 
     def __getattr__(self, n):
         def call(*a, **k):
@@ -94,17 +116,23 @@ class _Q:
 
     def update(self, u):
         self.log.append(("update", (u,)))
-        return _Q([{"id": "R1"}], self.log)
+        q = _Q([{"id": "R1"}], self.log, self.falhas)
+        q.final = set(u) != {"claimed_at"} or u["claimed_at"] is None
+        return q
 
     def execute(self):
+        if self.final and self.falhas[0] > 0:
+            self.falhas[0] -= 1
+            raise RuntimeError("supabase fora do ar")
         return MagicMock(data=self.data)
 
 
-def _fake_sb(rows, sales=None):
+def _fake_sb(rows, sales=None, falhas_gravacao=0):
     log = []
     sb = MagicMock()
+    falhas = [falhas_gravacao]
     tables = {"ad_conversions": rows, "leads": [{"id": "L1", "wa_id": "5534992009777"}], "sales": sales or []}
-    sb.table.side_effect = lambda n: _Q(tables[n], log)
+    sb.table.side_effect = lambda n: _Q(tables[n], log, falhas)
     return sb, log
 
 
@@ -126,10 +154,21 @@ def _env(monkeypatch, test_mode="false"):
     monkeypatch.setenv("META_CAPI_TEST_EVENT_CODE", "TEST1")
 
 
-def _google_env(monkeypatch):
+def _google_env(monkeypatch, stages=("lead", "qualified", "opportunity", "purchase")):
     monkeypatch.setenv("CONVERSIONS_GOOGLE_ENABLED", "true")
     for v in ("GOOGLE_ADS_CUSTOMER_ID", "GOOGLE_ADS_CLIENT_ID", "GOOGLE_ADS_CLIENT_SECRET", "GOOGLE_ADS_REFRESH_TOKEN"):
         monkeypatch.setenv(v, "x")
+    for st in ("lead", "qualified", "opportunity", "purchase"):
+        if st in stages:
+            monkeypatch.setenv(f"GOOGLE_ADS_CONVERSION_ACTION_{st.upper()}", "123")
+        else:
+            monkeypatch.delenv(f"GOOGLE_ADS_CONVERSION_ACTION_{st.upper()}", raising=False)
+
+
+@pytest.fixture(autouse=True)
+def _sem_espera(monkeypatch):
+    monkeypatch.setattr(sender_mod, "_sleep", lambda s: None)
+    monkeypatch.setattr(sender_mod, "_utcnow", lambda: NOW)
 
 
 def test_run_sender_plataforma_sem_config_nao_reivindica_linhas(monkeypatch, caplog):
@@ -236,6 +275,18 @@ def test_run_sender_modo_teste_limita_lote_e_mantem_pendente(monkeypatch):
     assert counts["enviado"] == 0 and counts["pendente"] == 1
     assert ("limit", (sender_mod.TEST_MODE_LIMIT,)) in log and sender_mod.TEST_MODE_LIMIT == 10
     assert _updates(log)[-1]["last_response"]["modo_teste"] is True
+    assert "status" not in _updates(log)[-1]
+
+
+def test_run_sender_modo_teste_erro_nao_vira_erro(monkeypatch):
+    _env(monkeypatch, test_mode="true")
+    sb, log = _fake_sb([_qrow()])
+    monkeypatch.setattr(sender_mod, "get_supabase", lambda: sb)
+    monkeypatch.setattr(sender_mod.meta, "send", lambda r, l: SendResult(ok=False, permanent=True, error="HTTP 400: x"))
+    counts = sender_mod.run_sender(now=NOW)
+    assert counts["erro"] == 0 and counts["pendente"] == 1
+    last = _updates(log)[-1]
+    assert "status" not in last and "attempts" not in last and last["last_error"] == "HTTP 400: x"
 
 
 def test_run_sender_venda_removida_vira_ignorado(monkeypatch):
@@ -250,3 +301,155 @@ def test_run_sender_venda_removida_vira_ignorado(monkeypatch):
     send.assert_not_called()
     assert _updates(log)[-1] == {"status": "ignorado", "claimed_at": None,
                                  "last_error": "venda removida antes do envio"}
+
+
+# ── C1: nunca reenviar quando o desfecho é desconhecido ─────────────────────
+
+def test_gravacao_final_tenta_de_novo(monkeypatch):
+    _env(monkeypatch)
+    sb, log = _fake_sb([_qrow()], falhas_gravacao=2)
+    monkeypatch.setattr(sender_mod, "get_supabase", lambda: sb)
+    monkeypatch.setattr(sender_mod.meta, "send", lambda r, l: SendResult(ok=True, response={}))
+    counts = sender_mod.run_sender(now=NOW)
+    assert counts["enviado"] == 1
+    assert [u.get("status") for u in _updates(log)][1:] == ["enviado"] * 3
+
+
+def test_gravacao_final_que_falha_3_vezes_loga_erro(monkeypatch, caplog):
+    _env(monkeypatch)
+    sb, log = _fake_sb([_qrow()], falhas_gravacao=3)
+    monkeypatch.setattr(sender_mod, "get_supabase", lambda: sb)
+    monkeypatch.setattr(sender_mod.meta, "send", lambda r, l: SendResult(ok=True, response={}))
+    with caplog.at_level("ERROR"):
+        sender_mod.run_sender(now=NOW)
+    assert len(_updates(log)) == 4  # claim + 3 tentativas
+    erros = [r for r in caplog.records if r.levelname == "ERROR" and "R1" in r.getMessage()]
+    assert erros
+
+
+def test_meta_retomada_de_claim_abandonado_nao_reenvia(monkeypatch):
+    """Claim velho = um worker morreu no meio do envio. A Meta não deduplica: o evento pode já
+    estar lá. Vira `erro` para conferência no Gerenciador de Eventos, sem chamar a Meta."""
+    _env(monkeypatch)
+    sb, log = _fake_sb([_qrow(claimed_at=(NOW - timedelta(minutes=11)).isoformat())])
+    monkeypatch.setattr(sender_mod, "get_supabase", lambda: sb)
+    send = MagicMock()
+    monkeypatch.setattr(sender_mod.meta, "send", send)
+    counts = sender_mod.run_sender(now=NOW)
+    send.assert_not_called()
+    assert counts["erro"] == 1
+    assert _updates(log)[-1] == {"status": "erro", "claimed_at": None,
+                                 "last_error": "envio interrompido — conferir no Gerenciador de Eventos antes de reenviar"}
+
+
+def test_google_retomada_de_claim_abandonado_reenvia(monkeypatch):
+    """O Google deduplica pelo transactionId: reenviar é seguro."""
+    _env(monkeypatch)
+    monkeypatch.setenv("CONVERSIONS_META_ENABLED", "false")
+    _google_env(monkeypatch)
+    sb, log = _fake_sb([_qrow(platform="google", claimed_at=(NOW - timedelta(minutes=11)).isoformat())])
+    monkeypatch.setattr(sender_mod, "get_supabase", lambda: sb)
+    monkeypatch.setattr(sender_mod.google, "send", lambda r, l: SendResult(ok=True, response={}))
+    assert sender_mod.run_sender(now=NOW)["enviado"] == 1
+
+
+def test_meta_sem_claim_anterior_envia_normal(monkeypatch):
+    _env(monkeypatch)
+    sb, log = _fake_sb([_qrow(claimed_at=None)])
+    monkeypatch.setattr(sender_mod, "get_supabase", lambda: sb)
+    monkeypatch.setattr(sender_mod.meta, "send", lambda r, l: SendResult(ok=True, response={}))
+    assert sender_mod.run_sender(now=NOW)["enviado"] == 1
+
+
+# ── I2: etapa do Google sem ação configurada; disjuntor de credencial ──────
+
+def test_google_so_reivindica_etapas_com_acao_configurada(monkeypatch, caplog):
+    _env(monkeypatch)
+    monkeypatch.setenv("CONVERSIONS_META_ENABLED", "false")
+    _google_env(monkeypatch, stages=("qualified", "purchase"))
+    rows = [_qrow(id="R1", platform="google", stage="lead"), _qrow(id="R2", platform="google", stage="qualified")]
+    sb, log = _fake_sb(rows)
+    monkeypatch.setattr(sender_mod, "get_supabase", lambda: sb)
+    enviados = []
+    monkeypatch.setattr(sender_mod.google, "send", lambda r, l: enviados.append(r["id"]) or SendResult(ok=True))
+    with caplog.at_level("WARNING"):
+        counts = sender_mod.run_sender(now=NOW)
+    # filtro na própria consulta (a linha sem ação não ocupa o lote) + trava linha a linha
+    assert ("or_", ("platform.neq.google,stage.in.(qualified,purchase)",)) in log
+    assert enviados == ["R2"] and counts["enviado"] == 1
+    claims = [a for n, a in log if n == "eq" and a[0] == "id"]
+    assert ("id", "R1") not in claims
+    avisos = [r for r in caplog.records if "GOOGLE_ADS_CONVERSION_ACTION_LEAD" in r.getMessage()]
+    assert len(avisos) == 1
+
+
+def test_google_sem_nenhuma_acao_e_pulado(monkeypatch):
+    _env(monkeypatch)
+    monkeypatch.setenv("CONVERSIONS_META_ENABLED", "false")
+    _google_env(monkeypatch, stages=())
+    called = MagicMock()
+    monkeypatch.setattr(sender_mod, "get_supabase", called)
+    assert sum(sender_mod.run_sender(now=NOW).values()) == 0
+    called.assert_not_called()
+
+
+def test_disjuntor_de_credencial_para_a_plataforma_no_tick(monkeypatch):
+    _env(monkeypatch)
+    rows = [_qrow(id="R1"), _qrow(id="R2"), _qrow(id="R3")]
+    sb, log = _fake_sb(rows)
+    monkeypatch.setattr(sender_mod, "get_supabase", lambda: sb)
+    chamadas = []
+
+    def send(r, l):
+        chamadas.append(r["id"])
+        return SendResult(ok=False, error="HTTP 401: token", auth_error=True)
+    monkeypatch.setattr(sender_mod.meta, "send", send)
+    counts = sender_mod.run_sender(now=NOW)
+    assert chamadas == ["R1"]
+    claims = [a for n, a in log if n == "eq" and a[0] == "id"]
+    assert ("id", "R2") not in claims and ("id", "R3") not in claims
+    last = _updates(log)[-1]
+    assert "attempts" not in last and "status" not in last and last["claimed_at"] is None
+    assert last["next_attempt_at"] == (NOW + timedelta(minutes=30)).isoformat()
+    assert counts["pendente"] == 1 and counts["erro"] == 0
+
+
+def test_disjuntor_nao_para_a_outra_plataforma(monkeypatch):
+    _env(monkeypatch)
+    _google_env(monkeypatch)
+    rows = [_qrow(id="R1"), _qrow(id="R2", platform="google"), _qrow(id="R3")]
+    sb, log = _fake_sb(rows)
+    monkeypatch.setattr(sender_mod, "get_supabase", lambda: sb)
+    monkeypatch.setattr(sender_mod.meta, "send", lambda r, l: SendResult(ok=False, error="x", auth_error=True))
+    monkeypatch.setattr(sender_mod.google, "send", lambda r, l: SendResult(ok=True))
+    counts = sender_mod.run_sender(now=NOW)
+    assert counts["enviado"] == 1 and counts["pendente"] == 1
+
+
+# ── I3: claim ───────────────────────────────────────────────────────────────
+
+def test_claim_filtra_next_attempt_at_com_a_hora_do_claim(monkeypatch):
+    """Outro worker pode ter reagendado a linha entre o select e o claim: o UPDATE confere de
+    novo `next_attempt_at <= agora` (agora = hora do claim, não do início do tick)."""
+    _env(monkeypatch)
+    claim_at = NOW + timedelta(minutes=3)
+    monkeypatch.setattr(sender_mod, "_utcnow", lambda: claim_at)
+    sb, log = _fake_sb([_qrow()])
+    monkeypatch.setattr(sender_mod, "get_supabase", lambda: sb)
+    monkeypatch.setattr(sender_mod.meta, "send", lambda r, l: SendResult(ok=True))
+    sender_mod.run_sender(now=NOW)
+    assert _updates(log)[0] == {"claimed_at": claim_at.isoformat()}
+    i = log.index(("update", ({"claimed_at": claim_at.isoformat()},)))
+    depois = log[i:i + 6]
+    assert ("lte", ("next_attempt_at", claim_at.isoformat())) in depois
+    assert ("eq", ("status", "pendente")) in depois
+
+
+def test_venda_cancelada_com_caixa_e_espaco_vira_ignorado(monkeypatch):
+    _env(monkeypatch)
+    sb, log = _fake_sb([_qrow(stage="purchase", sale_id="S1")], sales=[{"id": "S1", "status": " Cancelada "}])
+    monkeypatch.setattr(sender_mod, "get_supabase", lambda: sb)
+    send = MagicMock()
+    monkeypatch.setattr(sender_mod.meta, "send", send)
+    assert sender_mod.run_sender(now=NOW)["ignorado"] == 1
+    send.assert_not_called()
