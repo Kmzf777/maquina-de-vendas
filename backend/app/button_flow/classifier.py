@@ -320,21 +320,31 @@ def _extrair_classe(bruto: str | None) -> str | None:
     return achadas[0] if len(achadas) == 1 else None
 
 
+def cortesia_sem_parada(texto: str | None) -> bool:
+    """True quando o texto traz marca de cortesia/cliente (`_NUNCA_E_SAIR`) e NÃO traz
+    pedido explícito de parada. Pura, sem log.
+
+    É a prova de que um SAIR vindo do modelo deve ser rebaixado. Pública porque a
+    ValerIA v2 (`valeria_classifier`) usa a mesma rede — lá o rebaixamento é para RUIDO.
+    """
+    if pediu_para_parar(texto):
+        return False
+    normalizado = _alisar(texto)
+    return any(marca in normalizado for marca in _NUNCA_E_SAIR)
+
+
 def _proteger_saida(classe: str, texto: str) -> str:
     """Rede determinística sobre a única classe irreversível. Ver `_NUNCA_E_SAIR`.
 
     A cortesia MODULA o julgamento; ela nunca o inverte. Havendo pedido explícito de
     parada, `pediu_para_parar` vence e a rede nem chega a rodar — em `classificar` o
-    texto já teria saído como SAIR antes do LLM. A checagem continua aqui porque esta
-    função é a guarda da classe irreversível e precisa valer sozinha, para quem a
-    chamar de fora do caminho feliz.
+    texto já teria saído como SAIR antes do LLM. A checagem continua aqui (dentro de
+    `cortesia_sem_parada`) porque esta função é a guarda da classe irreversível e
+    precisa valer sozinha, para quem a chamar de fora do caminho feliz.
     """
     if classe != engine.CLASSE_SAIR:
         return classe
-    if pediu_para_parar(texto):
-        return classe
-    normalizado = _alisar(texto)
-    if any(marca in normalizado for marca in _NUNCA_E_SAIR):
+    if cortesia_sem_parada(texto):
         logger.warning(
             "[BUTTON FLOW] classificador disse SAIR sem pedido de parada em %r — "
             "rebaixando para ADIAR (casos Rafael Monteiro e Verde Vale)", texto[:120],
