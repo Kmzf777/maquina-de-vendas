@@ -455,6 +455,25 @@ class _Saida:
             return
         await self.texto(texto)
 
+    async def montar_mensagem_2(self, ramo: str | None, onde: str) -> str | None:
+        """Mensagem 2 do ramo, já resolvida. None = setor SEM PREÇO NENHUM (repasse).
+
+        "" = há preço mas a mensagem 2 não sai (SKU base faltando, nenhuma linha de
+        tabela): quem chama pula a mensagem 2 e segue com o resto.
+        """
+        precos = await self.catalogo.precos(ramo)
+        if not precos:
+            return None
+        texto = v1._resolver(_mensagem_2(ramo, precos, self.conteudo.textos) or "", {})
+        if not texto:
+            logger.warning("%s %s com preço mas sem mensagem 2 — segue sem ela", _LOG, onde)
+        return texto
+
+    async def enviar_mensagem_2(self, texto: str | None) -> None:
+        # `viu` guarda "tabela" nos dois ramos; a nota escreve "como funciona" no PL.
+        if texto and await self.texto(texto):
+            self.viu.append("tabela")
+
     async def vitrine(self, decisao: DecisaoV2) -> bool:
         """Mensagens 1-3 da vitrine conforme `decisao.vitrine`. False = sem tabela.
 
@@ -475,19 +494,14 @@ class _Saida:
 
         mensagem_2 = None
         if modo != "acoes":
-            precos = await self.catalogo.precos(ramo)
-            if not precos:
+            mensagem_2 = await self.montar_mensagem_2(ramo, no.id)
+            if mensagem_2 is None:
                 return False
-            mensagem_2 = v1._resolver(_mensagem_2(ramo, precos, self.conteudo.textos) or "", {})
-            if not mensagem_2:
-                logger.warning("%s %s com preço mas sem mensagem 2 — vitrine sem ela",
-                               _LOG, no.id)
 
         foto_do_fallback = None
         if modo == "completa":
             foto_do_fallback = await self._carrossel(no, mensagem)
-        if mensagem_2 and await self.texto(mensagem_2):
-            self.viu.append("tabela")
+        await self.enviar_mensagem_2(mensagem_2)
         if foto_do_fallback and await self.botoes(v1._resolver(mensagem.corpo, {}), botoes,
                                                   image_url=foto_do_fallback):
             self.viu.append("vitrine")
@@ -586,6 +600,11 @@ async def _classificar(evento, *, no: str | None, estado, conteudo: _Conteudo,
         return evento
     botoes = motor_v1._botoes_declarados(no, conteudo.nos, conteudo.terminais)
     if botoes is None or motor_v1._encerrado(no, conteudo.nos, conteudo.terminais):
+        return evento
+
+    if motor.primeira_tela(evento.conteudo) in motor.VITRINES:
+        # Mensagem pronta do anúncio no meio do fluxo: o motor reabre a vitrine
+        # pelo texto (regra 5b), sem etiqueta — não gasta LLM.
         return evento
 
     ramo = _ramo(estado, no)
@@ -705,12 +724,21 @@ async def _aplicar_efeitos(decisao: DecisaoV2, *, lead: dict, conversation_id,
 async def _enviar(decisao: DecisaoV2, saida: _Saida, *, estado, no: str | None) -> DecisaoV2:
     """FAQ, vitrine ou a tela do nó/terminal. Devolve a decisão EFETIVA do turno.
 
-    A efetiva só difere da do motor quando a vitrine não tem tabela: o turno vira o
-    repasse do ramo (spec §6.3).
+    A efetiva só difere da do motor quando a vitrine (ou o `tabela_antes`) não tem
+    preço nenhum: o turno vira o repasse do ramo (spec §6.3).
     """
     if decisao.faq:
         ramo = decisao.memoria.get("ramo") or _ramo(estado, no)
         await saida.faq(ramo, decisao.faq)
+
+    if getattr(decisao, "tabela_antes", False):
+        # Preço no meio da qualificação: mensagem 2 do ramo e a MESMA tela de novo,
+        # sem carrossel nem botões de ação (o nó não muda).
+        ramo = _ramo(estado, no) or r2.RAMO_DO_NO.get(decisao.proximo_no)
+        mensagem_2 = await saida.montar_mensagem_2(ramo, decisao.proximo_no)
+        if mensagem_2 is None:
+            return await _repassar_sem_tabela(decisao, saida, ramo=ramo)
+        await saida.enviar_mensagem_2(mensagem_2)
 
     if decisao.proximo_no in motor.VITRINES and decisao.proximo_no in saida.conteudo.nos:
         if await saida.vitrine(decisao):
@@ -724,10 +752,11 @@ async def _enviar(decisao: DecisaoV2, saida: _Saida, *, estado, no: str | None) 
     return decisao
 
 
-async def _repassar_sem_tabela(decisao: DecisaoV2, saida: _Saida) -> DecisaoV2:
+async def _repassar_sem_tabela(decisao: DecisaoV2, saida: _Saida, *,
+                               ramo: str | None = None) -> DecisaoV2:
     """Sem preço nenhum: UMA mensagem (o aviso já diz que o João foi chamado), o handoff
     do ramo e o cartão do vendedor — sem o corpo do terminal, que repetiria o aviso."""
-    ramo = r2.RAMO_DO_NO.get(decisao.proximo_no)
+    ramo = ramo or r2.RAMO_DO_NO.get(decisao.proximo_no)
     destino = r2.HANDOFF_DO_RAMO.get(ramo or "", motor.ID_HUMANO)
     logger.error("%s sem tabela para %s — repasse para %s conv=%s", _LOG,
                  decisao.proximo_no, destino, saida.conversation.get("id"))

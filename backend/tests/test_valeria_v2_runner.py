@@ -425,15 +425,90 @@ async def test_classificador_recebe_cards_faqs_do_ramo_e_ultima_mensagem(turno):
 
 
 @pytest.mark.asyncio
-async def test_faq_de_preco_reenvia_tabela_e_acoes(turno):
-    turno.conversa["flow_state"] = _no(None, "QA2", ramo="atacado")
+async def test_preco_no_qa2_manda_tabela_e_repete_o_qa2(turno):
+    """`tabela_antes`: a tabela e a MESMA pergunta; o lead não volta à vitrine."""
+    turno.conversa["flow_state"] = _no(None, "QA2", ramo="atacado",
+                                       respostas={"QA1": "cafeteria"})
     turno.classificar.return_value = Classificacao("FAQ", faq_id="preco")
     estado = await turno("qual o valor do quilo?")
     p = turno.provedor
     assert p.tipos() == ["texto", "botoes"]
     assert p.chamadas[0][1].startswith("tabela atacado")
-    assert p.chamadas[1][1] == r2.CORPO_ACOES
-    assert estado["node"] == "VA"
+    assert p.chamadas[1][1] == r2.NOS["QA2"].corpo
+    assert [b[0] for b in p.chamadas[1][2]] == ["ate30", "ate100", "mais100"]
+    assert p.chamadas[1][3] is None
+    assert estado["node"] == "QA2" and estado["viu"] == ["tabela"]
+    assert estado["ruidos"] == 0 and estado["nudges"] == 0
+    assert not any(e.handoff for e in turno.registro["efeitos"])
+
+
+@pytest.mark.asyncio
+async def test_preco_no_qp2_manda_como_funciona_e_repete_o_qp2(turno):
+    turno.conversa["flow_state"] = _no(None, "QP2", ramo="private_label",
+                                       respostas={"QP1": "tenho_marca"})
+    turno.classificar.return_value = Classificacao("FAQ", faq_id="preco")
+    estado = await turno("quanto fica?")
+    p = turno.provedor
+    assert p.tipos() == ["texto", "botoes"]
+    assert p.chamadas[0][1].startswith("como funciona a marca própria")
+    assert p.chamadas[1][1] == r2.NOS["QP2"].corpo
+    assert estado["node"] == "QP2" and estado["viu"] == ["tabela"]
+    nota = v2.montar_nota(estado, r2.NOS, textos=[], motivo="x")
+    assert "Viu: como funciona" in nota
+
+
+@pytest.mark.asyncio
+async def test_preco_na_qualificacao_sem_catalogo_repassa(turno):
+    turno.catalogo["linhas"] = []
+    turno.conversa["flow_state"] = _no(None, "QA1", ramo="atacado")
+    turno.classificar.return_value = Classificacao("FAQ", faq_id="preco")
+    estado = await turno("qual o preço?")
+    assert turno.provedor.tipos() == ["texto", "cartao"]
+    assert turno.provedor.chamadas[0][1] == v2.MSG_TABELA_INDISPONIVEL
+    assert estado["node"] == "T_HANDOFF"
+    assert any(e.handoff for e in turno.registro["efeitos"])
+
+
+@pytest.mark.asyncio
+async def test_preco_na_qualificacao_sem_mensagem_2_manda_so_a_tela(turno):
+    turno.catalogo["linhas"] = [p for p in catalogo_producao()
+                                if p["name"] != "Café Canastra 250g — c/ embalagem Canastra"]
+    turno.conversa["flow_state"] = _no(None, "QP1", ramo="private_label")
+    turno.classificar.return_value = Classificacao("FAQ", faq_id="preco")
+    estado = await turno("e o valor?")
+    assert turno.provedor.tipos() == ["botoes"]
+    assert turno.provedor.chamadas[0][1] == r2.NOS["QP1"].corpo
+    assert estado["node"] == "QP1" and "viu" not in estado
+
+
+@pytest.mark.asyncio
+async def test_preco_sem_ramo_manda_o_n0_com_o_corpo_de_preco(turno):
+    turno.conversa["flow_state"] = _no(None, "N0")
+    turno.classificar.return_value = Classificacao("FAQ", faq_id="preco")
+    estado = await turno("quanto custa?")
+    assert turno.provedor.tipos() == ["lista"]
+    assert turno.provedor.chamadas[0][1] == r2.CORPO_N0_PRECO
+    assert len(turno.provedor.chamadas[0][2]) == 4
+    assert estado["node"] == "N0"
+
+
+@pytest.mark.asyncio
+async def test_card_tocado_no_qa1_vale(turno):
+    turno.conversa["flow_state"] = _no(None, "QA1", ramo="atacado")
+    estado = await turno("Quero esse", payload="card:suave", titulo="Quero esse")
+    turno.classificar.assert_not_called()
+    assert turno.provedor.tipos() == ["botoes"]
+    assert turno.provedor.chamadas[0][1] == r2.NOS["QA1"].corpo
+    assert estado["node"] == "QA1" and estado["interesse"] == "suave"
+
+
+@pytest.mark.asyncio
+async def test_mensagem_pronta_no_meio_do_fluxo_reabre_a_vitrine_sem_llm(turno):
+    turno.conversa["flow_state"] = _no(None, "QA1", ramo="atacado")
+    estado = await turno(PRONTA_PL)
+    turno.classificar.assert_not_called()
+    assert turno.provedor.tipos() == ["carrossel", "texto", "botoes"]
+    assert estado["node"] == "VP" and estado["ramo"] == "private_label"
 
 
 @pytest.mark.asyncio
