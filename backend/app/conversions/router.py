@@ -1,12 +1,19 @@
-"""API da aba "Conversões enviadas" do /trafego. Proteção admin fica na proxy do Next
-(frontend/src/app/api/traffic/conversoes), como nas outras leituras do /trafego."""
+"""API da aba "Conversões enviadas" do /trafego.
+
+Só admin: exige o JWT de admin aqui (`exigir_admin`, o mesmo das rotas de atribuição do
+/trafego) e a proxy do Next (`frontend/src/app/api/traffic/conversoes`) o repassa pelo
+`adminProxy`. O backend é alcançável em api.canastrainteligencia.com, e a lista expõe nome de
+lead e valor de venda — a proteção não pode ficar só na proxy.
+"""
 from collections import Counter
 from datetime import datetime, timedelta, timezone
 from typing import Any
 from zoneinfo import ZoneInfo
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 
+from app.campaigns.traffic_router import exigir_admin
+from app.conversions.sweep import _paged
 from app.db.supabase import get_supabase
 
 router = APIRouter(prefix="/api/conversions", tags=["conversions"])
@@ -33,22 +40,30 @@ def _range(period: str, date_from: str | None, date_to: str | None) -> tuple[str
 
 
 @router.get("/ads")
-async def conversions_ads(period: str = "30d", date_from: str | None = None, date_to: str | None = None,
-                          platform: str | None = None, stage: str | None = None, status: str | None = None):
+def conversions_ads(period: str = "30d", date_from: str | None = None, date_to: str | None = None,
+                    platform: str | None = None, stage: str | None = None, status: str | None = None,
+                    _admin: str = Depends(exigir_admin)):
     ini, fim = _range(period, date_from, date_to)
-    q = get_supabase().table("ad_conversions").select(
+    sb = get_supabase()
+
+    def filtrar(q):
+        if ini:
+            q = q.gte("event_at", ini)
+        if fim:
+            q = q.lt("event_at", fim)
+        if platform:
+            q = q.eq("platform", platform)
+        if stage:
+            q = q.eq("stage", stage)
+        if status:
+            q = q.eq("status", status)
+        return q
+
+    rows = filtrar(sb.table("ad_conversions").select(
         "id,lead_id,platform,stage,status,event_at,value,currency,segment,campaign_name,"
         "click_id_type,attempts,last_error,sent_at,lead:leads(name)"
-    )
-    if ini:
-        q = q.gte("event_at", ini)
-    if fim:
-        q = q.lt("event_at", fim)
-    if platform:
-        q = q.eq("platform", platform)
-    if stage:
-        q = q.eq("stage", stage)
-    if status:
-        q = q.eq("status", status)
-    rows = q.order("event_at", desc=True).limit(_LIMIT).execute().data or []
-    return {"rows": rows, "counts": summarize(rows), "truncated": len(rows) == _LIMIT}
+    )).order("event_at", desc=True).limit(_LIMIT).execute().data or []
+    # Contadores sobre TODAS as linhas do filtro, não só as 1000 da lista: select leve paginado
+    # (ordem estável por id, senão o Postgres pode repetir/pular linhas entre páginas).
+    todas = _paged(lambda: filtrar(sb.table("ad_conversions").select("stage,platform,status")).order("id"))
+    return {"rows": rows, "counts": summarize(todas), "truncated": len(rows) == _LIMIT}
