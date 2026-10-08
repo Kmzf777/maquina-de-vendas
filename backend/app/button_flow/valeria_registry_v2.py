@@ -74,6 +74,12 @@ TETO_RUIDO = 2
 # Corpo da 3ª mensagem da vitrine, a dos botões de ação (spec §6.1 e §6.2).
 CORPO_ACOES = "como você quer seguir?"
 
+# Corpo da lista do N0 quando o lead pergunta PREÇO antes de escolher o ramo:
+# mesmas linhas do N0, mas sem repetir a saudação idêntica (o lead acabou de
+# receber ela). COMPOSTO pelo controlador em 08/10/2026; sem número (§4).
+CORPO_N0_PRECO = ("o preço depende do seu caso 🙂 me diz qual é o seu que eu "
+                  "já te mando a tabela certinha 👇")
+
 
 # ─── Os cards do carrossel (spec §6.1 e §6.2) ────────────────────────────────
 #
@@ -493,7 +499,8 @@ TERMINAIS: dict[str, Terminal] = {
         # Sem preço nem composição: pendentes com o João (§4).
         # Sem emoji: regra de voz do handoff (auditoria 08/07, ver T_HANDOFF na v1).
         corpo="perfeito, já chamei o João Brás aqui pra combinar o kit com você",
-        tags=(TAG_QUALIFICADO, TAG_KIT),
+        # Só a tag do kit (§5.2): pedir amostra não é ser "Qualificado".
+        tags=(TAG_KIT,),
         silenciar_ia=True,
         handoff=True,
     ),

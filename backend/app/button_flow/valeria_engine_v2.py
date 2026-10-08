@@ -57,6 +57,17 @@ class DecisaoV2(v1.Decisao):
     vitrine: str = "nenhuma"
     # Texto da "Origem do repasse" na nota ao vendedor (spec §5.3).
     repasse_motivo: str | None = None
+    # Pergunta de preço NO MEIO da qualificação (QA1, QA2, QP1, QP2). O nó NÃO
+    # muda (`proximo_no == no_atual`, `vitrine == "nenhuma"`): voltar à vitrine
+    # tiraria o lead de `NOS_COM_INTENCAO` e do repasse automático. O runner
+    # renderiza, nesta ordem:
+    #   1. a MENSAGEM 2 da vitrine do ramo (`flow_state.ramo`): atacado →
+    #      `tabela_atacado(precos, regras)`; PL → `como_funciona_pl(precos, modelo)`
+    #      — SEM o carrossel e SEM a 3ª mensagem (botões de ação);
+    #   2. a tela do nó atual, exatamente como vem em `mensagem` (corpo + botoes).
+    # Se a mensagem 2 não puder ser montada (catálogo vazio), o runner aplica o
+    # mesmo desvio da vitrine (aviso + handoff do ramo).
+    tabela_antes: bool = False
 
 
 ID_HUMANO = v1.ID_HUMANO
@@ -66,6 +77,8 @@ ID_HANDOFF_PADRAO = r.HANDOFF_DO_RAMO["atacado"]
 VITRINES = frozenset(r.VITRINE_DO_RAMO.values())
 MOTIVO_RUIDO = "sem resposta a botões (2 mensagens não entendidas)"
 _PREFIXO_CARD = "card:"
+# Nós da qualificação: preço perguntado aqui não tira o lead do lugar.
+_NOS_QUALIFICACAO = frozenset({"QA1", "QA2", "QP1", "QP2"})
 _LIMITE_TEXTO_MOTIVO = 200
 
 
@@ -133,6 +146,16 @@ def decidir(
     if v1._encerrado(no_atual, nos, terminais):
         return DecisaoV2(proximo_no=no_atual, ignorar=True)
 
+    # 5b. Mensagem pronta do anúncio reenviada no meio do fluxo (lead que tocou o
+    # anúncio de novo): reabre aquela vitrine inteira, em vez de virar RUIDO.
+    # Só em NÓ — terminal (T_ADIAR) segue a regra dele.
+    conteudo = _conteudo(evento)
+    if conteudo is not None and no_atual in nos:
+        destino = primeira_tela(conteudo)
+        if destino in VITRINES:
+            return ctx.ir_para(destino, vitrine="completa",
+                               memoria={"ramo": r.RAMO_DO_NO[destino], "ruidos": 0})
+
     # 6. Clique.
     if isinstance(evento, Clique):
         return ctx.clique(evento, botoes)
@@ -142,7 +165,7 @@ def decidir(
         return ctx.classificado(evento, botoes)
 
     # 8. Texto puro (classificador não rodou) = RUIDO. No VO o texto é a pergunta.
-    conteudo = _conteudo(evento) or ""
+    conteudo = conteudo or ""
     if no_atual == "VO":
         return ctx.handoff(f"PERGUNTA: {conteudo[:_LIMITE_TEXTO_MOTIVO]}")
     return ctx.ruido(botoes)
@@ -235,12 +258,21 @@ class _Ctx:
         """Reenvia a tabela + ações da vitrine do ramo (spec §7.3 e VK)."""
         vitrine = r.VITRINE_DO_RAMO.get(self.ramo or "")
         if vitrine is None:
-            return self.ir_para(r.NO_ENTRADA, **extra)
+            return self.n0_preco(**extra)
         no = self.nos.get(vitrine)
         if no is None:
             return self.ir_para(ID_HUMANO, **extra)
         return DecisaoV2(proximo_no=vitrine, vitrine="tabela",
                          mensagem=Mensagem(corpo=r.CORPO_ACOES, botoes=no.botoes), **extra)
+
+    def n0_preco(self, **extra) -> DecisaoV2:
+        """Preço antes do ramo: a lista do N0 com `CORPO_N0_PRECO`, não a saudação
+        idêntica que o lead acabou de receber."""
+        no = self.nos.get(r.NO_ENTRADA)
+        if no is None:
+            return self.ir_para(ID_HUMANO, **extra)
+        return DecisaoV2(proximo_no=r.NO_ENTRADA,
+                         mensagem=Mensagem(corpo=r.CORPO_N0_PRECO, botoes=no.botoes), **extra)
 
     def handoff(self, motivo: str, *, sem_vendedor: str = ID_HANDOFF_PADRAO,
                 **extra) -> DecisaoV2:
@@ -273,12 +305,22 @@ class _Ctx:
         return self._seguir(botao, escrito)
 
     def _casar_card(self, payload: str | None) -> reg1.Card | None:
+        """Card do toque `card:<id>`: do nó atual ou, de qualquer outro NÓ do ramo,
+        da vitrine do ramo (o carrossel continua na tela do lead depois que ele
+        avançou, e "Quero esse" é intenção clara — não RUIDO). Card de outro ramo
+        não casa."""
         if not payload or not payload.startswith(_PREFIXO_CARD):
             return None
-        no = self.nos.get(self.no_atual)
-        cards = getattr(no, "cards", ()) if no is not None else ()
         card_id = payload[len(_PREFIXO_CARD):]
-        return next((c for c in cards if c.id == card_id), None)
+        candidatos = [self.no_atual]
+        if self.no_atual in self.nos:
+            candidatos.append(r.VITRINE_DO_RAMO.get(self.ramo or ""))
+        for no_id in candidatos:
+            no = self.nos.get(no_id) if no_id else None
+            for card in getattr(no, "cards", ()) if no is not None else ():
+                if card.id == card_id:
+                    return card
+        return None
 
     def _seguir(self, botao: reg1.Botao, escrito: str | None = None) -> DecisaoV2:
         """Rota de um botão casado, pelo `destino` declarado.
@@ -380,13 +422,23 @@ class _Ctx:
     def _preco(self, conteudo: str) -> DecisaoV2:
         """Pergunta de preço: tabela do ramo; antes do ramo, a tela de ramo.
 
+        Na qualificação (QA1/QA2/QP1/QP2) a tabela sai ANTES da tela atual e o
+        nó não volta à vitrine; nos outros nós do ramo, vai à vitrine (tabela +
+        ações), como o "Ver preços de novo" do VK.
+
         Ramo SEM vitrine (consumo, exportação) não volta ao N0 — isso apagaria o
         caminho já feito; vai ao vendedor do ramo, como uma pergunta.
         """
         ramo = self.ramo
         if ramo is None:
-            return self.ir_para(r.NO_ENTRADA, memoria={"ruidos": 0})
+            return self.n0_preco(memoria={"ruidos": 0})
         if ramo in r.VITRINE_DO_RAMO:
+            no = self.nos.get(self.no_atual)
+            if self.no_atual in _NOS_QUALIFICACAO and no is not None:
+                # Tabela e a MESMA pergunta de novo; o nó fica (ver `tabela_antes`).
+                return DecisaoV2(proximo_no=self.no_atual, tabela_antes=True,
+                                 mensagem=Mensagem(corpo=no.corpo, botoes=no.botoes),
+                                 memoria={"ruidos": 0})
             return self.tabela(memoria={"ruidos": 0})
         return self.handoff(f"PERGUNTA: {conteudo[:_LIMITE_TEXTO_MOTIVO]}")
 

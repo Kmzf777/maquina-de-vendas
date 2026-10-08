@@ -230,7 +230,8 @@ def test_terminais_reusam_os_da_v1_e_t_kit():
         assert r.TERMINAIS[tid] is v1.TERMINAIS[tid], tid
     kit = r.TERMINAIS["T_KIT"]
     assert kit.vendedor == v1.VENDEDOR_ATACADO and kit.handoff and kit.silenciar_ia
-    assert kit.tags == (v1.TAG_QUALIFICADO, "Botões: Kit amostra") and r.TAG_KIT == "Botões: Kit amostra"
+    # Spec §5.2: T_KIT leva só a tag do kit (quem pede amostra não é "Qualificado").
+    assert kit.tags == ("Botões: Kit amostra",) and r.TAG_KIT == "Botões: Kit amostra"
     assert "R$" not in kit.corpo
     assert kit.corpo == "perfeito, já chamei o João Brás aqui pra combinar o kit com você"
 
@@ -346,3 +347,9 @@ def test_textos_editaveis_reservados():
         {r.CHAVE_NUDGE, v1.CHAVE_ROTULO_LISTA, r.CHAVE_REGRAS_ATACADO, r.CHAVE_COMO_FUNCIONA_PL} | faqs)
     assert not (r.CHAVES_TEXTO & set(r.NOS)) and not (r.CHAVES_TEXTO & set(r.TERMINAIS))
     assert r.CORPO_ACOES == "como você quer seguir?"
+
+
+def test_corpo_n0_preco_e_texto_proprio_sem_numero():
+    assert r.CORPO_N0_PRECO == ("o preço depende do seu caso 🙂 me diz qual é o seu que eu "
+                                "já te mando a tabela certinha 👇")
+    assert r.CORPO_N0_PRECO != r.NOS["N0"].corpo and "R$" not in r.CORPO_N0_PRECO

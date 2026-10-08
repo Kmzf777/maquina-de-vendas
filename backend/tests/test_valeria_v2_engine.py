@@ -375,19 +375,47 @@ def test_classificado_botao_de_outra_tela_e_ruido():
     assert d.marcar_nudge is True
 
 
-def test_classificado_preco_reenvia_tabela():
-    d = _decidir("QA1", _tc("FAQ", "qual o valor do quilo?", faq_id="preco"),
-                 _est("QA1", ruidos=1))
-    assert d.proximo_no == "VA"
+@pytest.mark.parametrize("no,ramo", [("QA1", "atacado"), ("QA2", "atacado"),
+                                      ("QP1", "private_label"), ("QP2", "private_label")])
+def test_classificado_preco_na_qualificacao_manda_tabela_e_fica_no_no(no, ramo):
+    """Preço no meio da qualificação: tabela do ramo + a MESMA tela; o nó não volta
+    à vitrine (senão o lead perde a elegibilidade do repasse automático)."""
+    d = _decidir(no, _tc("FAQ", "qual o valor do quilo?", faq_id="preco"),
+                 _est(no, ramo=ramo, ruidos=1))
+    assert d.proximo_no == no
+    assert d.tabela_antes is True
+    assert d.vitrine == "nenhuma"
+    assert d.faq is None
+    assert d.mensagem.corpo == NOS[no].corpo
+    assert d.mensagem.botoes == NOS[no].botoes
+    assert d.memoria == {"ruidos": 0}
+    assert d.efeitos.handoff is False
+
+
+@pytest.mark.parametrize("no,vitrine", [("VD_A", "VA"), ("PL_ABAIXO", "VP"), ("VA", "VA")])
+def test_classificado_preco_fora_da_qualificacao_reenvia_tabela_da_vitrine(no, vitrine):
+    ramo = r.RAMO_DO_NO[vitrine]
+    d = _decidir(no, _tc("FAQ", "quanto é?", faq_id="preco"), _est(no, ramo=ramo, ruidos=1))
+    assert d.proximo_no == vitrine
     assert d.vitrine == "tabela"
+    assert d.tabela_antes is False
     assert d.memoria["ruidos"] == 0
 
 
-def test_classificado_preco_sem_ramo_vai_para_n0():
+def test_classificado_preco_sem_ramo_vai_para_n0_com_corpo_de_preco():
+    """Não reenvia a saudação idêntica: explica que o preço depende do caso."""
     d = _decidir("N0", _tc("FAQ", "quanto custa?", faq_id="preco"), _est("N0", ramo=None))
     assert d.proximo_no == "N0"
     assert d.vitrine == "nenhuma"
-    assert d.mensagem.corpo == NOS["N0"].corpo
+    assert d.mensagem.corpo == r.CORPO_N0_PRECO
+    assert d.mensagem.botoes == NOS["N0"].botoes
+    assert d.memoria == {"ruidos": 0}
+
+
+def test_vo_preco_sem_ramo_usa_corpo_de_preco_do_n0():
+    d = _decidir("VO", _tc("FAQ", "quanto custa?", faq_id="preco"), _est("VO", ramo=None))
+    assert d.proximo_no == "N0"
+    assert d.mensagem.corpo == r.CORPO_N0_PRECO
 
 
 def test_faq_em_qa1_responde_e_reapresenta_qa1():
@@ -636,3 +664,64 @@ def test_botao_classificado_handoff_especial_usa_o_texto_no_motivo():
 def test_clique_que_repassa_continua_com_rotulo_no_motivo():
     d = _decidir("QA2", _clique("mais100"), _est("QA2"))
     assert d.repasse_motivo == 'clicou "Mais de 100 kg"'
+
+
+# ── Card tocado fora da vitrine (carrossel antigo ainda na tela do lead) ───
+@pytest.mark.parametrize("no", ["VD_A", "VK", "QA1", "QA2", "VO"])
+def test_card_atacado_tocado_em_outro_no_do_ramo_vale(no):
+    d = _decidir(no, _clique("card:suave", "Quero esse"), _est(no, ramo="atacado", ruidos=1))
+    assert d.proximo_no == "QA1"
+    assert d.memoria == {"interesse": "suave", "ruidos": 0}
+    assert d.criterios == {"purchase_intent": "clear"}
+    assert d.marcar_nudge is False
+
+
+@pytest.mark.parametrize("no", ["VD_P", "VK", "QP1", "QP2", "PL_ABAIXO", "VO"])
+def test_card_pl_tocado_em_outro_no_do_ramo_vale(no):
+    d = _decidir(no, _clique("card:embalagem_canastra"), _est(no, ramo="private_label"))
+    assert d.proximo_no == "QP1"
+    assert d.memoria["interesse"] == "embalagem_canastra"
+    assert d.criterios == {}
+
+
+def test_card_de_outro_ramo_e_ruido():
+    d = _decidir("QP1", _clique("card:suave"), _est("QP1", ramo="private_label"))
+    assert d.proximo_no == "QP1"
+    assert d.marcar_nudge is True
+
+
+def test_card_sem_ramo_e_ruido():
+    d = _decidir("VK", _clique("card:suave"), _est("VK", ramo=None))
+    assert d.proximo_no == "VK"
+    assert d.marcar_nudge is True
+
+
+def test_card_inexistente_em_outro_no_e_ruido():
+    d = _decidir("QA1", _clique("card:nao_existe"), _est("QA1"))
+    assert d.proximo_no == "QA1"
+    assert d.marcar_nudge is True
+
+
+# ── Mensagem pronta do anúncio reenviada no meio do fluxo ──────────────────
+@pytest.mark.parametrize("evento", [
+    Texto(MSG_PL),
+    TextoClassificado(conteudo=MSG_PL_2, classe="RUIDO"),
+    TextoClassificado(conteudo=MSG_PL_2 + "!", classe="PERGUNTA"),
+])
+@pytest.mark.parametrize("no", ["N0", "QA1", "VD_A", "VO", "C1", "E2"])
+def test_mensagem_pronta_no_meio_do_fluxo_reabre_a_vitrine(evento, no):
+    d = _decidir(no, evento, _est(no, ramo="atacado", ruidos=1))
+    assert d.proximo_no == "VP"
+    assert d.vitrine == "completa"
+    assert d.memoria == {"ramo": "private_label", "ruidos": 0}
+    assert d.marcar_nudge is False
+
+
+def test_mensagem_pronta_em_t_adiar_nao_reabre_vitrine():
+    d = _decidir("T_ADIAR", Texto(MSG_ATACADO), _est("T_ADIAR"))
+    assert d.proximo_no != "VA"
+
+
+def test_mensagem_pronta_em_terminal_encerrado_ignora():
+    d = _decidir("T_HANDOFF", Texto(MSG_ATACADO), _est("T_HANDOFF"))
+    assert d.ignorar is True
