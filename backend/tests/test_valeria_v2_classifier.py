@@ -261,3 +261,46 @@ def test_recuperacao_ainda_expoe_os_helpers_antigos():
     assert callable(classifier._budget_estourado)
     assert callable(classifier._contabilizar)
     assert callable(classifier.generate)
+
+
+# ── SAIR: a única etiqueta irreversível (T_OPTOUT) ──────────────────────────
+# Reaproveita a rede da Recuperação (`classifier.pediu_para_parar` e
+# `classifier._proteger_saida`): pedido explícito de parada não depende do modelo, e
+# cortesia ("obrigado", "já compro com o João") nunca vira opt-out por palpite do LLM.
+@pytest.mark.parametrize("texto", [
+    "obrigado, já compro com o João",
+    "Obrigado! acabamos de receber reposição",
+])
+async def test_sair_do_modelo_com_cortesia_vira_ruido(texto):
+    r, m_gen = await _cls('{"classe":"SAIR"}', texto=texto)
+    assert r == vc.Classificacao("RUIDO")
+    assert m_gen.await_count == 1
+
+
+@pytest.mark.parametrize("texto", ["me tira da lista", "para de me mandar isso"])
+async def test_pedido_explicito_de_parada_e_sair_sem_modelo_mesmo_com_provedor_fora(texto):
+    r, m_gen = await _cls(RuntimeError("503 UNAVAILABLE"), texto=texto)
+    assert r == vc.Classificacao("SAIR")
+    assert m_gen.await_count == 0
+
+
+async def test_pedido_explicito_de_parada_e_sair_com_budget_estourado(monkeypatch):
+    monkeypatch.setattr("app.agent.budget_guard.is_exceeded", lambda: True)
+    r, m_gen = await _cls('{"classe":"RUIDO"}', texto="me tira da lista")
+    assert r == vc.Classificacao("SAIR")
+    assert m_gen.await_count == 0
+
+
+async def test_sair_normal_continua_sair():
+    r, _ = await _cls('{"classe":"SAIR"}', texto="não quero mais receber")
+    assert r == vc.Classificacao("SAIR")
+    # Sem pedido determinístico: a decisão é do modelo e a rede não a inverte.
+    r, m_gen = await _cls('{"classe":"SAIR"}', texto="não quero mais")
+    assert r == vc.Classificacao("SAIR")
+    assert m_gen.await_count == 1
+
+
+async def test_cortesia_nao_inverte_pedido_explicito():
+    r, m_gen = await _cls('{"classe":"RUIDO"}', texto="Obrigado, mas pode parar de enviar essas mensagens")
+    assert r == vc.Classificacao("SAIR")
+    assert m_gen.await_count == 0

@@ -16,6 +16,12 @@ Reaproveita os mecanismos do classificador da Recuperação via `_llm_comum`:
 e timeout explícito. Env por `os.getenv`, nunca `Settings` — o motivo está no
 cabeçalho de `classifier.py`.
 
+SAIR é a única etiqueta irreversível (T_OPTOUT) e reaproveita a rede da Recuperação,
+sem copiá-la: `classifier.pediu_para_parar` decide o pedido explícito ANTES do modelo
+(vale com o teto estourado ou o Gemini fora), e `classifier._proteger_saida` impede que
+um SAIR do modelo descadastre quem só foi cortês ("obrigado, já compro com o João") —
+aqui o rebaixamento é para RUIDO, porque a v2 não tem ADIAR.
+
 NUNCA levanta. Timeout, quota, teto estourado, JSON inválido, classe inventada, id
 fora da tela ou FAQ fora do ramo: tudo vira RUIDO. RUIDO é a saída sem efeito
 destrutivo — o motor reoferece os botões e, no 2º seguido, repassa ao vendedor.
@@ -29,6 +35,7 @@ from dataclasses import dataclass
 
 from app.agent.gemini_client import generate, user_content
 from app.button_flow import _llm_comum
+from app.button_flow import classifier as _recuperacao
 
 logger = logging.getLogger(__name__)
 
@@ -219,6 +226,12 @@ async def classificar(
             # Emoji solto, figurinha, áudio não transcrito: RUIDO sem gastar token.
             return RUIDO
 
+        # Pedido explícito de parada: SAIR sem gastar token e sem depender de
+        # infraestrutura (fail-CLOSED, mesmo motivo do `classifier.classificar`).
+        if _recuperacao.pediu_para_parar(limpo):
+            logger.info("%s pedido explicito de parada %r -> SAIR (sem LLM)", _LOG, limpo[:80])
+            return Classificacao("SAIR")
+
         if _llm_comum.budget_estourado(_LOG):
             logger.warning("%s teto diario de LLM estourado — classificador devolvendo RUIDO", _LOG)
             return RUIDO
@@ -251,6 +264,16 @@ async def classificar(
             logger.warning(
                 "%s saida inutilizavel do classificador no=%s (%.120s) — devolvendo RUIDO",
                 _LOG, no_id, bruto or "",
+            )
+            return RUIDO
+        if (classificacao.classe == "SAIR"
+                and _recuperacao._proteger_saida(_recuperacao.engine.CLASSE_SAIR, limpo)
+                != _recuperacao.engine.CLASSE_SAIR):
+            # A rede da Recuperação rebaixaria para ADIAR; na v2 o caminho seguro é RUIDO
+            # (reoferece os botões; no 2º seguido, repasse ao vendedor).
+            logger.warning(
+                "%s modelo disse SAIR sem pedido de parada em %r — rebaixando para RUIDO",
+                _LOG, limpo[:120],
             )
             return RUIDO
         logger.info(
