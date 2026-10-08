@@ -23,10 +23,12 @@ Recuperação sem copiá-la:
   - ANTES do modelo, `pediu_para_sair_v2` = `classifier.pediu_para_parar` sem objeto
     comercial da v2 no texto. Vale com o teto estourado ou o Gemini fora. Com objeto
     comercial ("cancela o envio da amostra", "pode parar de mandar o kit?"), quem
-    decide é o modelo.
+    decide é o modelo — salvo marca inequívoca de saída ("receber mensagens", "me
+    tira da lista", "descadastrar"...), que vence a trava comercial (Meta/LGPD).
   - DEPOIS do modelo, um SAIR é rebaixado para RUIDO (a v2 não tem ADIAR) se o texto
-    é negativa isolada, cita objeto comercial ou é cortesia sem pedido de parada
-    (`classifier.cortesia_sem_parada`: "obrigado, já compro com o João").
+    é negativa isolada, cita objeto comercial sem marca inequívoca, ou é cortesia sem
+    pedido de parada (`classifier.cortesia_sem_parada`: "obrigado, já compro com o
+    João").
 
 NUNCA levanta. Timeout, quota, teto estourado, JSON inválido, classe inventada, id
 fora da tela ou FAQ fora do ramo: tudo vira RUIDO. RUIDO é a saída sem efeito
@@ -132,6 +134,23 @@ _NEGATIVAS_ISOLADAS = frozenset({
 })
 
 _NAO_ALFANUMERICO = re.compile(r"[^a-z0-9]+")
+
+# Marcas INEQUÍVOCAS de saída: miram o contato, não a venda, e por isso VENCEM a trava
+# comercial (Meta/LGPD exigem honrar pedido real de parada, mesmo que cite café ou
+# produto). Lista curta e fechada de propósito; casada sobre o texto alisado. Sozinha
+# ela não basta para o SAIR determinístico ("não consigo receber mensagem de áudio"):
+# lá ela só remove a trava comercial de cima de um `pediu_para_parar` verdadeiro.
+_RE_MARCA_INEQUIVOCA = re.compile(
+    r"\b(?:"
+    r"receber\s+(?:\w+\s+)?mensage(?:m|ns)"
+    r"|me\s+tir[ae]\s+da\s+lista"
+    r"|remover\s+meu\s+(?:numero|contato)"
+    r"|descadastr\w*"
+    r"|nao\s+me\s+mand[ea]\s+mais\s+mensage(?:m|ns)"
+    r"|parar\s+de\s+(?:me\s+)?mandar\s+mensage(?:m|ns)"
+    r"|bloquear"
+    r")\b"
+)
 _ESPACOS = re.compile(r"\s+")
 
 
@@ -155,20 +174,32 @@ def menciona_objeto_comercial(texto: str | None) -> bool:
     return bool(_RE_OBJETO_COMERCIAL.search(_alisar(texto)))
 
 
+def marca_inequivoca_de_saida(texto: str | None) -> bool:
+    """True se o texto traz uma das marcas de `_RE_MARCA_INEQUIVOCA`."""
+    return bool(_RE_MARCA_INEQUIVOCA.search(_alisar(texto)))
+
+
+def _trava_comercial(texto: str | None) -> bool:
+    """Objeto comercial no texto SEM marca inequívoca de saída."""
+    return menciona_objeto_comercial(texto) and not marca_inequivoca_de_saida(texto)
+
+
 def pediu_para_sair_v2(texto: str | None) -> bool:
     """Pedido explícito de parar o CONTATO, decidido sem LLM. Pura.
 
     `classifier.pediu_para_parar` sem objeto comercial no texto: na v2, "pode parar
-    de mandar o kit? quero só a tabela" é conversa de venda, não descadastro.
+    de mandar o kit? quero só a tabela" é conversa de venda, não descadastro. Uma
+    marca inequívoca ("receber mensagens", "me tira da lista") vence a trava:
+    "não quero mais receber mensagens sobre café" é SAIR.
     """
-    return _recuperacao.pediu_para_parar(texto) and not menciona_objeto_comercial(texto)
+    return _recuperacao.pediu_para_parar(texto) and not _trava_comercial(texto)
 
 
 def _sair_do_modelo_e_suspeito(texto: str) -> bool:
     """True quando um SAIR vindo do modelo não pode virar opt-out (vira RUIDO)."""
     return (
         _alisar(texto) in _NEGATIVAS_ISOLADAS
-        or menciona_objeto_comercial(texto)
+        or _trava_comercial(texto)
         or _recuperacao.cortesia_sem_parada(texto)
     )
 

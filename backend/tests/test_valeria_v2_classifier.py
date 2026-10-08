@@ -373,3 +373,40 @@ def test_cortesia_sem_parada_e_publica_na_recuperacao():
     assert classifier.cortesia_sem_parada("Obrigado, mas pode parar de enviar essas mensagens") is False
     assert classifier.cortesia_sem_parada("bom dia") is False
     assert classifier.cortesia_sem_parada(None) is False
+
+
+# ── Marcas inequívocas de saída vencem a trava comercial (Meta/LGPD) ────────
+# Pedido real de parada precisa ser honrado mesmo citando café ou produto; a trava
+# comercial só segura o verbo de parada que mira a VENDA ("não quero receber o kit").
+@pytest.mark.parametrize("texto", [
+    "não quero mais receber mensagens sobre café",
+    "me tira da lista de café",
+    "Não me mande mais mensagem sobre o kit!",
+    "pode parar de mandar mensagem de preço",
+])
+async def test_marca_inequivoca_vence_objeto_comercial(texto):
+    assert vc.pediu_para_sair_v2(texto) is True
+    r, m_gen = await _cls('{"classe":"RUIDO"}', texto=texto)
+    assert r == vc.Classificacao("SAIR")
+    assert m_gen.await_count == 0
+
+
+async def test_sem_marca_inequivoca_kit_continua_nao_sair():
+    assert vc.pediu_para_sair_v2("não quero receber o kit") is False
+    r, _ = await _cls('{"classe":"SAIR"}', texto="não quero receber o kit")
+    assert r.classe != "SAIR"
+
+
+async def test_marca_inequivoca_mantem_sair_do_modelo_com_objeto_comercial():
+    """Sem pedido pela gramática da Recuperação, mas com marca: o SAIR do modelo vale."""
+    from app.button_flow import classifier
+    texto = "vou ter que bloquear voces, chega de cafe"
+    assert classifier.pediu_para_parar(texto) is False
+    r, m_gen = await _cls('{"classe":"SAIR"}', texto=texto)
+    assert r == vc.Classificacao("SAIR")
+    assert m_gen.await_count == 1
+
+
+def test_marca_sozinha_nao_basta_para_sair_deterministico():
+    """'receber mensagem' sem recusa não é pedido de parada."""
+    assert vc.pediu_para_sair_v2("não consigo receber mensagem de áudio do café") is False
