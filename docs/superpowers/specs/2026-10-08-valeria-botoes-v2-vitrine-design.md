@@ -373,7 +373,7 @@ etiqueta escolhe uma das mensagens fixas deste documento.
 | `SAIR` | — | `T_OPTOUT`. A lista fixa `FRASES_OPTOUT` continua valendo **antes** da IA. |
 | `RUIDO` | — | Nudge com os botões da tela atual. No 2º `RUIDO` seguido, handoff do ramo, com a nota contendo o que foi coletado. |
 
-Em `N0`, antes do ramo, `PERGUNTA` e `VENDEDOR` vão para `T_HUMANO`, como na v1.
+Sem ramo (`N0`, consumo), `PERGUNTA` e `VENDEDOR` vão para `T_HANDOFF` (João), e não para `T_HUMANO` como na v1: o `T_HUMANO` não envia nada e não designa vendedor, então o lead que fez uma pergunta real ficava sem resposta (decisão de 08/10/2026). Dois `RUIDO` seguidos sem ramo continuam indo para `T_HUMANO`.
 
 ### 7.3 Entrada do modelo (~400 tokens)
 
@@ -524,3 +524,23 @@ Mesma régua de auditoria e mesmos indicadores de §2, mais:
 | Mostrar preço cedo afasta lead | É a hipótese contrária à medida: com foto e preço, 38% de reação positiva contra 18% só com foto. O teste de 7 dias decide. |
 | Consumidor final vindo do anúncio de atacado vê preço de atacado | A tabela é de atacado; com o mínimo de R$500 ele se desqualifica sozinho, e a FAQ e o `N0` continuam com "Pra consumo próprio". Medir em §12. |
 | Kit e Microlote PL sem confirmação | O fluxo não afirma esses números (§4). |
+
+---
+
+## 14. Decisões tomadas na implementação (08/10/2026)
+
+- **Chave de card:** `card:<nó>:<id>`. O id sozinho é ambíguo, porque `microlote` existe em VA e em VP. O toque no card continua chegando como `card:<id>`.
+- **Conversa em andamento na troca v1 ↔ v2:** fica no fluxo antigo só se o nó não for terminal encerrado e o `flow_state.updated_at` tiver menos de 7 dias.
+- **Opt-out:**
+  - O motor só aceita a lista exata `FRASES_OPTOUT` e a classe `SAIR`.
+  - O classificador tem a saída determinística `pediu_para_sair_v2`. Frases de venda ("não quero receber o kit") não viram opt-out. Marcadores inequívocos ("receber mensagens", "me tira da lista") vencem essa trava.
+  - Um `SAIR` do modelo em cortesia ou num "não" isolado é rebaixado para `RUIDO`.
+- **Catálogo vazio:** uma mensagem só ("nossa tabela tá sendo atualizada; já chamei o João Brás aqui pra te passar os valores") e o cartão. A vitrine só cai quando o setor não tem preço nenhum: um SKU faltando derruba só o card ou a mensagem 2.
+- **Nota de repasse:** a v2 não grava a linha "Nenhuma qualificação por conversa" da v1 (`effects.aplicar(nota_sem_qualificacao=False)`).
+- **`T_KIT`:** marca só `Botões: Kit amostra`.
+- **Pergunta de preço:**
+  - Sem ramo: a lista do N0 sai com texto próprio.
+  - Durante a qualificação: o lead recebe a tabela, e o nó atual é mantido.
+- **Card antigo do carrossel:** é aceito de qualquer tela do mesmo ramo.
+- **Lead que reenvia a mensagem pronta do anúncio no meio do fluxo:** volta para a vitrine.
+- **Lead da v1 parado em `T_HUMANO` ou `T_FIM`:** não é reiniciado pela v2.
