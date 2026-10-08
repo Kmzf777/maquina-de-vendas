@@ -81,7 +81,7 @@ developer tokens que não o usavam; vale para nós).
 | `lead` | `lead_events` `entrada` com `ctwa_clid` ou `gclid` | `occurred_at` | não enviado (a Meta já conta a conversa) | ação LEAD |
 | `qualified` | `leads.metadata.handoff.at` preenchido | `handoff.at` | `LeadSubmitted` | ação QUALIFIED |
 | `opportunity` | 1º entre `quotes.status in ('enviado','aprovado','convertido')` (`quoted_at`) e entrada do deal em `proposta_enviada` (`lead_events` `etapa`) | o que vier primeiro | `InitiateCheckout` | ação OPPORTUNITY |
-| `purchase` | `sales` com `status <> 'cancelada'` | `sold_at`, ajustado (abaixo) | `Purchase` | ação PURCHASE |
+| `purchase` | `sales` com `status <> 'cancelada'` e `value` preenchido (sem valor não entra até ter) | `sold_at`, ajustado (abaixo) | `Purchase` | ação PURCHASE |
 
 **Hora da venda.** `sales.sold_at` é só a data (Bling, CRM e manual gravam 12:00 ou 15:00 UTC —
 conferido em produção). Lido cru, uma venda do mesmo dia do clique pareceria anterior a ele (clique
@@ -152,7 +152,9 @@ create table ad_conversion_values (
   `entrada` passam a considerá-las.
 - **Aposentado:** `conversion_events` (vazia) fica no banco sem uso — o script de mesclagem a referencia;
   `pipeline_stages.conversion_event/value` ficam no banco sem uso (sem DROP de coluna).
-- Migrations seguem o padrão do repo: aplicadas à mão, idempotentes, `begin … commit`.
+- Migrations seguem o padrão do repo: aplicadas à mão, idempotentes, `begin … commit`. A 20261008
+  começa com `set local lock_timeout = '5s'` (o `alter table leads` não pode ficar travando as
+  escritas em `leads` atrás de uma transação longa; se estourar, re-roda).
 
 ## 7. Componentes
 
@@ -164,8 +166,8 @@ Tudo em `backend/app/conversions/` (pacote novo; `campaigns/` já está grande):
 | `sweep.py` | Varredura: lê fontes dos últimos 90 dias (paginado — teto de 1000 do PostgREST), monta candidatos, `insert … on conflict do nothing`. Lê `ad_conversion_values` direto (uma query por rodada) e copia o valor na inserção; sem linha para a célula, o valor fica `null` (envia sem valor). |
 | `meta.py` | Monta e envia o evento Business Messaging (reaproveita os hashes do `capi_dispatcher`). |
 | `google.py` | Monta e envia o evento Data Manager; access token pelo mesmo OAuth do `google_ads.py`. |
-| `sender.py` | Claim atômico das pendentes (`claimed_at`, como follow-ups), checa janela de novo antes de enviar, classifica erro, agenda retentativa. |
-| `router.py` | `GET /api/conversions/ads` (lista + contadores, filtros) para a aba. **Só admin**: exige o JWT de admin no backend (`exigir_admin` de `traffic_router`); a proxy do Next o repassa pelo `adminProxy`. |
+| `sender.py` | Claim atômico das pendentes (`claimed_at`, como follow-ups, conferindo `next_attempt_at <= hora do claim`), checa janela de novo antes de enviar, classifica erro, agenda retentativa, grava o resultado com até 3 tentativas. |
+| `router.py` | `GET /api/conversions/ads` (lista + contadores, filtros validados: `period` ∈ 7d/30d/90d/all, datas ISO; inválido → 422) para a aba. **Só admin**: exige o JWT de admin no backend (`exigir_admin` de `traffic_router`); a proxy do Next o repassa pelo `adminProxy`. O `GET /api/conversions/dashboard` (seção do Dashboard) também. |
 
 **Worker:** duas entradas em `TASK_SPECS`: `conversions-sweep` (periódica, 1800 s) e
 `conversions-send` (periódica, 300 s, até 100 pendentes por tick). 30 min de latência é irrelevante
@@ -177,12 +179,29 @@ Dados pessoais (e-mail, telefone) **não** vão para a fila: o sender lê o lead
 → `ignorado`.
 
 **Retentativa:** 1 min, 5 min, 30 min, 2 h, 12 h; na 6ª falha → `erro`. Erro permanente (4xx de
-validação) → `erro` direto. Token/permissão (401/403, códigos OAuth da Meta), limite, 5xx, rede e
-variável de ambiente faltando **não** são permanentes (backoff). Evento que saiu da janela antes do
-envio → `fora_da_janela`. Venda cancelada ou apagada (`sale_id` nulo) antes do envio → `ignorado`.
+validação) → `erro` direto. Limite, 5xx, rede e variável de ambiente faltando **não** são
+permanentes (backoff). Evento que saiu da janela antes do envio → `fora_da_janela` (Meta: 7 dias
+menos 1 h de folga). Venda cancelada ou apagada (`sale_id` nulo) antes do envio → `ignorado`.
 Plataforma desligada → nada sai da fila (fica `pendente`). Plataforma ligada mas sem configuração
 (credenciais ausentes; na Meta, também modo teste sem `META_CAPI_TEST_EVENT_CODE`, que mandaria
 evento real) → pulada inteira pelo sender, sem reivindicar linha, com aviso no log a cada tick.
+Etapa do Google sem `GOOGLE_ADS_CONVERSION_ACTION_<ETAPA>` → filtrada na própria consulta (não
+ocupa vaga do lote nem é reivindicada), aviso a cada tick.
+
+**Disjuntor de credencial:** token inválido/sem permissão (Google 401/403 e OAuth 400/401, ex.
+`invalid_grant`; Meta 401/403 e códigos 190/102/10/200–299 — `SendResult.auth_error`) para a
+plataforma no resto do tick; a linha não gasta tentativa (continua `pendente`, +30 min).
+
+**Desfecho desconhecido (só Meta, que não deduplica):** resposta que não chegou depois de o
+request sair (timeout de leitura/escrita, `ReadError`, `RemoteProtocolError`) → `erro` permanente
+"resposta da Meta não chegou — conferir no Gerenciador de Eventos antes de reenviar"; linha
+retomada de um claim abandonado (> 10 min) → `erro` "envio interrompido — conferir…", sem chamar a
+Meta. Reenvio só à mão, depois de conferir. No Google os dois casos são reenviados normalmente
+(dedup por `transactionId`). Falha de conexão (request não saiu) é transitória nas duas.
+`enviado` no Google = request aceito; o processamento é assíncrono.
+
+**Modo teste:** o envio de teste nunca muda `status` nem `attempts` (sucesso **ou** falha): grava
+`last_error`/`last_response` (`modo_teste: true`), solta o claim e empurra `next_attempt_at` 6 h.
 
 **Removido:** `campaigns/conversions.py`, `conversion_log.py`, `google_export.py`, a parte de envio
 de `capi_dispatcher.py`, as chamadas em `automation/triggers.py:96-115`, `automation/engine.py:672-679`
@@ -245,6 +264,7 @@ Roteiro passo a passo em `docs/setup/conversoes-ads.md`:
 2. `calcular_valores.py` → aprovação do Rafael → `--aplicar`. Linhas já na fila recebem o valor
    (update único das `pendente`).
 3. `CONVERSIONS_TEST_MODE=true`: Meta aparece na aba Test Events; Google valida sem registrar.
+   Nenhuma linha muda de status no modo teste (nem com erro).
 4. Liga o Google (ganha o histórico de 90 dias na hora), depois a Meta.
 
 ## 12. Verificações pendentes (antes do passo 3)
@@ -265,7 +285,11 @@ Roteiro passo a passo em `docs/setup/conversoes-ads.md`:
   paginação, blocos de 200 ids, lead com dado ruim não derruba a rodada, hora da venda do mesmo dia;
   venda cancelada não entra.
 - Sender com HTTP e Supabase mockados: retentativa, erro permanente, `fora_da_janela`, plataforma
-  desligada ou sem configuração, venda cancelada/apagada, modo teste.
+  desligada ou sem configuração, etapa do Google sem ação, venda cancelada/apagada, modo teste
+  (sucesso e falha), disjuntor de credencial, claim abandonado (Meta → erro, Google → reenvia),
+  gravação do resultado com retentativa, filtro `next_attempt_at` no claim.
+- Trigger de `entrada` com `gbraid`/`wbraid` num Postgres descartável (`test_cs_p3_timeline_pg.py`,
+  pula sem `CS_P3_PSQL`).
 - Router com Supabase mockado: contadores com mais de 1000 linhas, 401/403 sem admin.
 - Rodar no container da imagem `canastra-api` (venv local quebrado).
 

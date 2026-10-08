@@ -20,8 +20,11 @@ configuração** (falta `META_CAPI_DATASET_ID`/`_ACCESS_TOKEN`/`META_WABA_ID`, o
 sender não reivindica nenhuma linha dela, nada gasta tentativa, e o log do worker avisa a cada tick
 (`[CONVERSOES] meta ligada mas sem configuração (VAR): nada sai da fila`). Ao configurar e reiniciar,
 a fila sai sozinha. O ID da ação do Google é por etapa: se faltar só o de uma etapa, as linhas
-dela falham com `GOOGLE_ADS_CONVERSION_ACTION_X não configurado` e entram no backoff (não viram
-`erro` direto; viram `erro` só depois das 5 retentativas, ~15 h).
+**dessa etapa** ficam fora da consulta do sender (não são reivindicadas, não gastam tentativa, não
+ocupam vaga do lote) e o log avisa a cada tick (`[CONVERSOES] google: sem
+GOOGLE_ADS_CONVERSION_ACTION_LEAD — as linhas dessas etapas ficam na fila`). As outras etapas saem
+normalmente. Sem nenhuma ação configurada, o Google é pulado inteiro. Valores do `.env` são lidos
+com `strip()` (espaço/quebra de linha no fim não quebram a credencial).
 
 | Variável | Uso | Default |
 |---|---|---|
@@ -58,6 +61,19 @@ Tudo começa com as duas plataformas desligadas.
    docker exec -i $(docker ps --format '{{.Names}}' | grep supabase_db | head -1) \
      psql -U postgres -d postgres -v ON_ERROR_STOP=1 < supabase/migrations/20261008_ad_conversions.sql
    ```
+   A migration começa com `set local lock_timeout = '5s'`: o `alter table leads` precisa de lock
+   exclusivo, e sem o limite ele ficaria na fila atrás de uma transação longa travando todas as
+   escritas em `leads` (webhook do WhatsApp). Se falhar com `canceling statement due to lock
+   timeout`, nada foi aplicado (é uma transação só): rode de novo em seguida.
+   Logo depois, confira que o trigger de entrada enxerga `gbraid` (nada é gravado — `rollback`):
+   ```sql
+   begin;
+   insert into leads (id, phone, gbraid) values (gen_random_uuid(), '5500000000000', 'teste-gbraid')
+     returning id \gset
+   select event_type, new_value, metadata->>'gbraid' from lead_events where lead_id = :'id';
+   -- esperado: entrada | Google Ads | teste-gbraid
+   rollback;
+   ```
    Só depois faça o push/deploy, com `CONVERSIONS_*_ENABLED` ausentes/`false`. A tarefa
    `conversions-sweep` (1800 s) enche a fila, inclusive os 90 dias de histórico. Confira o que **seria** enviado:
    ```sql
@@ -91,11 +107,16 @@ Tudo começa com as duas plataformas desligadas.
      linha, sairia de novo a cada 6 h). O log do worker avisa a variável que falta.
    - Google: o envio vai com `validateOnly`; **nada aparece na conta**, a resposta só diz que a
      validação passou.
-   Em modo teste o sender manda no máximo 10 linhas por rodada, e um envio aceito **não consome a
-   linha**: ela continua `pendente`, sem gastar tentativa, com `last_response` =
-   `{"modo_teste": true, "resposta": ...}` e `next_attempt_at` 6 h à frente (para não reenviar a
-   mesma amostra a cada 5 min). Falha em modo teste segue as regras normais: um 400 vira `erro`,
-   que é justamente o que o teste quer mostrar.
+   Em modo teste o sender manda no máximo 10 linhas por rodada, e **o envio de teste nunca muda
+   `status` nem `attempts`, dê certo ou errado**: a linha continua `pendente`, com `last_response` =
+   `{"modo_teste": true, "resposta": ...}`, `last_error` com o erro (se houve) e `next_attempt_at`
+   6 h à frente (para não reenviar a mesma amostra a cada 5 min). Um 400 de teste (ID de ação
+   errado, payload ruim) aparece em `last_error` para você corrigir — mas não queima a linha real.
+   Para ver o resultado dos testes:
+   ```sql
+   select platform, stage, last_error, last_response from ad_conversions
+   where last_response->>'modo_teste' = 'true' order by next_attempt_at desc limit 20;
+   ```
    Ao sair do modo teste, antecipe as linhas que ficaram esperando para que saiam de imediato:
    ```sql
    update ad_conversions set next_attempt_at = now() where status = 'pendente';
@@ -153,22 +174,59 @@ dedup é nossa (`dedupe_key`/`event_id`); só eventos padrão (`LeadSubmitted` n
 | Status | Significado |
 |---|---|
 | `pendente` | Na fila. Também é onde ficam as linhas quando a plataforma está desligada ou aguardando retentativa (`next_attempt_at`). |
-| `enviado` | Aceito pela plataforma de verdade. Envio em modo teste nunca vira `enviado`: a linha fica `pendente` com `last_response.modo_teste = true`. |
-| `erro` | Erro permanente (4xx de validação) ou 6 falhas seguidas. Veja `last_error` e `last_response`. Token inválido/sem permissão (HTTP 401/403; na Meta também os códigos OAuth 190/102, permissão 10/200–299 e limites 4/17/32/341/613) **não** é permanente: entra no backoff, e a fila espera a troca do token — mas, se passar das 5 retentativas (~15 h), vira `erro` e precisa do `update` abaixo. |
+| `enviado` | Aceito pela API da plataforma (HTTP 200). No Google isso é **aceite do request**: o processamento é assíncrono e um clique que não casa (ou ação errada) só aparece depois, no diagnóstico da ação de conversão no Google Ads — `enviado` não garante conversão registrada. Envio em modo teste nunca vira `enviado` (ver seção 3). |
+| `erro` | Erro permanente (4xx de validação), 6 falhas seguidas, **ou envio à Meta com desfecho desconhecido** (ver abaixo). Veja `last_error` e `last_response`. Limites (Meta 4/17/32/341/613), 5xx e rede **não** são permanentes: entram no backoff. |
 | `fora_da_janela` | O clique ficou velho demais antes do envio (Meta 7 dias, Google 90). Não há o que fazer. |
 | `ignorado` | Venda cancelada (`venda cancelada antes do envio`) ou apagada (`venda removida antes do envio`) antes do envio. |
 
 Retentativas: 1 min, 5 min, 30 min, 2 h, 12 h; na 6ª falha vai para `erro`. Variável de ambiente
-faltando também entra no backoff (não é permanente) — e, se for credencial da plataforma, a
-plataforma nem é processada (seção 2).
+faltando também entra no backoff (não é permanente) — e, se for credencial da plataforma ou o ID
+da ação de uma etapa do Google, a plataforma/etapa nem é processada (seção 2).
+
+**Disjuntor de credencial.** Token inválido/revogado ou sem permissão (Google: HTTP 401/403 ou
+falha do OAuth com `invalid_grant`/`invalid_client`; Meta: HTTP 401/403 ou códigos 190/102/10/200–299)
+para o envio **àquela plataforma no resto do tick** e a linha que bateu no erro **não gasta
+tentativa**: continua `pendente`, com `last_error` preenchido e `next_attempt_at` 30 min à frente.
+O log do worker mostra `[CONVERSOES] meta: erro de credencial (...) — plataforma parada neste
+tick`. Troque o token e reinicie; a fila segue sozinha. A outra plataforma não é afetada. O access
+token do Google fica em cache por 50 min no processo (trocar o refresh token no `.env` invalida o
+cache; um 401 também).
+
+**Envio à Meta com desfecho desconhecido → `erro`, conferir antes de reenviar.** A Meta não
+deduplica neste produto: reenviar um evento que já chegou duplica a conversão. Por isso:
+- resposta que não chegou depois de o request sair (timeout de leitura/escrita, conexão caída no
+  meio) vira `erro` com `last_error = "resposta da Meta não chegou — conferir no Gerenciador de
+  Eventos antes de reenviar"`;
+- linha retomada de um claim abandonado (worker morreu no meio do envio, ou o resultado não foi
+  gravado depois de 3 tentativas) vira `erro` com `last_error = "envio interrompido — conferir no
+  Gerenciador de Eventos antes de reenviar"`, sem chamar a Meta.
+Nesses dois casos, procure o evento no Gerenciador de Eventos (dataset, aba Visão geral/Eventos,
+pelo `event_id` da linha). Se **não** estiver lá, reenvie com o `update` abaixo; se estiver, deixe
+como está. Falha de conexão (o request nem saiu) segue transitória. No Google tudo isso é
+reenviado sozinho: ele deduplica pelo `transactionId` (= `event_id`).
 
 **Aba "Conversões enviadas" (/trafego):** só admin. O endpoint `GET /api/conversions/ads` exige o
 JWT de admin no próprio backend (`exigir_admin`, o mesmo das rotas de atribuição do /trafego); a
 proxy do Next (`/api/traffic/conversoes`) repassa o token pelo `adminProxy`. Chamada direta ao
 backend sem token → 401; token de quem não é admin → 403. Os contadores somam **todas** as linhas
-do filtro; só a lista para em 1000 (a tela avisa que está truncada).
+do filtro; só a lista para em 1000 (a tela avisa que está truncada). `period` aceita `7d`, `30d`,
+`90d`, `all`; data ou período inválido → 422. A seção "Conversões (Ads)" do Dashboard
+(`GET /api/conversions/dashboard`) também exige o JWT de admin no backend, com a proxy pelo
+`adminProxy`.
 
-Reenviar uma linha depois de corrigir a causa (credencial, ID de ação, etc.):
+**Venda sem valor** (`sales.value` nulo) não é enfileirada: mandaria "venda de R$ 0" ao lance por
+valor. Entra na varredura seguinte depois que o valor for preenchido (o log avisa). **Janela da
+Meta:** o sender considera fora da janela o evento com mais de 7 dias **menos 1 h** (folga para
+request lento). **Telefone:** celular sem o nono dígito (`wa_id` costuma vir assim) ganha o 9
+antes do hash.
+
+**Tokens fora de log.** Os clientes mandam o token da Meta no header `Authorization` (nunca na
+URL), e o `setup_logging` põe os loggers `httpx`/`httpcore` em WARNING: o httpx logava em INFO a URL
+completa, e o sync de investimento (`campaigns/meta_ads.py`) levava `access_token=` na query.
+Logs antigos do worker podem ter o token do `META_ADS_ACCESS_TOKEN`: vale considerar trocá-lo.
+
+Reenviar uma linha depois de corrigir a causa (credencial, ID de ação, etc. — e, na Meta, só
+depois de conferir no Gerenciador de Eventos que o evento NÃO chegou):
 ```sql
 update ad_conversions set status='pendente', attempts=0, next_attempt_at=now(), last_error=null
 where id='...';
