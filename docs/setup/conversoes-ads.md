@@ -25,7 +25,7 @@ linha vai direto para `erro` (erro permanente apontando a variável que falta).
 | `META_CAPI_DATASET_ID` | Dataset ligado ao WABA (destino do `POST /{id}/events`). | sem default |
 | `META_CAPI_ACCESS_TOKEN` | Token de system user (seção 4). | sem default |
 | `META_CAPI_TEST_EVENT_CODE` | Código da aba Test Events. | sem default |
-| `META_CAPI_API_VERSION` | Versão do Graph. | `v23.0` |
+| `META_CAPI_API_VERSION` | Versão do Graph. | `v25.0` |
 | `META_WABA_ID` | WABA (já existe; os 3 canais `meta_cloud` usam o mesmo). | já configurado |
 | `GOOGLE_ADS_CONVERSION_ACTION_LEAD` / `_QUALIFIED` / `_OPPORTUNITY` / `_PURCHASE` | ID numérico de cada ação "Importar de cliques" (`productDestinationId`). | sem default |
 | `GOOGLE_ADS_REFRESH_TOKEN` | Regerado com os escopos `adwords` + `datamanager` (seção 5). | já existe, trocar |
@@ -70,11 +70,17 @@ Tudo começa com as duas plataformas desligadas.
 3. **Modo teste.** `CONVERSIONS_TEST_MODE=true` e ligue **uma** plataforma por vez.
    - Meta: o evento aparece em Events Manager, aba Test Events, do dataset (precisa de
      `META_CAPI_TEST_EVENT_CODE`).
-   - Google: a linha fica `enviado` com `validateOnly`; **nada aparece na conta**, a resposta em
-     `last_response` só diz que a validação passou.
-   Atenção: linhas enviadas em modo teste ficam `enviado` e **não são reenviadas** de verdade. Antes
-   de ligar a produção, volte as de teste para `pendente` (seção 6) para que o histórico seja
-   entregue de fato.
+   - Google: o envio vai com `validateOnly`; **nada aparece na conta**, a resposta só diz que a
+     validação passou.
+   Em modo teste o sender manda no máximo 10 linhas por rodada, e um envio aceito **não consome a
+   linha**: ela continua `pendente`, sem gastar tentativa, com `last_response` =
+   `{"modo_teste": true, "resposta": ...}` e `next_attempt_at` 6 h à frente (para não reenviar a
+   mesma amostra a cada 5 min). Falha em modo teste segue as regras normais: um 400 vira `erro`,
+   que é justamente o que o teste quer mostrar.
+   Ao sair do modo teste, antecipe as linhas que ficaram esperando para que saiam de imediato:
+   ```sql
+   update ad_conversions set next_attempt_at = now() where status = 'pendente';
+   ```
 4. **Produção.** `CONVERSIONS_TEST_MODE=false`; ligue o **Google primeiro** (ganha o histórico de
    90 dias na hora), depois a **Meta**. Reinicie o worker a cada mudança de env.
 
@@ -128,8 +134,8 @@ dedup é nossa (`dedupe_key`/`event_id`); só eventos padrão (`LeadSubmitted`, 
 | Status | Significado |
 |---|---|
 | `pendente` | Na fila. Também é onde ficam as linhas quando a plataforma está desligada ou aguardando retentativa (`next_attempt_at`). |
-| `enviado` | Aceito pela plataforma (em modo teste: validado/Test Events, sem efeito real). |
-| `erro` | Erro permanente (validação, permissão, variável ausente) ou 6 falhas seguidas. Veja `last_error` e `last_response`. |
+| `enviado` | Aceito pela plataforma de verdade. Envio em modo teste nunca vira `enviado`: a linha fica `pendente` com `last_response.modo_teste = true`. |
+| `erro` | Erro permanente (validação, variável ausente) ou 6 falhas seguidas. Veja `last_error` e `last_response`. Token inválido/sem permissão (HTTP 401/403; na Meta também os códigos OAuth 190/102, permissão 10/200–299 e limites 4/17/32/341/613) **não** é permanente: entra no backoff, e a fila espera a troca do token — mas, se passar das 5 retentativas (~15 h), vira `erro` e precisa do `update` abaixo. |
 | `fora_da_janela` | O clique ficou velho demais antes do envio (Meta 7 dias, Google 90). Não há o que fazer. |
 | `ignorado` | Venda cancelada antes do envio. |
 
@@ -140,8 +146,7 @@ Reenviar uma linha depois de corrigir a causa (credencial, ID de ação, etc.):
 update ad_conversions set status='pendente', attempts=0, next_attempt_at=now(), last_error=null
 where id='...';
 ```
-Para reenviar em lote as linhas de teste de uma plataforma, filtre por `platform`, `status='enviado'`
-e `sent_at` do período de teste. Linhas `fora_da_janela` não voltam a ser elegíveis.
+Linhas `fora_da_janela` não voltam a ser elegíveis.
 
 **Desligar:** `CONVERSIONS_META_ENABLED=false` / `CONVERSIONS_GOOGLE_ENABLED=false` e reiniciar o
 worker. A varredura continua enfileirando; nada sai. Venda cancelada depois de enviada não é
@@ -157,4 +162,4 @@ retraída nas plataformas (fora de escopo), fica só na aba.
   só aparece na prática, no primeiro envio `validateOnly`.
 - **ID da ação (`ctId`):** ver seção 5, passo 2.
 - **Versão do Graph e endpoint do dataset:** a doc de onboarding cita `v16.0`; o código usa
-  `v23.0` (`META_CAPI_API_VERSION`). Confirme que o `criar_dataset_meta` responde na versão em uso.
+  `v25.0` por padrão (`META_CAPI_API_VERSION`). Confirme que o `criar_dataset_meta` responde na versão em uso.
