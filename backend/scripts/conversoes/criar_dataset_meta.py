@@ -15,7 +15,7 @@ import httpx
 def main() -> None:
     waba = os.getenv("META_WABA_ID")
     token = os.getenv("META_CAPI_ACCESS_TOKEN")
-    version = os.getenv("META_CAPI_API_VERSION") or "v23.0"
+    version = os.getenv("META_CAPI_API_VERSION") or "v25.0"
     if not waba or not token:
         sys.exit("defina META_WABA_ID e META_CAPI_ACCESS_TOKEN")
     url = f"https://graph.facebook.com/{version}/{waba}/dataset"
