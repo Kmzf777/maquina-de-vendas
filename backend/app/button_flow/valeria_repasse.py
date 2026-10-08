@@ -11,6 +11,7 @@ de 03–04/10/2026 veio de agendamento sem limite. Nunca levanta.
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 from datetime import datetime, timedelta, timezone
@@ -75,7 +76,9 @@ async def varrer() -> int:
         ganhos = 0
         offset = 0
         for _ in range(MAX_PAGINAS):
-            linhas = _pagina(sb, inicio, fim, offset)
+            if ganhos >= MAX_REPASSES_POR_RODADA:
+                break
+            linhas = await asyncio.to_thread(_pagina, sb, inicio, fim, offset)
             for conv in linhas:
                 if ganhos >= MAX_REPASSES_POR_RODADA:
                     break
@@ -85,7 +88,8 @@ async def varrer() -> int:
                         lead = lead[0] if lead else None
                     if not lead or lead.get("human_control") is True or lead.get("opt_out") is True:
                         continue
-                    channel = get_channel_by_id(conv.get("channel_id")) if conv.get("channel_id") else None
+                    channel = (await asyncio.to_thread(get_channel_by_id, conv["channel_id"])
+                               if conv.get("channel_id") else None)
                     if not channel:
                         logger.warning("%s varredura sem canal conv=%s", _LOG, conv.get("id"))
                         continue
