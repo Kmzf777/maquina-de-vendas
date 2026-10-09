@@ -11,7 +11,7 @@
  * 199 de 389 imagens inbound tinham legenda invisível.
  */
 import { describe, it, expect, afterEach } from "vitest";
-import { render, cleanup, screen } from "@testing-library/react";
+import { render, cleanup, screen, fireEvent } from "@testing-library/react";
 import { MessageBubble } from "./message-bubble";
 import type { Message } from "@/lib/types";
 
@@ -161,5 +161,130 @@ describe("MessageBubble — quebra de linha com o chat estreito", () => {
     expect(bolha).toBeTruthy();
     expect(bolha.className).toContain("[overflow-wrap:anywhere]");
     expect(bolha.className).toContain("min-w-0");
+  });
+});
+
+// ── A tela interativa que o bot mandou (10/2026) ─────────────────────────────
+// O vendedor via só o texto: os botões, o menu e o carrossel que o lead tinha na tela
+// não apareciam. A estrutura vem de `metadata.interativo` (lib/message-interativo.ts).
+describe("MessageBubble — tela interativa do bot", () => {
+  const bot = (metadata: Record<string, unknown>, over: Partial<Message> = {}) =>
+    renderBubble({ role: "assistant", sent_by: "valeria_botoes", metadata, ...over });
+
+  it("botões: mostra o texto e os rótulos como botões de resposta não clicáveis", () => {
+    const { container } = bot(
+      { interativo: { tipo: "botoes", imagem: null, botoes: ["Fazer pedido", "Provar antes", "Tenho dúvida"] } },
+      { content: "o que você prefere?" }
+    );
+    expect(screen.getByText("o que você prefere?")).toBeTruthy();
+    const lista = screen.getByRole("list", { name: "Botões enviados ao lead" });
+    expect(lista.textContent).toContain("Fazer pedido");
+    expect(lista.textContent).toContain("Provar antes");
+    expect(lista.textContent).toContain("Tenho dúvida");
+    // Não clicável: o vendedor não pode achar que "clicar" responde pelo lead.
+    expect(lista.querySelector("button")).toBeNull();
+    expect(container.querySelector("img")).toBeNull();
+  });
+
+  it("botões com imagem: a foto aparece acima do texto", () => {
+    const { container } = bot(
+      { interativo: { tipo: "botoes", imagem: "https://cdn.example/n5.jpg", botoes: ["Sim"] } },
+      { content: "Clássico 250g" }
+    );
+    const img = container.querySelector("img");
+    expect(img?.getAttribute("src")).toBe("https://cdn.example/n5.jpg");
+    const texto = screen.getByText("Clássico 250g");
+    expect(img!.compareDocumentPosition(texto) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it("botões com imagem numa linha que já é image: a foto não sai duas vezes", () => {
+    const { container } = bot(
+      { interativo: { tipo: "botoes", imagem: "https://cdn.example/n5.jpg", botoes: ["Sim"] } },
+      { content: "Clássico 250g", message_type: "image", media_url: "https://cdn.example/n5.jpg" }
+    );
+    expect(container.querySelectorAll("img").length).toBe(1);
+    expect(screen.getByText("Clássico 250g")).toBeTruthy();
+    expect(screen.getByRole("list", { name: "Botões enviados ao lead" }).textContent).toContain("Sim");
+  });
+
+  it("lista: fechada por padrão, o rótulo abre e fecha as linhas", () => {
+    bot(
+      {
+        interativo: {
+          tipo: "lista",
+          botao: "Ver opções",
+          linhas: [
+            { titulo: "Pro meu negócio", descricao: "revenda, cafeteria" },
+            { titulo: "Pra minha casa", descricao: "" },
+          ],
+        },
+      },
+      { content: "pra quem é o café?" }
+    );
+    const toggle = screen.getByRole("button", { name: /Ver opções/ });
+    expect(toggle.getAttribute("aria-expanded")).toBe("false");
+    expect(screen.queryByText("Pro meu negócio")).toBeNull();
+
+    fireEvent.click(toggle);
+    expect(toggle.getAttribute("aria-expanded")).toBe("true");
+    expect(screen.getByText("Pro meu negócio")).toBeTruthy();
+    expect(screen.getByText("revenda, cafeteria")).toBeTruthy();
+    expect(screen.getByText("Pra minha casa")).toBeTruthy();
+
+    fireEvent.click(toggle);
+    expect(screen.queryByText("Pro meu negócio")).toBeNull();
+  });
+
+  it("carrossel: corpo + cards roláveis com foto, texto e botão, sem alargar o chat", () => {
+    const { container } = bot(
+      {
+        interativo: {
+          tipo: "carrossel",
+          cards: [
+            { imagem: "https://cdn.example/1.jpg", texto: "Clássico\nR$ 28,70", botoes: ["Quero esse"] },
+            { imagem: "https://cdn.example/2.jpg", texto: "Suave\nR$ 28,70", botoes: ["Quero esse"] },
+          ],
+        },
+      },
+      // O content do carrossel é corpo + textos dos cards (preview em texto).
+      { content: "olha nossos cafés\n\nClássico\nR$ 28,70\n\nSuave\nR$ 28,70" }
+    );
+    // A bolha mostra só o corpo; os textos dos cards ficam nos cards (sem eco).
+    expect(screen.getByText("olha nossos cafés")).toBeTruthy();
+    const trilho = screen.getByRole("list", { name: "Carrossel enviado ao lead" });
+    expect(trilho.className).toContain("overflow-x-auto");
+    const cards = trilho.querySelectorAll(":scope > li");
+    expect(cards.length).toBe(2);
+    expect(cards[0].querySelector("img")?.getAttribute("src")).toBe("https://cdn.example/1.jpg");
+    expect(cards[0].textContent).toContain("Clássico");
+    expect(cards[0].textContent).toContain("Quero esse");
+    expect(container.querySelectorAll("img").length).toBe(2);
+  });
+
+  it("carrossel cujo content não começa pelos cards mostra o content inteiro", () => {
+    bot(
+      { interativo: { tipo: "carrossel", cards: [{ imagem: "https://cdn.example/1.jpg", texto: "Card A", botoes: [] }] } },
+      { content: "texto qualquer" }
+    );
+    expect(screen.getByText("texto qualquer")).toBeTruthy();
+  });
+
+  it("metadata malformado: só o texto, como antes", () => {
+    const { container } = bot({ interativo: { tipo: "botoes", botoes: "Sim" } }, { content: "oi" });
+    expect(screen.getByText("oi")).toBeTruthy();
+    expect(screen.queryByRole("list")).toBeNull();
+    expect(container.querySelector("img")).toBeNull();
+  });
+
+  it("o toque do lead continua sendo o chip 'Clicou'", () => {
+    renderBubble({
+      role: "user",
+      message_type: "button",
+      content: "Fazer pedido",
+      metadata: { payload: "pedido", title: "Fazer pedido" },
+    });
+    expect(screen.getByText("Clicou")).toBeTruthy();
+    expect(screen.getByText("Fazer pedido")).toBeTruthy();
+    expect(screen.queryByRole("list")).toBeNull();
   });
 });

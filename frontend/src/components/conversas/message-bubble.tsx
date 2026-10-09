@@ -4,6 +4,12 @@ import { formatTimeOnly } from "@/lib/datetime";
 import { senderBadge } from "@/lib/sender-badge";
 import { readButtonClick } from "@/lib/button-click";
 import { mediaCaption, reactionExtraText } from "@/lib/message-visible-text";
+import {
+  carrosselCorpo,
+  readInterativo,
+  type InterativoCarrossel,
+  type InterativoLista,
+} from "@/lib/message-interativo";
 
 function DeliveryTick({
   status,
@@ -162,6 +168,107 @@ function ReactionTargetBlock({
   );
 }
 
+// ── A tela interativa que o bot mandou (metadata.interativo) ─────────────────
+// Desenhada como o lead a viu no WhatsApp, mas NÃO clicável: o vendedor está lendo o que
+// o lead recebeu, e um botão "de verdade" aqui sugeriria que clicar responde pelo lead.
+// Só aparece em bolha nossa (fundo #111111), então a paleta é a translúcida branca da
+// bolha outbound + o azul dos ticks de lido (#53bdeb) como cor de ação.
+
+function ReplyGlyph() {
+  return (
+    <svg className="flex-shrink-0" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <polyline points="9 17 4 12 9 7" />
+      <path d="M20 18v-2a4 4 0 0 0-4-4H4" />
+    </svg>
+  );
+}
+
+/** Botões de resposta: uma linha por rótulo, separadas por divisória fina, centralizadas. */
+function InteractiveButtons({ labels, label, className = "" }: { labels: string[]; label: string; className?: string }) {
+  return (
+    <ul aria-label={label} className={`border-t border-white/15 ${className}`}>
+      {labels.map((rotulo, i) => (
+        <li
+          key={`${i}-${rotulo}`}
+          className="flex items-center justify-center gap-1.5 px-2 py-1.5 text-center text-[13px] font-medium leading-tight text-[#53bdeb] [&:not(:last-child)]:border-b [&:not(:last-child)]:border-white/15"
+        >
+          <ReplyGlyph />
+          <span className="min-w-0">{rotulo}</span>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+/** Menu de lista: "☰ <botão>" que abre/fecha as linhas (fechado por padrão, como no WhatsApp). */
+function InteractiveList({ lista }: { lista: InterativoLista }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="-mx-3 mt-2 -mb-2 border-t border-white/15">
+      <button
+        type="button"
+        aria-expanded={open}
+        onClick={() => setOpen((v) => !v)}
+        title={open ? "Esconder as opções enviadas" : "Ver as opções enviadas ao lead"}
+        className="flex w-full items-center justify-center gap-1.5 px-3 py-1.5 text-[13px] font-medium text-[#53bdeb] transition-colors hover:bg-white/5"
+      >
+        <span aria-hidden="true">☰</span>
+        <span className="min-w-0">{lista.botao}</span>
+      </button>
+      {open && (
+        <ul aria-label="Opções da lista" className="flex flex-col gap-2 border-t border-white/15 px-3 py-2">
+          {lista.linhas.map((linha, i) => (
+            <li key={`${i}-${linha.titulo}`} className="min-w-0">
+              <p className="text-[13px] font-semibold leading-snug text-white">{linha.titulo}</p>
+              {linha.descricao && (
+                <p className="text-[12px] leading-snug text-white/60">{linha.descricao}</p>
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Carrossel: trilho horizontal de cards. `overflow-x-auto` + `max-w-full` DENTRO da bolha
+ * (que já tem `min-w-0` e `max-w-[75%]`): os cards rolam sem alargar a coluna do chat,
+ * inclusive no celular.
+ */
+function InteractiveCarousel({ carrossel }: { carrossel: InterativoCarrossel }) {
+  return (
+    <ul
+      aria-label="Carrossel enviado ao lead"
+      className="mt-2 flex max-w-full min-w-0 snap-x gap-2 overflow-x-auto pb-1"
+    >
+      {carrossel.cards.map((card, i) => (
+        <li
+          key={i}
+          className="flex w-[160px] flex-none snap-start flex-col overflow-hidden rounded-[6px] bg-white/10"
+        >
+          {card.imagem ? (
+            <img
+              src={card.imagem}
+              alt={`Card ${i + 1} do carrossel`}
+              loading="lazy"
+              className="block h-[120px] w-full bg-white/5 object-cover"
+            />
+          ) : null}
+          {card.texto && (
+            <p className="whitespace-pre-wrap break-words px-2 py-1.5 text-[12px] leading-snug">
+              {card.texto}
+            </p>
+          )}
+          {card.botoes.length > 0 && (
+            <InteractiveButtons labels={card.botoes} label={`Botões do card ${i + 1}`} className="mt-auto" />
+          )}
+        </li>
+      ))}
+    </ul>
+  );
+}
+
 function MessageBubbleImpl({ message, isGrouped, conversationId, onReply, onReact, onScrollToMessage, onContactDispatch }: MessageBubbleProps) {
   const isFromMe = message.role === "assistant";
   const isTemp = message.id.startsWith("temp_");
@@ -180,6 +287,10 @@ function MessageBubbleImpl({ message, isGrouped, conversationId, onReply, onReac
   const isReaction = message.message_type === "reaction";
   // Clique em botão (fluxo de botões / quick reply de template): não é texto digitado.
   const buttonClick = readButtonClick(message);
+  // Tela que o bot mandou (botões / lista / carrossel). Malformado ou ausente = null, e a
+  // bolha segue como antes. Nunca vale para o clique do lead (readInterativo garante).
+  const interativo = readInterativo(message);
+  const [interativoImgError, setInterativoImgError] = useState(false);
 
   // Texto do lead que o ternário de tipo abaixo desenha por cima: a legenda anexada à
   // mídia e a frase digitada na mesma janela do buffer em que ele reagiu. Ambas moram em
@@ -581,8 +692,33 @@ function MessageBubbleImpl({ message, isGrouped, conversationId, onReply, onReac
             )}
           </div>
         ) : (
-          <p className="whitespace-pre-wrap break-words">{message.content}</p>
+          (() => {
+            // Foto do header dos botões, acima do texto. Quando a linha já é `image` a
+            // foto sai pelo ramo de mídia acima e não chega aqui (sem foto duplicada).
+            const headerImg =
+              interativo?.tipo === "botoes" && interativo.imagem && !interativoImgError
+                ? interativo.imagem
+                : null;
+            const corpo =
+              interativo?.tipo === "carrossel"
+                ? carrosselCorpo(message.content ?? "", interativo.cards)
+                : message.content;
+            return (
+              <>
+                {headerImg && (
+                  <img
+                    src={headerImg}
+                    alt="Imagem enviada com os botões"
+                    className="max-w-[240px] max-h-[320px] object-contain rounded-[4px] block mb-1"
+                    onError={() => setInterativoImgError(true)}
+                  />
+                )}
+                {corpo && <p className="whitespace-pre-wrap break-words">{corpo}</p>}
+              </>
+            );
+          })()
         )}
+        {interativo?.tipo === "carrossel" && <InteractiveCarousel carrossel={interativo} />}
         {attachedText && (
           <p className="whitespace-pre-wrap break-words mt-1">{attachedText}</p>
         )}
@@ -607,6 +743,11 @@ function MessageBubbleImpl({ message, isGrouped, conversationId, onReply, onReac
             <DeliveryTick status={message.delivery_status} />
           )}
         </div>
+        {/* Botões e lista ficam ABAIXO da hora, como no WhatsApp: divisória até a borda. */}
+        {interativo?.tipo === "botoes" && (
+          <InteractiveButtons labels={interativo.botoes} label="Botões enviados ao lead" className="-mx-3 mt-2 -mb-2" />
+        )}
+        {interativo?.tipo === "lista" && <InteractiveList lista={interativo} />}
         {reactionBadge}
       </div>
     </div>
