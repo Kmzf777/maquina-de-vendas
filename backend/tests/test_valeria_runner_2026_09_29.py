@@ -326,3 +326,137 @@ async def test_falha_do_provedor_nao_impede_o_avanco_do_estado(turno):
     turno.provedor.send_interactive_list = explode
     estado = await turno("oi")
     assert estado["node"] == reg.NO_ENTRADA
+
+
+# ── metadata.interativo: o CRM mostra a tela que o lead recebeu (09/10/2026) ──
+# O /conversas mostrava só o TEXTO: o vendedor não via a lista, os botões nem a foto
+# que o lead tinha na tela. A linha persistida carrega a estrutura em
+# `metadata["interativo"]` (forma em `button_flow/interativo.py`).
+from app.button_flow import valeria_engine as _motor  # noqa: E402
+from app.button_flow.engine import Mensagem as _Mensagem  # noqa: E402
+
+
+@pytest.fixture
+def enviar(monkeypatch):
+    """Dirige `runner._enviar` direto, gravando os kwargs de cada `save_message`."""
+    salvas = []
+    monkeypatch.setattr(runner, "save_message",
+                        lambda *a, **k: salvas.append({"content": a[3], **k}))
+    monkeypatch.setattr(runner, "resolve_send_target", lambda _l, phone: phone)
+    monkeypatch.setattr(runner, "preco_do_no", lambda _no: "R$ 28,70")
+    publicadas = {}
+
+    def _publicar(caminho):
+        # Como o real: sucesso entra no cache de onde `_persistir_mensagem` lê.
+        url = f"https://storage.exemplo/{caminho}"
+        runner._urls_de_foto[caminho] = url
+        publicadas[caminho] = url
+        return url
+    monkeypatch.setattr(runner, "url_publica_da_foto", _publicar)
+    provedor = ProvedorFalso()
+
+    async def _rodar(destino, *, corpo=None, nudge=False, rotulo_lista=None, nos=None,
+                     terminais=None):
+        nos = reg.NOS if nos is None else nos
+        terminais = reg.TERMINAIS if terminais is None else terminais
+        alvo = nos.get(destino) or terminais.get(destino)
+        botoes = getattr(alvo, "botoes", ())
+        decisao = _motor.Decisao(
+            proximo_no=destino, marcar_nudge=nudge,
+            mensagem=_Mensagem(corpo=corpo if corpo is not None else alvo.corpo,
+                               botoes=botoes))
+        await runner._enviar(decisao, lead={"id": "L1", "phone": "5534988861441"},
+                             conversation={"id": "C1", "stage": "atacado"},
+                             channel={"mode": "ai"}, provider=provedor, nos=nos,
+                             terminais=terminais, rotulo_lista=rotulo_lista)
+        return salvas[-1] if salvas else None
+
+    _rodar.salvas = salvas
+    _rodar.provedor = provedor
+    yield _rodar
+    runner.limpar_cache_de_fotos()
+
+
+@pytest.mark.asyncio
+async def test_tela_de_lista_grava_o_menu_no_metadata(enviar):
+    salva = await enviar("N0")
+    assert salva["metadata"] == {"interativo": {
+        "tipo": "lista", "botao": reg.ROTULO_BOTAO_LISTA,
+        "linhas": [{"titulo": b.rotulo, "descricao": b.descricao}
+                   for b in reg.NOS["N0"].botoes],
+    }}
+
+
+@pytest.mark.asyncio
+async def test_rotulo_da_lista_editado_e_o_que_vai_para_o_metadata(enviar):
+    salva = await enviar("N0", rotulo_lista="Escolher")
+    assert salva["metadata"]["interativo"]["botao"] == "Escolher"
+
+
+@pytest.mark.asyncio
+async def test_tela_de_botoes_grava_os_rotulos_sem_imagem(enviar):
+    salva = await enviar("N1")
+    assert salva["metadata"] == {"interativo": {
+        "tipo": "botoes", "imagem": None,
+        "botoes": [b.rotulo for b in reg.NOS["N1"].botoes],
+    }}
+
+
+@pytest.mark.asyncio
+async def test_tela_de_foto_grava_a_url_publica_que_foi_no_header(enviar):
+    salva = await enviar("N5")
+    url = enviar.provedor.chamadas[-1][3]
+    assert url, "o header de imagem não saiu"
+    assert salva["metadata"]["interativo"] == {
+        "tipo": "botoes", "imagem": url,
+        "botoes": [b.rotulo for b in reg.NOS["N5"].botoes],
+    }
+    assert salva["media_url"] == url, "o media_url de antes continua"
+
+
+@pytest.mark.asyncio
+async def test_nudge_do_no_de_foto_grava_os_botoes_e_nenhuma_imagem(enviar):
+    """O nudge reenvia os MESMOS botões sem a foto: o metadata descreve o que saiu."""
+    await enviar("N5")
+    salva = await enviar("N5", corpo=reg.CORPO_NUDGE, nudge=True)
+    assert enviar.provedor.chamadas[-1][3] is None
+    assert salva["content"] == reg.CORPO_NUDGE
+    assert salva["metadata"]["interativo"]["imagem"] is None
+    assert salva["metadata"]["interativo"]["botoes"] == [b.rotulo for b in reg.NOS["N5"].botoes]
+
+
+@pytest.mark.asyncio
+async def test_terminal_de_adiamento_grava_a_folha_de_prazos(enviar):
+    salva = await enviar("T_ADIAR")
+    assert salva["metadata"] == {"interativo": {
+        "tipo": "botoes", "imagem": None, "botoes": [b.rotulo for b in reg.BOTOES_PRAZO],
+    }}
+
+
+@pytest.mark.asyncio
+async def test_terminal_de_texto_nao_grava_estrutura(enviar):
+    salva = await enviar("T_ADIADO", corpo="te chamo em 30 dias")
+    assert enviar.provedor.chamadas[-1][0] == "texto"
+    assert salva.get("metadata") is None
+
+
+@pytest.mark.asyncio
+async def test_erro_ao_montar_a_estrutura_nao_custa_o_registro(enviar, monkeypatch):
+    from app.button_flow import interativo
+
+    def explode(*_a, **_k):
+        raise RuntimeError("rótulo estranho")
+    monkeypatch.setattr(interativo, "botoes", explode)
+    salva = await enviar("N1")
+    assert enviar.provedor.chamadas[-1][0] == "botoes", "o envio aconteceu"
+    assert salva is not None, "a mensagem não foi persistida"
+    assert salva.get("metadata") is None
+
+
+@pytest.mark.asyncio
+async def test_turno_completo_persiste_a_lista_da_entrada(turno, monkeypatch):
+    """De ponta a ponta: o primeiro contato grava a lista do N0 na linha."""
+    salvas = []
+    monkeypatch.setattr(runner, "save_message", lambda *a, **k: salvas.append(k))
+    await turno("oi")
+    assert salvas[-1]["metadata"]["interativo"]["tipo"] == "lista"

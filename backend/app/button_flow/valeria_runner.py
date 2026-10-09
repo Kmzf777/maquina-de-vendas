@@ -85,7 +85,7 @@ from app.agent.tools import (
     SUPERVISOR_NAME,
     SUPERVISOR_PHONE,
 )
-from app.button_flow import config, effects, valeria_content, valeria_registry as reg
+from app.button_flow import config, effects, interativo, valeria_content, valeria_registry as reg
 from app.button_flow import valeria_engine as motor
 from app.button_flow import flows
 from app.button_flow.engine import Clique, Mensagem, Texto, normalizar
@@ -799,7 +799,8 @@ async def _enviar(decisao: motor.Decisao, *, lead: dict, conversation: dict,
     if resultado is None:
         return
     await _persistir_mensagem(conversation, lead, mensagem, contexto, no, resultado,
-                              sem_foto=decisao.marcar_nudge)
+                              sem_foto=decisao.marcar_nudge, terminal=terminal,
+                              rotulo_lista=rotulo_lista)
     await _enviar_cartao(provider, destino, terminal, channel,
                          conversation=conversation, lead=lead)
 
@@ -889,8 +890,33 @@ async def _enviar_cartao(provider, destino: str, terminal: reg.Terminal | None,
                        conversation.get("id"), exc)
 
 
+def estrutura_da_tela(no: reg.No | None, terminal: reg.Terminal | None, *,
+                      imagem: str | None = None,
+                      rotulo_lista: str | None = None) -> dict | None:
+    """A tela interativa que `enviar_no`/`enviar_terminal` mandou, para o CRM.
+
+    Espelha a ESTRUTURA do envio (lista, botões com ou sem foto, folha de prazos do
+    terminal) e por isso lê as mesmas fontes que ele: `no.tela`, `no.botoes`, o
+    rótulo da lista com override e `reg.BOTOES_PRAZO`. None = a mensagem saiu como
+    texto puro e não há tela a descrever.
+    """
+    if no is not None:
+        if no.tela == "lista":
+            return interativo.lista(rotulo_lista or reg.ROTULO_BOTAO_LISTA,
+                                    [(b.titulo, b.descricao) for b in no.botoes])
+        if not no.botoes:
+            return None
+        return interativo.botoes([b.titulo for b in no.botoes],
+                                 imagem=imagem if no.tela == "foto_botoes" else None)
+    if terminal is not None and terminal.prazos:
+        return interativo.botoes([b.titulo for b in reg.BOTOES_PRAZO])
+    return None
+
+
 async def _persistir_mensagem(conversation: dict, lead: dict, mensagem, contexto,
-                              no, resultado, *, sem_foto: bool = False) -> None:
+                              no, resultado, *, sem_foto: bool = False,
+                              terminal: reg.Terminal | None = None,
+                              rotulo_lista: str | None = None) -> None:
     """Grava a saída em `messages`. Fail-soft: a mídia JÁ foi entregue.
 
     `media_url` só sai do CACHE (`_urls_de_foto`), nunca de uma publicação nova:
@@ -902,17 +928,23 @@ async def _persistir_mensagem(conversation: dict, lead: dict, mensagem, contexto
     cacheada — gravá-la aqui faria a bolha do CRM mostrar ao vendedor uma imagem que o
     lead não recebeu neste turno, com `message_type="image"`. O registro tem de
     descrever a mensagem que saiu.
+
+    `metadata.interativo` (ver `button_flow/interativo.py`) é a tela que o lead
+    recebeu — lista, botões, foto — para a bolha do CRM mostrá-la ao vendedor.
+    Fail-soft dentro de `interativo.metadata`: a estrutura nunca custa o registro.
     """
     media = None
     if not sem_foto and no is not None and no.foto:
         media = _urls_de_foto.get(no.foto)
+    metadata = interativo.metadata(lambda: estrutura_da_tela(
+        no, terminal, imagem=media, rotulo_lista=rotulo_lista))
     try:
         await asyncio.to_thread(
             save_message, conversation.get("id"), lead.get("id"), "assistant",
             _resolver(mensagem.corpo, contexto), conversation.get("stage"),
             sent_by="valeria_botoes", media_url=media,
             message_type="image" if media else None,
-            wamid=extract_wamid(resultado),
+            wamid=extract_wamid(resultado), metadata=metadata,
         )
     except Exception as exc:
         logger.warning("%s mensagem enviada mas não persistida conv=%s: %s",
