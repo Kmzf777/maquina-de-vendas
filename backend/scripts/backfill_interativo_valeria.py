@@ -20,6 +20,10 @@ linhas antigas, para o vendedor ver também o histórico.
    tela anterior da mesma conversa, na ordem de `created_at`. Sem tela anterior
    casada, a linha é pulada (nunca chutada).
 3. Casamento ambíguo (dois nós com o mesmo corpo) ou nenhum: a linha fica como está.
+4. RÓTULO EDITADO: nó que tem `rotulos_antigos` em `valeria_flow_content` teve algum
+   botão renomeado na tela. Não há como saber qual rótulo o lead viu naquela linha,
+   então ela (e o nudge que reenviou aquela tela) fica de fora, contada como
+   `rotulo_editado` — gravar o rótulo de HOJE mostraria uma tela que o lead não viu.
 
 LIMITES CONHECIDOS: overrides são os de HOJE. Uma linha enviada com um corpo que foi
 editado depois não casa (aparece em "sem_casamento") — e é o comportamento certo:
@@ -60,6 +64,7 @@ SENT_BY = "valeria_botoes"
 # As linhas desse período foram enviadas com ele.
 NUDGE_ANTIGO = "pra eu te passar o valor certo, é só tocar numa das opções 👇"
 _MARCADOR = re.compile(r"\{[a-z_]+\}")
+_EDITADA = "rotulo_editado"
 
 
 # ── Lógica pura (o que o teste exercita) ────────────────────────────────────
@@ -89,6 +94,7 @@ class Tela:
     linhas: tuple[tuple[str, str], ...] = ()
     botao_lista: str = reg.ROTULO_BOTAO_LISTA
     com_foto: bool = False
+    rotulo_editado: bool = False
 
     def estrutura(self, media_url: str | None = None) -> dict:
         if self.tipo == "lista":
@@ -96,8 +102,17 @@ class Tela:
         return interativo.botoes(self.rotulos, imagem=media_url if self.com_foto else None)
 
 
-def montar_telas(nos: dict, terminais: dict, *, rotulo_lista: str | None = None) -> list[Tela]:
-    """As telas candidatas, espelhando `valeria_runner.enviar_no`/`enviar_terminal`."""
+def nos_com_rotulo_editado(overrides: dict) -> set[str]:
+    """Nós com algum botão renomeado (há `rotulos_antigos`). Mesma leitura do runner."""
+    return set(valeria_content.historico_de_rotulos(overrides))
+
+
+def montar_telas(nos: dict, terminais: dict, *, rotulo_lista: str | None = None,
+                 editados: set[str] | frozenset = frozenset()) -> list[Tela]:
+    """As telas candidatas, espelhando `valeria_runner.enviar_no`/`enviar_terminal`.
+
+    `editados` marca as telas cujo rótulo mudou depois do envio (`nos_com_rotulo_editado`).
+    """
     telas: list[Tela] = []
     for no in nos.values():
         if not no.botoes or not _linhas(no.corpo):
@@ -105,15 +120,18 @@ def montar_telas(nos: dict, terminais: dict, *, rotulo_lista: str | None = None)
         if no.tela == "lista":
             telas.append(Tela(no.id, "lista", _padrao(no.corpo),
                               linhas=tuple((b.titulo, b.descricao) for b in no.botoes),
-                              botao_lista=rotulo_lista or reg.ROTULO_BOTAO_LISTA))
+                              botao_lista=rotulo_lista or reg.ROTULO_BOTAO_LISTA,
+                              rotulo_editado=no.id in editados))
         elif no.tela in ("botoes", "foto_botoes"):
             telas.append(Tela(no.id, "botoes", _padrao(no.corpo),
                               rotulos=tuple(b.titulo for b in no.botoes),
-                              com_foto=no.tela == "foto_botoes"))
+                              com_foto=no.tela == "foto_botoes",
+                              rotulo_editado=no.id in editados))
     for terminal in terminais.values():
         if terminal.prazos and _linhas(terminal.corpo):
             telas.append(Tela(terminal.id, "botoes", _padrao(terminal.corpo),
-                              rotulos=tuple(b.titulo for b in reg.BOTOES_PRAZO)))
+                              rotulos=tuple(b.titulo for b in reg.BOTOES_PRAZO),
+                              rotulo_editado=terminal.id in editados))
     return telas
 
 
@@ -143,8 +161,9 @@ def inferir(linhas: list[dict], telas: list[Tela],
     """
     nudges = {"\n".join(_linhas(c)) for c in corpos_nudge if c}
     contagem = {"lidas": 0, "ja_tinha": 0, "tela": 0, "nudge": 0, "nudge_sem_tela": 0,
-                "ambiguo": 0, "sem_casamento": 0}
-    ultima: dict[str, dict] = {}
+                "ambiguo": 0, "sem_casamento": 0, "rotulo_editado": 0}
+    # Tela anterior por conversa; `_EDITADA` = a tela casou, mas com rótulo editado.
+    ultima: dict[str, dict | str] = {}
     escritas: list[tuple[str, dict]] = []
     for linha in linhas:
         contagem["lidas"] += 1
@@ -160,6 +179,9 @@ def inferir(linhas: list[dict], telas: list[Tela],
             if anterior is None:
                 contagem["nudge_sem_tela"] += 1
                 continue
+            if anterior == _EDITADA:
+                contagem["rotulo_editado"] += 1
+                continue
             estrutura = _do_nudge(anterior)
             contagem["nudge"] += 1
         else:
@@ -167,6 +189,10 @@ def inferir(linhas: list[dict], telas: list[Tela],
             if len(casadas) != 1:
                 contagem["ambiguo" if casadas else "sem_casamento"] += 1
                 ultima.pop(conv, None)
+                continue
+            if casadas[0].rotulo_editado:
+                contagem["rotulo_editado"] += 1
+                ultima[conv] = _EDITADA
                 continue
             media = linha.get("media_url") if linha.get("message_type") == "image" else None
             estrutura = casadas[0].estrutura(media)
@@ -186,7 +212,8 @@ def _conteudo_atual() -> tuple[list[Tela], set[str]]:
     terminais = valeria_content.aplicar_terminais(reg.TERMINAIS, overrides)
     rotulo_lista = (overrides.get(reg.CHAVE_ROTULO_LISTA) or {}).get("corpo")
     nudge = (overrides.get(reg.CHAVE_NUDGE) or {}).get("corpo")
-    return (montar_telas(nos, terminais, rotulo_lista=rotulo_lista),
+    return (montar_telas(nos, terminais, rotulo_lista=rotulo_lista,
+                         editados=nos_com_rotulo_editado(overrides)),
             {reg.CORPO_NUDGE, NUDGE_ANTIGO, nudge or ""})
 
 
@@ -208,17 +235,23 @@ def _ler_linhas(db, desde: str | None) -> list[dict]:
         inicio += _PAGINA
 
 
-def _gravar(db, escritas: list[tuple[str, dict]]) -> tuple[int, int]:
-    gravadas, erros = 0, 0
+def _gravar(db, escritas: list[tuple[str, dict]]) -> dict:
+    """Grava com o UPDATE protegido. Só conta como gravada a linha que ele DEVOLVEU.
+
+    `sem_efeito` = o filtro `metadata->interativo is null` não casou (a linha ganhou
+    `interativo` entre a leitura e a escrita, ou sumiu) — nada foi alterado.
+    """
+    contagem = {"gravadas": 0, "sem_efeito": 0, "erros": 0}
     for message_id, metadata in escritas:
         try:
-            (db.table("messages").update({"metadata": metadata})
-             .eq("id", message_id).is_("metadata->interativo", "null").execute())
-            gravadas += 1
+            resultado = (db.table("messages").update({"metadata": metadata})
+                         .eq("id", message_id).is_("metadata->interativo", "null").execute())
         except Exception as exc:
-            erros += 1
+            contagem["erros"] += 1
             logger.error("backfill_interativo_valeria: %s não gravada: %s", message_id, exc)
-    return gravadas, erros
+            continue
+        contagem["gravadas" if getattr(resultado, "data", None) else "sem_efeito"] += 1
+    return contagem
 
 
 def main() -> None:
@@ -244,8 +277,7 @@ def main() -> None:
     if not args.apply:
         print(f"DRY-RUN: {len(escritas)} linhas seriam gravadas. Rode com --apply para gravar.")
         return
-    gravadas, erros = _gravar(db, escritas)
-    print(f"gravadas: {gravadas}  erros: {erros}")
+    print("gravação:", _gravar(db, escritas))
 
 
 if __name__ == "__main__":

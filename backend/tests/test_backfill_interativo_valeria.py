@@ -103,3 +103,59 @@ def test_metadata_existente_e_mesclado():
     linhas = [_linha(reg.NOS["N1"].corpo, id="a", meta={"auto": True})]
     [(_, meta)] = inferir(linhas, TELAS, NUDGES)[0]
     assert meta["auto"] is True and meta["interativo"]["tipo"] == "botoes"
+
+
+# ── Rótulo editado depois do envio: não desenhar o rótulo de HOJE ─────────────
+def test_no_com_rotulo_editado_e_pulado_como_rotulo_editado():
+    """O lead viu o rótulo ANTIGO; gravar o de hoje mostraria ao vendedor uma tela que
+    o lead nunca recebeu."""
+    telas = montar_telas(reg.NOS, reg.TERMINAIS, editados={"N1"})
+    linhas = [_linha(reg.NOS["N1"].corpo, id="a"), _linha(reg.CORPO_NUDGE, id="b"),
+              _linha(reg.NOS["N0"].corpo, id="c")]
+    escritas, contagem = inferir(linhas, telas, NUDGES)
+    assert [i for i, _ in escritas] == ["c"]
+    # O nudge reenvia os botões do nó editado: também fica de fora, pelo mesmo motivo.
+    assert contagem["rotulo_editado"] == 2
+    assert contagem["tela"] == 1 and contagem["nudge"] == 0
+
+
+def test_editados_vem_do_historico_de_rotulos_dos_overrides():
+    from scripts.backfill_interativo_valeria import nos_com_rotulo_editado
+    overrides = {
+        "N1": {"corpo": None, "rotulos": {}, "rotulos_antigos": [
+            {"botao_id": reg.NOS["N1"].botoes[0].id, "rotulo": "Antigo", "em": "2026-09-30"}]},
+        "N2": {"corpo": "novo", "rotulos": {}, "rotulos_antigos": []},
+    }
+    assert nos_com_rotulo_editado(overrides) == {"N1"}
+
+
+# ── Só conta como gravada a linha que o UPDATE protegido de fato alterou ──────
+class _DbFalso:
+    """`update().eq().is_().execute()` devolvendo `data` por id."""
+
+    def __init__(self, alteradas):
+        self.alteradas = alteradas
+
+    def table(self, _nome):
+        return self
+
+    def update(self, _valores):
+        return self
+
+    def eq(self, _col, valor):
+        self._id = valor
+        return self
+
+    def is_(self, *_a):
+        return self
+
+    def execute(self):
+        if self._id == "explode":
+            raise RuntimeError("PostgREST fora")
+        return type("R", (), {"data": [{"id": self._id}] if self._id in self.alteradas else []})()
+
+
+def test_gravar_conta_so_o_update_que_devolveu_linha():
+    from scripts.backfill_interativo_valeria import _gravar
+    escritas = [("a", {}), ("ja_tinha", {}), ("explode", {})]
+    assert _gravar(_DbFalso({"a"}), escritas) == {"gravadas": 1, "sem_efeito": 1, "erros": 1}
