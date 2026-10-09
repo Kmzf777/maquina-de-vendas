@@ -837,3 +837,105 @@ def test_effects_sem_a_nota_generica_quando_a_v2_pede():
     assert "[TRANSBORDO p/ " in notas[0]
     assert notas[0].endswith(f"{effects.FLUXO_VALERIA}: lead pediu atendimento do vendedor.")
     assert "Nenhuma qualificação" not in notas[0]
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# metadata.interativo: o CRM mostra a tela que o lead recebeu (09/10/2026)
+# ═══════════════════════════════════════════════════════════════════════════
+@pytest.fixture
+def com_metadata(turno, monkeypatch):
+    """Grava também os kwargs de cada `save_message` (o `_salvar` do turno só guarda
+    os campos que os testes de cima leem) e delega a ele."""
+    linhas = []
+    original = v2.save_message
+
+    def _salvar(*a, **k):
+        linhas.append({"content": a[3], **k})
+        return original(*a, **k)
+
+    monkeypatch.setattr(v1, "save_message", _salvar)
+    monkeypatch.setattr(v2, "save_message", _salvar)
+    turno.linhas = linhas
+    return turno
+
+
+@pytest.mark.asyncio
+async def test_carrossel_grava_os_cards_como_enviados(com_metadata):
+    turno = com_metadata
+    await turno(PRONTA_ATACADO)
+    _, _corpo, cards = turno.provedor.chamadas[0]
+    carrossel = turno.linhas[0]
+    # O preview continua texto: sem `message_type` e com corpo + textos dos cards.
+    assert carrossel["message_type"] is None
+    assert carrossel["content"].startswith(r2.NOS["VA"].corpo)
+    assert carrossel["metadata"] == {"interativo": {
+        "tipo": "carrossel",
+        "cards": [{"imagem": c["image_url"], "texto": c["body"], "botoes": ["Quero esse"]}
+                  for c in cards],
+    }}
+
+
+@pytest.mark.asyncio
+async def test_vitrine_grava_os_botoes_de_acao_e_a_tabela_fica_texto(com_metadata):
+    turno = com_metadata
+    await turno(PRONTA_ATACADO)
+    tabela, acoes = turno.linhas[1], turno.linhas[2]
+    assert tabela.get("metadata") is None
+    assert acoes["metadata"] == {"interativo": {
+        "tipo": "botoes", "imagem": None,
+        "botoes": [b.rotulo for b in r2.NOS["VA"].botoes],
+    }}
+
+
+@pytest.mark.asyncio
+async def test_carrossel_recusado_grava_os_botoes_com_a_foto(com_metadata):
+    turno = com_metadata
+    turno.provedor.carrossel_explode = True
+    await turno(PRONTA_ATACADO)
+    botoes = turno.linhas[-1]
+    assert botoes["metadata"]["interativo"] == {
+        "tipo": "botoes", "imagem": "https://storage.exemplo/atacado/foto_1_classico.jpg",
+        "botoes": [b.rotulo for b in r2.NOS["VA"].botoes],
+    }
+
+
+@pytest.mark.asyncio
+async def test_cards_como_texto_nao_gravam_estrutura(com_metadata):
+    turno = com_metadata
+    turno.catalogo["linhas"] = [p for p in catalogo_producao()
+                                if "Suave" not in p["name"] and "Microlote" not in p["name"]]
+    await turno(PRONTA_ATACADO)
+    assert turno.linhas[0].get("metadata") is None
+
+
+@pytest.mark.asyncio
+async def test_nudge_na_vitrine_grava_os_botoes_reoferecidos(com_metadata):
+    turno = com_metadata
+    turno.conversa["flow_state"] = _no(None, "VA", ramo="atacado")
+    await turno("bom dia")
+    assert turno.linhas[-1]["content"] == r2.CORPO_NUDGE
+    assert turno.linhas[-1]["metadata"]["interativo"]["botoes"] == [
+        b.rotulo for b in r2.NOS["VA"].botoes]
+
+
+@pytest.mark.asyncio
+async def test_lista_do_n0_na_v2_grava_o_menu(com_metadata):
+    turno = com_metadata
+    await turno("oi")
+    meta = turno.linhas[-1]["metadata"]["interativo"]
+    assert meta["tipo"] == "lista"
+    assert len(meta["linhas"]) == 4
+
+
+@pytest.mark.asyncio
+async def test_erro_ao_montar_o_carrossel_nao_custa_o_registro(com_metadata, monkeypatch):
+    from app.button_flow import interativo
+
+    def explode(*_a, **_k):
+        raise RuntimeError("card estranho")
+    monkeypatch.setattr(interativo, "carrossel", explode)
+    turno = com_metadata
+    await turno(PRONTA_ATACADO)
+    assert turno.provedor.tipos() == ["carrossel", "texto", "botoes"]
+    assert turno.linhas[0]["content"].startswith(r2.NOS["VA"].corpo)
+    assert turno.linhas[0].get("metadata") is None
