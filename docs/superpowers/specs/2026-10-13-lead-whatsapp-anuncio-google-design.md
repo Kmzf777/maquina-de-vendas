@@ -93,3 +93,15 @@ Decisão do Rafael: basta marcar como **Google Ads**, sem identificar a campanha
 - Enviar conversão offline para o Google Ads.
 - Botão de WhatsApp do Perfil da Empresa no Google (Maps).
 - Outros textos prontos (ex.: os das landing pages) e mudanças de tela no CRM.
+
+## Ajuste pós-entrega (13/10/2026)
+
+Pedido do Rafael: "ao inves de campanha nao rastreada, deixar também que veio do google whatsapp".
+
+- O carimbo e o backfill passam a gravar também `utm_campaign = "WhatsApp do Google"`. O CRM já
+  mostra o `utm_campaign` cru quando a campanha não resolve, então a origem vira
+  "Pago · Google Ads — WhatsApp do Google". No /trafego esses leads ficam numa linha própria,
+  "(não atribuído) · WhatsApp do Google". O rótulo não casa com nenhuma campanha real (teste).
+- O revert também zera `utm_campaign`.
+- Produção: depois do deploy, `--revert` com o JSON de 13/10 (`/root/backfills/...213339.json`) e
+  `--apply` de novo, gerando um JSON novo. Mesmos 131 leads, sem efeito externo.

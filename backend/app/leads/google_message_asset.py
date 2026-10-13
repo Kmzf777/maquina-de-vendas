@@ -3,7 +3,9 @@
 O Google não manda gclid nem UTM para o WhatsApp: a única pista é o texto pronto do botão,
 "Olá, encontrei vocês pelo Google e gostaria de obter mais informações.". Quem chega com ele
 é marcado como Google Ads pago (utm_source=google + utm_medium=cpc — o que derive_channel e o
-lead-origin.ts do CRM já entendem como Google Ads). Sem campanha: o texto não a identifica.
+lead-origin.ts do CRM já entendem como Google Ads). O texto não identifica a campanha: no lugar
+dela vai o rótulo "WhatsApp do Google" em utm_campaign, que o CRM mostra como detalhe da origem e
+o /trafego agrupa em "(não atribuído) · WhatsApp do Google".
 """
 from __future__ import annotations
 
@@ -18,7 +20,9 @@ logger = logging.getLogger(__name__)
 # Trecho do texto pronto, já normalizado (minúsculas, sem acento, espaços colapsados).
 _MARCA = "encontrei voces pelo google"
 
-GOOGLE_ASSET_TRACKING: dict[str, str] = {"utm_source": "google", "utm_medium": "cpc"}
+GOOGLE_ASSET_TRACKING: dict[str, str] = {
+    "utm_source": "google", "utm_medium": "cpc", "utm_campaign": "WhatsApp do Google",
+}
 
 # Qualquer uma preenchida = o lead já tem origem; o carimbo não sobrescreve.
 _ATTRIBUTION_COLUMNS: tuple[str, ...] = (

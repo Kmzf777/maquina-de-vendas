@@ -166,12 +166,14 @@ def test_apply_grava_so_nos_candidatos_e_json_com_os_ids(tmp_path):
     assert json.loads(path.read_text(encoding="utf-8")) == {"lead_ids": ["lead-a"]}
 
     a = _lead_row(sb, "lead-a")
-    assert (a["utm_source"], a["utm_medium"], a["traffic_type"]) == ("google", "cpc", "paid")
+    assert (a["utm_source"], a["utm_medium"], a["utm_campaign"], a["traffic_type"]) == (
+        "google", "cpc", "WhatsApp do Google", "paid")
     for other in ("lead-b", "lead-c", "lead-d"):
         r = _lead_row(sb, other)
         assert (r["utm_source"], r["utm_medium"], r["traffic_type"]) == (None, None, None)
     assert [u for u in sb.updates if u[2]] == [
-        ("leads", {"utm_source": "google", "utm_medium": "cpc", "traffic_type": "paid"}, ["lead-a"])
+        ("leads", {"utm_source": "google", "utm_medium": "cpc", "utm_campaign": "WhatsApp do Google",
+                   "traffic_type": "paid"}, ["lead-a"])
     ]
 
 
@@ -189,7 +191,8 @@ def test_apply_nao_sobrescreve_lead_que_ganhou_utm_no_meio_tempo(tmp_path):
 def test_revert_limpa_so_ids_do_json_que_ainda_sao_google_cpc(tmp_path):
     sb = _fixture()
     for id_ in ("lead-a", "lead-b"):
-        _lead_row(sb, id_).update(utm_source="google", utm_medium="cpc", traffic_type="paid")
+        _lead_row(sb, id_).update(utm_source="google", utm_medium="cpc", utm_campaign="WhatsApp do Google",
+                                  traffic_type="paid")
     # lead-b mudou depois do backfill (não é mais google/cpc)
     _lead_row(sb, "lead-b").update(utm_source="facebook", utm_medium="paid_social")
     # lead-d é google/cpc mas NÃO está no JSON
@@ -201,7 +204,7 @@ def test_revert_limpa_so_ids_do_json_que_ainda_sao_google_cpc(tmp_path):
     count = bf.revert(sb, path)
 
     a = _lead_row(sb, "lead-a")
-    assert (a["utm_source"], a["utm_medium"], a["traffic_type"]) == (None, None, None)
+    assert (a["utm_source"], a["utm_medium"], a["utm_campaign"], a["traffic_type"]) == (None, None, None, None)
     b = _lead_row(sb, "lead-b")
     assert (b["utm_source"], b["utm_medium"], b["traffic_type"]) == ("facebook", "paid_social", "paid")
     d = _lead_row(sb, "lead-d")

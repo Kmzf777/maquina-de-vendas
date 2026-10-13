@@ -5,16 +5,16 @@ Quem clica no botão "Iniciar conversa" do anúncio Google chega com o texto pro
 O carimbo automático (app.leads.google_message_asset) só vale para leads novos; este script
 corrige os antigos: lead cuja PRIMEIRA mensagem do cliente é esse texto e que não tem nenhuma
 atribuição (gclid, fbclid, ctwa_clid, meta_ad_id, utm_*) recebe utm_source=google,
-utm_medium=cpc e traffic_type=paid.
+utm_medium=cpc, utm_campaign="WhatsApp do Google" e traffic_type=paid.
 
 Modos (rodar a partir de backend/):
   python -m scripts.backfill_google_message_asset
       DRY-RUN (padrão): lista quantos leads seriam marcados e até 10 exemplos. Nada é gravado.
   python -m scripts.backfill_google_message_asset --apply [--out-dir DIR]
-      Grava os 3 campos (só onde utm_source ainda é nulo) e salva em DIR um JSON
+      Grava os 4 campos (só onde utm_source ainda é nulo) e salva em DIR um JSON
       backfill_google_message_asset_<UTC>.json com os ids alterados (para reverter).
   python -m scripts.backfill_google_message_asset --revert ARQUIVO.json
-      Desfaz: zera utm_source/utm_medium/traffic_type dos ids do JSON que ainda estão google/cpc.
+      Desfaz: zera utm_source/utm_medium/utm_campaign/traffic_type dos ids do JSON que ainda estão google/cpc.
 """
 from __future__ import annotations
 
@@ -104,7 +104,7 @@ def revert(sb, path: Path) -> int:
     for lead_id in ids:
         res = (
             sb.table("leads")
-            .update({"utm_source": None, "utm_medium": None, "traffic_type": None})
+            .update({"utm_source": None, "utm_medium": None, "utm_campaign": None, "traffic_type": None})
             .eq("id", lead_id)
             .eq("utm_source", "google")
             .eq("utm_medium", "cpc")
