@@ -1282,3 +1282,127 @@ def test_criar_contato_endpoint_sem_aviso_nao_leva_a_chave(monkeypatch):
     )))
 
     assert resp == {"bling_contact_id": 77, "account": "default"}
+
+
+# --------------------------------------------------------------------------
+# Frete do pedido de venda (Registrar venda)
+# --------------------------------------------------------------------------
+# O backend ja sabia por frete no pedido; faltava o `OrderIn` aceitar e repassar.
+# Sem isso a venda com frete gerava pedido, nota e `sales.value` abaixo do
+# combinado. A validacao e a mesma do orcamento (`normalize_freight` e
+# `MODALIDADES_FRETE`), para as duas telas nao divergirem.
+
+def _pedido_com(**extra):
+    return br.OrderIn(
+        lead_id="L1", sold_at="2026-08-18",
+        items=[br.OrderItemIn(bling_product_id=1, quantidade=1, valor_unitario=10.0)],
+        payment=br.PaymentIn(method_id=45, terms=[0]),
+        **extra,
+    )
+
+
+def _prepara_pedido(monkeypatch, capturado, *, nome="create_order", erro=None):
+    monkeypatch.setattr(br, "_load_lead", lambda _id: {"id": "L1"})
+    sb = FakeSupabase(ESPELHO_PRODUTOS)
+    monkeypatch.setattr(br, "get_supabase", lambda: sb)
+
+    async def fake_resolve(lead, account):
+        return Resolution("linked", 555)
+
+    async def fake_chamada(*a, **k):
+        capturado.update(k)
+        if erro is not None:
+            raise erro
+        return {"sale_id": "S1", "bling_order_id": 1, "bling_order_number": 1}
+
+    monkeypatch.setattr(br.contacts, "resolve", fake_resolve)
+    monkeypatch.setattr(br, nome, fake_chamada)
+    monkeypatch.setattr(br, "_seller_id_for", lambda _email, _account: None)
+
+
+def test_criar_pedido_repassa_frete_e_modalidade(monkeypatch):
+    capturado = {}
+    _prepara_pedido(monkeypatch, capturado)
+
+    resp = asyncio.run(br.create_order_endpoint(_pedido_com(freight=35.5, freight_mode=1)))
+
+    assert resp.status_code == 201
+    assert capturado["freight"] == 35.5
+    assert capturado["freight_mode"] == 1
+
+
+def test_criar_pedido_sem_frete_repassa_zero_e_modalidade_nula(monkeypatch):
+    """O front antigo (sem o campo) continua funcionando: default 0/None."""
+    capturado = {}
+    _prepara_pedido(monkeypatch, capturado)
+
+    asyncio.run(br.create_order_endpoint(_pedido_com()))
+
+    assert capturado["freight"] == 0
+    assert capturado["freight_mode"] is None
+
+
+def test_criar_pedido_frete_negativo_vira_zero(monkeypatch):
+    """Frete negativo seria desconto disfarcado — mesma regra do orcamento."""
+    capturado = {}
+    _prepara_pedido(monkeypatch, capturado)
+
+    asyncio.run(br.create_order_endpoint(_pedido_com(freight=-10)))
+
+    assert capturado["freight"] == 0
+
+
+def test_criar_pedido_modalidade_invalida_devolve_422_sem_chamar_o_bling(monkeypatch):
+    """Modalidade fora do enum o Bling ignoraria em silencio — melhor recusar
+    aqui, antes de criar pedido nenhum."""
+    capturado = {}
+    _prepara_pedido(monkeypatch, capturado)
+
+    resp = asyncio.run(br.create_order_endpoint(_pedido_com(freight=10, freight_mode=7)))
+
+    assert resp.status_code == 422
+    assert "freight_mode_invalido" in resp.body.decode()
+    assert capturado == {}, "create_order nao pode ser chamado"
+
+
+def test_criar_pedido_enfileirado_leva_o_frete_no_job(monkeypatch):
+    """A retentativa da fila roda `create_order(**payload)`: se o frete nao for
+    junto no payload, o pedido recriado pelo worker nasce sem ele."""
+    capturado = {}
+    _prepara_pedido(monkeypatch, capturado, erro=BlingServerError("bling fora do ar"))
+    enfileirados = []
+
+    async def fake_enqueue(kind, payload, sale_id=None, account=None):
+        enfileirados.append(payload)
+
+    monkeypatch.setattr(br.jobs, "enqueue", fake_enqueue)
+
+    resp = asyncio.run(br.create_order_endpoint(_pedido_com(freight=20, freight_mode=0)))
+
+    assert resp.status_code == 202
+    assert enfileirados[0]["freight"] == 20
+    assert enfileirados[0]["freight_mode"] == 0
+
+
+def test_atualizar_pedido_repassa_frete_e_modalidade(monkeypatch):
+    """O PUT manda o pedido inteiro: sem repassar o frete, editar a venda
+    apagaria o `transporte` no Bling."""
+    capturado = {}
+    _prepara_pedido(monkeypatch, capturado, nome="update_order")
+
+    resp = asyncio.run(br.update_order_endpoint(
+        34215992, _pedido_com(freight=35.5, freight_mode=1)))
+
+    assert resp.status_code == 200
+    assert capturado["freight"] == 35.5
+    assert capturado["freight_mode"] == 1
+
+
+def test_atualizar_pedido_modalidade_invalida_devolve_422_sem_chamar_o_bling(monkeypatch):
+    capturado = {}
+    _prepara_pedido(monkeypatch, capturado, nome="update_order")
+
+    resp = asyncio.run(br.update_order_endpoint(34215992, _pedido_com(freight_mode=5)))
+
+    assert resp.status_code == 422
+    assert capturado == {}

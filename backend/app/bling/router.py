@@ -39,6 +39,10 @@ from app.bling.errors import (
 from app.bling.orders import create_order, update_order
 from app.config import settings
 from app.db.supabase import get_supabase
+# Mesma regra de frete do orcamento (o modal de venda copia o campo de la). Sem
+# import circular: `proposals` so depende de `app.bling.orders`/`errors`, nunca
+# deste router.
+from app.quotes.proposals import MODALIDADES_FRETE, normalize_freight
 
 logger = logging.getLogger(__name__)
 
@@ -91,6 +95,24 @@ class OrderIn(BaseModel):
     # filtrar chaves — um Query() aqui nunca veria o valor que o vendedor
     # escolheu, porque a URL do proxy para o backend nao carrega query string.
     account: str = config.DEFAULT_ACCOUNT
+    # Frete do pedido (mesma regra do orcamento): negativo vira 0 e a
+    # modalidade e o enum `fretePorConta` do Bling. Default 0/None preserva o
+    # pedido de quem ainda nao manda o campo.
+    freight: float = 0
+    freight_mode: int | None = None
+
+
+def _frete_do_pedido(body: OrderIn) -> tuple[float, int | None] | JSONResponse:
+    """Frete normalizado do corpo, ou 422 se a modalidade nao existe.
+
+    Modalidade invalida e recusada aqui, antes de qualquer chamada ao Bling:
+    la ela seria ignorada em silencio e o pedido nasceria sem modalidade.
+    """
+    if body.freight_mode is not None and body.freight_mode not in MODALIDADES_FRETE:
+        return JSONResponse({"error": "freight_mode_invalido",
+                             "message": f"modalidade de frete invalida: {body.freight_mode}"},
+                            status_code=422)
+    return float(normalize_freight(body.freight)), body.freight_mode
 
 
 # Formato de e-mail: ESPELHO EXATO do `EMAIL_RE` de
@@ -341,6 +363,10 @@ def _products_by_id(ids: list[int], account: str) -> dict[int, dict]:
 @router.post("/orders")
 async def create_order_endpoint(body: OrderIn):
     conta = _conta_valida(body.account)
+    frete = _frete_do_pedido(body)
+    if isinstance(frete, JSONResponse):
+        return frete
+    freight, freight_mode = frete
     lead = await asyncio.to_thread(_load_lead, body.lead_id)
     if not lead:
         return JSONResponse({"error": "lead_not_found"}, status_code=404)
@@ -389,6 +415,10 @@ async def create_order_endpoint(body: OrderIn):
         "payment": {"method_id": body.payment.method_id, "terms": body.payment.terms},
         "seller_id": await asyncio.to_thread(_seller_id_for, body.sold_by, conta.key),
         "notes": body.notes,
+        # Vai no kwargs (e nao so na chamada direta) para que o job da fila,
+        # que roda `create_order(**payload)`, recrie o pedido COM o frete.
+        "freight": freight,
+        "freight_mode": freight_mode,
         "account": conta.key,
     }
 
@@ -423,6 +453,10 @@ async def update_order_endpoint(order_id: int, body: OrderIn):
     se salva so no CRM e marca divergencia. 202 quando o erro e transitorio:
     ai NAO e divergencia, e retentativa (sem job — ver docstring do modulo)."""
     conta = _conta_valida(body.account)
+    frete = _frete_do_pedido(body)
+    if isinstance(frete, JSONResponse):
+        return frete
+    freight, freight_mode = frete
     lead = await asyncio.to_thread(_load_lead, body.lead_id)
     if not lead:
         return JSONResponse({"error": "lead_not_found"}, status_code=404)
@@ -472,6 +506,10 @@ async def update_order_endpoint(order_id: int, body: OrderIn):
         "payment": {"method_id": body.payment.method_id, "terms": body.payment.terms},
         "seller_id": await asyncio.to_thread(_seller_id_for, body.sold_by, conta.key),
         "notes": body.notes,
+        # O PUT substitui o pedido inteiro no Bling: sem repassar o frete,
+        # salvar a edicao apagaria o `transporte` gravado na criacao.
+        "freight": freight,
+        "freight_mode": freight_mode,
         "account": conta.key,
     }
 
