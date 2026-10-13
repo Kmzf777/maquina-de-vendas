@@ -39,6 +39,15 @@ def test_meta_register_lead_carimbo_que_explode_nao_derruba():
         _register_lead("5511999999999", "Maria", text=TEXTO)  # não levanta
 
 
+@pytest.mark.parametrize("sinal_meta", [{"ctwa_clid": "c"}, {"meta_ad_id": "a"}])
+def test_meta_register_lead_clique_de_anuncio_meta_vence_o_texto_google(sinal_meta):
+    from app.webhook.meta_router import _register_lead
+    lead = {"id": "L1", "wa_id": "5511999999999", "wa_id_confirmed_at": "x"}
+    with patch("app.webhook.meta_router.get_or_create_lead", return_value=lead),          patch("app.webhook.meta_router.update_lead"),          patch("app.webhook.meta_router.stamp_google_message_asset") as stamp:
+        _register_lead("5511999999999", "Maria", text=TEXTO, **sinal_meta)
+    stamp.assert_not_called()
+
+
 def test_evolution_register_lead_carimba_com_o_texto():
     from app.webhook.router import _register_lead
     lead = {"id": "L2"}

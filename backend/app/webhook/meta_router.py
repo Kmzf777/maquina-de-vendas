@@ -115,8 +115,11 @@ def _register_lead(
     except Exception as exc:
         logger.warning("Failed to stamp bsuid=%s for lead %s: %s", bsuid, lead.get("id"), exc)
     # Botao de WhatsApp do anuncio Google: o texto pronto e a unica pista (sem gclid/UTM).
+    # Clique de anuncio Meta (ctwa_clid/meta_ad_id) vence: o lead foi atualizado acima e o
+    # dict `lead` esta defasado — carimbar Google aqui atribuiria errado.
     try:
-        stamp_google_message_asset(lead, text)
+        if not (ctwa_clid or meta_ad_id):
+            stamp_google_message_asset(lead, text)
     except Exception as exc:
         logger.warning("Failed to stamp google message asset for lead %s: %s", lead.get("id") if lead else None, exc)
 
