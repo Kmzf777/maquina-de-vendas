@@ -17,6 +17,7 @@ from app.dev_router.service import get_dev_route, is_dev_number
 from app.dev_router.forwarder import forward_to_dev
 from app.db.supabase import get_supabase, run_with_retry
 from app.meta_audit import log_inbound
+from app.leads.google_message_asset import stamp_google_message_asset
 
 logger = logging.getLogger(__name__)
 
@@ -39,6 +40,7 @@ def _register_lead(
     ctwa_origem: str | None = None,
     bsuid: str | None = None,
     meta_ad_id: str | None = None,
+    text: str | None = None,
 ) -> None:
     """Ensure the lead exists in the CRM the moment they contact us (BackgroundTask).
 
@@ -56,6 +58,9 @@ def _register_lead(
     o `ctwa_clid` é persistido no lead — na criação (first-touch, via get_or_create_lead)
     e atualizado quando um novo clique chega (last-touch). Mensagens orgânicas trazem
     ctwa_clid=None e NUNCA sobrescrevem um clid já capturado. Base p/ disparos via CAPI.
+
+    Botão de WhatsApp do anúncio Google: o texto pronto marca o lead sem origem como
+    Google Ads (ver app.leads.google_message_asset).
     """
     try:
         lead = get_or_create_lead(
@@ -109,6 +114,11 @@ def _register_lead(
             update_lead(lead["id"], bsuid=bsuid)
     except Exception as exc:
         logger.warning("Failed to stamp bsuid=%s for lead %s: %s", bsuid, lead.get("id"), exc)
+    # Botao de WhatsApp do anuncio Google: o texto pronto e a unica pista (sem gclid/UTM).
+    try:
+        stamp_google_message_asset(lead, text)
+    except Exception as exc:
+        logger.warning("Failed to stamp google message asset for lead %s: %s", lead.get("id") if lead else None, exc)
 
 
 def _track_inbound_message_time(phone: str) -> None:
@@ -593,7 +603,7 @@ async def receive_meta_webhook(request: Request, background_tasks: BackgroundTas
         # Register lead immediately — guarantees CRM entry before buffer flushes.
         # ctwa_clid (se presente) vincula o lead ao clique do anúncio Meta Ads (CTWA).
         background_tasks.add_task(_register_lead, msg.from_number, msg.push_name, msg.ctwa_clid,
-                                  msg.ctwa_origem, msg.bsuid, msg.meta_ad_id)
+                                  msg.ctwa_origem, msg.bsuid, msg.meta_ad_id, text=msg.text)
 
         # CA#1: o read receipt (tique azul) NÃO é mais disparado aqui na ingestão — isso
         # marcava a mensagem como lida instantaneamente (tique de robô). Agora o mark_read
