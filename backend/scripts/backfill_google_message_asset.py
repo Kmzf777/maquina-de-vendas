@@ -44,6 +44,7 @@ def _matching_lead_ids(sb) -> list[str]:
             .select("lead_id")
             .eq("role", "user")
             .ilike("content", _PATTERN)
+            .order("id")  # páginas estáveis entre chamadas
             .range(start, start + _PAGE_SIZE - 1)
             .execute()
             .data

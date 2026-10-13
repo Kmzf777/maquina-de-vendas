@@ -54,6 +54,7 @@ class _Query:
 
     def range(self, start, end):
         self.range_ = (start, end)
+        self.sb.ranges.append((self.table, self.order_key, start, end))
         return self
 
     def update(self, payload):
@@ -84,6 +85,7 @@ class FakeSB:
     def __init__(self, tables: dict[str, list[dict]]):
         self.tables = tables
         self.updates: list = []
+        self.ranges: list = []  # (table, order_key no momento do range, start, end)
 
     def table(self, name):
         return _Query(self, name)
@@ -242,3 +244,9 @@ def test_main_apply_imprime_so_os_realmente_gravados(tmp_path, capsys, monkeypat
     bf.main(["--apply", "--out-dir", str(tmp_path)], sb=sb)
     out = capsys.readouterr().out
     assert "Aplicado em 0 leads" in out
+
+
+def test_paginacao_ordena_por_id_antes_do_range():
+    sb = _fixture()
+    bf.find_candidates(sb)
+    assert sb.ranges and all(r[:2] == ("messages", "id") for r in sb.ranges)
