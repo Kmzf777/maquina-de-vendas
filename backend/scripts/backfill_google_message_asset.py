@@ -82,10 +82,13 @@ def find_candidates(sb) -> list[dict[str, Any]]:
 
 
 def apply(sb, candidates: list[dict[str, Any]], out_dir: Path) -> Path:
-    ids = [c["id"] for c in candidates]
+    """Grava o carimbo; o JSON lista SÓ os ids cujo update retornou linha (realmente gravados)."""
     payload = {**GOOGLE_ASSET_TRACKING, "traffic_type": "paid"}
-    for lead_id in ids:
-        sb.table("leads").update(payload).eq("id", lead_id).is_("utm_source", "null").execute()
+    ids: list[str] = []
+    for c in candidates:
+        res = sb.table("leads").update(payload).eq("id", c["id"]).is_("utm_source", "null").execute()
+        if res.data:
+            ids.append(c["id"])
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S")
@@ -142,7 +145,8 @@ def main(argv: list[str] | None = None, sb=None) -> None:
         return
 
     path = apply(sb, candidates, Path(args.out_dir))
-    print(f"Aplicado em {len(candidates)} leads. Ids salvos em: {path}")
+    gravados = len(json.loads(path.read_text(encoding="utf-8"))["lead_ids"])
+    print(f"Aplicado em {gravados} leads (de {len(candidates)} candidatos). Ids salvos em: {path}")
 
 
 if __name__ == "__main__":

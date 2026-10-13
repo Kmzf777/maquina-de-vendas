@@ -177,9 +177,11 @@ def test_apply_nao_sobrescreve_lead_que_ganhou_utm_no_meio_tempo(tmp_path):
     sb = _fixture()
     candidates = bf.find_candidates(sb)
     _lead_row(sb, "lead-a")["utm_source"] = "facebook"
-    bf.apply(sb, candidates, tmp_path)
+    path = bf.apply(sb, candidates, tmp_path)
     assert _lead_row(sb, "lead-a")["utm_source"] == "facebook"
     assert _lead_row(sb, "lead-a")["traffic_type"] is None
+    # não gravado -> fora do JSON, para o revert nunca tocar nele
+    assert json.loads(path.read_text(encoding="utf-8")) == {"lead_ids": []}
 
 
 def test_revert_limpa_so_ids_do_json_que_ainda_sao_google_cpc(tmp_path):
@@ -225,3 +227,18 @@ def test_main_apply_grava_e_mostra_caminho(tmp_path, capsys):
     assert len(files) == 1
     assert str(files[0]) in out
     assert _lead_row(sb, "lead-a")["utm_source"] == "google"
+
+
+def test_main_apply_imprime_so_os_realmente_gravados(tmp_path, capsys, monkeypatch):
+    sb = _fixture()
+    real_find = bf.find_candidates
+
+    def find_e_lead_muda(sb_):
+        cands = real_find(sb_)
+        _lead_row(sb_, "lead-a")["utm_source"] = "facebook"  # alguém gravou no meio tempo
+        return cands
+
+    monkeypatch.setattr(bf, "find_candidates", find_e_lead_muda)
+    bf.main(["--apply", "--out-dir", str(tmp_path)], sb=sb)
+    out = capsys.readouterr().out
+    assert "Aplicado em 0 leads" in out
