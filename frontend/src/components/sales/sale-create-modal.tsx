@@ -424,6 +424,11 @@ export function SaleCreateModal({
           // de quando a opção existia, e ela também cobre `soldBy` vazio.
           sold_by: soldBy && soldBy !== "__none__" ? soldBy : null,
           notes: notes.trim() || null,
+          // Frete gravado na venda para a próxima edição nascer com ele — sem
+          // isso, reabrir e salvar mandaria frete zero no PUT e apagaria o
+          // frete do pedido no Bling. `value` (acima) já inclui o frete.
+          freight: payload.freight,
+          freight_mode: payload.freight_mode,
           ...divergencia,
         }),
       });
@@ -801,6 +806,13 @@ export function SaleCreateModal({
                 condicaoPagamento={blingCondicaoPagamento}
                 initialLines={
                   isEditing ? linesFromSaleItems(editingSale?.sale_items) : undefined
+                }
+                showFreight
+                // Mesmo motivo de `initialLines`: o PUT manda o que estiver no
+                // formulário, então a edição precisa nascer com o frete gravado.
+                initialFreight={isEditing ? (editingSale?.freight ?? 0) : undefined}
+                initialFreightMode={
+                  isEditing ? (editingSale?.freight_mode ?? null) : undefined
                 }
                 onChange={setOrderResult}
                 conta={{

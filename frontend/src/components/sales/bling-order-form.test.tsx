@@ -171,3 +171,50 @@ describe("BlingOrderForm — seletor de conta", () => {
     expect(screen.queryByText("descontinuada")).not.toBeNull();
   });
 });
+
+/**
+ * Frete do Registrar venda (cartão 1a586e44): sem o campo, venda com frete
+ * virava pedido/nota e `sales.value` abaixo do combinado. O orçamento tem o
+ * próprio campo de frete e NÃO liga `showFreight` — o terceiro teste trava
+ * isso para o resumo do orçamento não ganhar um segundo frete.
+ */
+describe("BlingOrderForm — frete", () => {
+  it("com showFreight mostra o valor e a modalidade do frete", () => {
+    mockFetchVazio();
+    render(<BlingOrderForm meta={META} onChange={vi.fn()} showFreight />);
+    expect(screen.queryByLabelText("Valor do frete")).not.toBeNull();
+    expect(screen.queryByText("Modalidade do frete")).not.toBeNull();
+  });
+
+  it("sem showFreight não mostra nada de frete (orçamento continua igual)", () => {
+    mockFetchVazio();
+    const aoMudar = vi.fn();
+    render(<BlingOrderForm meta={META} onChange={aoMudar} />);
+    expect(screen.queryByLabelText("Valor do frete")).toBeNull();
+    expect(screen.queryByText("Modalidade do frete")).toBeNull();
+    expect(aoMudar.mock.lastCall?.[0].payload.freight).toBe(0);
+  });
+
+  it("na edição nasce com o frete gravado e o publica no payload e no total", async () => {
+    mockFetchVazio();
+    const aoMudar = vi.fn();
+    render(
+      <BlingOrderForm
+        meta={META}
+        onChange={aoMudar}
+        showFreight
+        initialFreight={45}
+        initialFreightMode={1}
+      />,
+    );
+    const campo = screen.getByLabelText("Valor do frete") as HTMLInputElement;
+    expect(campo.value).toBe("45");
+    await waitFor(() => expect(aoMudar).toHaveBeenCalled());
+    const ultimo = aoMudar.mock.lastCall?.[0];
+    expect(ultimo.payload.freight).toBe(45);
+    expect(ultimo.payload.freight_mode).toBe(1);
+    expect(ultimo.total).toBe(45);
+    // O vendedor vê de onde vem a diferença entre a soma dos itens e o total.
+    expect(screen.queryByText(/Frete R\$ 45,00/)).not.toBeNull();
+  });
+});

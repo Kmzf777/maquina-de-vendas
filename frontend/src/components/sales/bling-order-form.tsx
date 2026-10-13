@@ -40,6 +40,7 @@ import {
   trocaLimpaFormulario,
   type ContaBling,
 } from "@/lib/bling-accounts";
+import { FREIGHT_MODES, parseDecimalInput } from "@/lib/quote-modal-state";
 import {
   TERMO_KIT,
   comKitsNoTopo,
@@ -122,6 +123,19 @@ interface BlingOrderFormProps {
    * o vendedor não teria como saber qual das duas é a que vai para o Bling.
    */
   showInstallments?: boolean;
+  /**
+   * Mostra Frete (R$) + Modalidade. Só o Registrar venda liga; o orçamento tem
+   * o próprio campo de frete (somado depois do desconto de cabeçalho) e passa
+   * os itens por aqui sem ele — ligar lá contaria o frete duas vezes.
+   */
+  showFreight?: boolean;
+  /**
+   * Frete com que o formulário nasce. Na edição de uma venda que já tem frete é
+   * obrigatório informá-lo: o PUT no Bling manda o que estiver no formulário,
+   * então nascer zerado apagaria o frete do pedido sem ninguém pedir.
+   */
+  initialFreight?: number | null;
+  initialFreightMode?: number | null;
   onChange: (result: OrderPayloadResult) => void;
   /** Ver `BlingOrderFormConta`. Ausente = recurso de segunda conta desligado. */
   conta?: BlingOrderFormConta;
@@ -138,6 +152,10 @@ const brl = (valor: number) =>
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   });
+
+/** Valor do Select para "Não informar" a modalidade: o Radix não aceita
+ *  `value=""` num SelectItem, então usa um marcador (mesmo do orçamento). */
+const SEM_MODALIDADE = "__none__";
 
 /** "2026-09-17" -> "17/09/2026", sem passar por Date (fuso não altera o dia). */
 const diaMesAno = (iso: string) =>
@@ -160,6 +178,9 @@ export function BlingOrderForm({
   initialLines,
   initialPaymentMethodId,
   showInstallments = true,
+  showFreight = false,
+  initialFreight,
+  initialFreightMode,
   onChange,
   conta,
 }: BlingOrderFormProps) {
@@ -178,6 +199,15 @@ export function BlingOrderForm({
   // primeiro render (o modal pode buscá-la em paralelo).
   const [termsEdit, setTermsEdit] = useState<string | null>(null);
   const termsRaw = termsEdit ?? condicaoPagamento ?? "";
+
+  // Texto cru, como no orçamento: "12," no meio da digitação não pode virar 12
+  // e apagar a vírgula. O número sai de `parseDecimalInput` só no `result`.
+  const [freteTexto, setFreteTexto] = useState(() =>
+    initialFreight ? String(initialFreight) : "",
+  );
+  const [freteModalidade, setFreteModalidade] = useState<number | null>(
+    initialFreightMode ?? null,
+  );
 
   const [metodos, setMetodos] = useState<BlingPaymentMethod[]>([]);
   const [resultados, setResultados] = useState<BlingProduct[]>([]);
@@ -362,8 +392,24 @@ export function BlingOrderForm({
         notes,
         paymentMethodId,
         terms: parseTerms(termsRaw),
+        // Desligado, o frete fica zerado mesmo que algum estado sobre: quem
+        // não mostra o campo não pode mandar frete que o vendedor não vê.
+        freight: showFreight ? parseDecimalInput(freteTexto) : 0,
+        freightMode: showFreight ? freteModalidade : null,
       }),
-    [linhas, leadId, dealId, soldAt, soldBy, notes, paymentMethodId, termsRaw],
+    [
+      linhas,
+      leadId,
+      dealId,
+      soldAt,
+      soldBy,
+      notes,
+      paymentMethodId,
+      termsRaw,
+      showFreight,
+      freteTexto,
+      freteModalidade,
+    ],
   );
 
   const onChangeRef = useRef(onChange);
@@ -637,12 +683,59 @@ export function BlingOrderForm({
               Adicionar item
             </button>
             <span className="text-[13px] text-[#111111] tabular-nums">
+              {/* O total já inclui o frete; sem esta indicação a soma das
+                  linhas não bate com o total e o vendedor desconfia da conta. */}
+              {result.payload.freight > 0 && (
+                <span className="text-[#7b7b78]">
+                  Frete R$ {brl(result.payload.freight)} ·{" "}
+                </span>
+              )}
               Total{" "}
               <strong className="font-medium">R$ {brl(result.total)}</strong>
             </span>
           </div>
         </div>
       </div>
+
+      {/* Frete — mesmo campo do orçamento (valor + modalidade), só no
+          Registrar venda (ver `showFreight`). */}
+      {showFreight && (
+        <div className="grid grid-cols-2 gap-3">
+          <div>
+            <label className={`${label} block mb-1`}>Frete (R$)</label>
+            <input
+              type="text"
+              inputMode="decimal"
+              value={freteTexto}
+              onChange={(e) => setFreteTexto(e.target.value)}
+              placeholder="0,00"
+              aria-label="Valor do frete"
+              className="h-[37px] w-full bg-white border border-[#dedbd6] rounded-[4px] px-3 text-[14px] text-[#111111] tabular-nums focus:border-[#111111] focus:outline-none focus:ring-0"
+            />
+          </div>
+          <div>
+            <label className={`${label} block mb-1`}>Modalidade do frete</label>
+            <Select
+              value={freteModalidade === null ? SEM_MODALIDADE : String(freteModalidade)}
+              onValueChange={(v) =>
+                setFreteModalidade(v === SEM_MODALIDADE ? null : Number(v))
+              }
+            >
+              <SelectTrigger className="w-full h-[37px] bg-white border border-[#dedbd6] rounded-[4px] px-3 text-[14px] text-[#111111] focus:border-[#111111] focus:ring-0">
+                <SelectValue placeholder="Não informar" />
+              </SelectTrigger>
+              <SelectContent position="popper">
+                <SelectItem value={SEM_MODALIDADE}>Não informar</SelectItem>
+                {FREIGHT_MODES.map((m) => (
+                  <SelectItem key={m.value} value={String(m.value)}>
+                    {m.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+        </div>
+      )}
 
       {/* Pagamento */}
       <div className="grid grid-cols-2 gap-3">
