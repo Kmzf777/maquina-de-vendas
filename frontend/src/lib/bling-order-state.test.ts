@@ -119,6 +119,46 @@ describe("buildOrderPayload", () => {
       { dataVencimento: "2026-08-18", valor: 267 },
     ]);
   });
+
+  // Frete: o backend soma depois dos itens (order_net_total); a previsão da
+  // tela precisa bater com isso, senão as parcelas mostradas divergem do Bling.
+  describe("frete", () => {
+    // Uma linha completa de R$100: produto 123, qtd 1, valor 100.
+    const linhaCompleta = (valor: number) =>
+      updateLine(applyProduct([blankLine()], 0, 123, PRODUTOS), 0,
+        { quantidade: 1, valorUnitario: valor });
+
+    it("soma o frete ao total e as parcelas e o manda no payload", () => {
+      const r = buildOrderPayload(linhaCompleta(100),
+        { ...base, terms: [30, 60], freight: 50, freightMode: 1 });
+      expect(r.total).toBe(150);
+      expect(r.installments.map((p) => p.valor)).toEqual([75, 75]);
+      expect(r.payload.freight).toBe(50);
+      expect(r.payload.freight_mode).toBe(1);
+    });
+
+    it("sem frete: total so dos itens, freight 0 e modalidade null", () => {
+      const r = buildOrderPayload(linhaCompleta(100), base);
+      expect(r.total).toBe(100);
+      expect(r.payload.freight).toBe(0);
+      expect(r.payload.freight_mode).toBeNull();
+    });
+
+    it("frete negativo vira 0", () => {
+      const r = buildOrderPayload(linhaCompleta(100), { ...base, freight: -5 });
+      expect(r.total).toBe(100);
+      expect(r.payload.freight).toBe(0);
+    });
+
+    it("frete sem itens nao torna o pedido valido", () => {
+      expect(buildOrderPayload([blankLine()], { ...base, freight: 30 }).valid).toBe(false);
+    });
+
+    it("soma em centavos, sem lixo de ponto flutuante", () => {
+      const r = buildOrderPayload(linhaCompleta(0.1), { ...base, freight: 0.2 });
+      expect(r.total).toBe(0.3);
+    });
+  });
 });
 
 // ── extensões usadas pela casca de renderização ────────────────────────────

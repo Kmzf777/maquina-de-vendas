@@ -46,6 +46,11 @@ export interface OrderMeta {
   paymentMethodId: number | null;
   terms: number[];
   notes: string;
+  /** Frete em R$. Opcional porque só o Registrar venda manda; o orçamento
+   *  monta os itens por aqui sem frete e trata o dele à parte. */
+  freight?: number;
+  /** Modalidade (`FREIGHT_MODES`); null/ausente = não informar ao Bling. */
+  freightMode?: number | null;
 }
 
 export interface OrderPayloadResult {
@@ -68,6 +73,8 @@ export interface OrderPayloadResult {
       desconto_percentual: number;
     }[];
     payment: { method_id: number | null; terms: number[] };
+    freight: number;
+    freight_mode: number | null;
   };
 }
 
@@ -183,13 +190,21 @@ export function buildOrderPayload(
   meta: OrderMeta,
 ): OrderPayloadResult {
   const completas = linhas.filter(isComplete);
-  const total = orderTotal(
+  const totalItens = orderTotal(
     completas.map((l) => ({
       quantidade: l.quantidade,
       valorUnitario: l.valorUnitario,
       descontoPercentual: l.descontoPercentual,
     })),
   );
+  // Frete negativo não existe — o backend recusa/zera (`normalize_freight`);
+  // zerar aqui evita a tela prometer um total menor do que o pedido terá.
+  const frete =
+    meta.freight && meta.freight > 0 ? Math.round(meta.freight * 100) / 100 : 0;
+  // O frete entra depois dos itens, como `order_net_total` no backend, para a
+  // previsão de parcelas bater com o que o Bling recebe. Soma em centavos para
+  // não carregar lixo de ponto flutuante (0,1 + 0,2) para as parcelas.
+  const total = (Math.round(totalItens * 100) + Math.round(frete * 100)) / 100;
   const terms = meta.terms.length ? meta.terms : [0];
 
   return {
@@ -212,6 +227,8 @@ export function buildOrderPayload(
         desconto_percentual: l.descontoPercentual,
       })),
       payment: { method_id: meta.paymentMethodId, terms },
+      freight: frete,
+      freight_mode: meta.freightMode ?? null,
     },
   };
 }
