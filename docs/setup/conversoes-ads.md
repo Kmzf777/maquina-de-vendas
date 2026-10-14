@@ -5,12 +5,36 @@ Público: Rafael (técnico). O passo a passo da gestora de tráfego é outro doc
 ## 1. O que é
 
 O CRM varre os leads que vieram de clique de anúncio (CTWA na Meta, `gclid`/`gbraid`/`wbraid` no
-Google) e enfileira em `ad_conversions` quatro etapas do funil: `lead`, `qualified` (repasse ao
-vendedor), `opportunity` (orçamento/proposta) e `purchase` (venda, com valor real). Um sender no
-worker entrega a fila: Meta pela Conversions API for Business Messaging, Google pela Data Manager
-API. O resultado é visível na aba "Conversões enviadas" do /trafego.
+Google) e enfileira em `ad_conversions` três etapas do funil: `qualified` (repasse ao vendedor),
+`opportunity` (orçamento/proposta) e `purchase` (venda, com valor real). Um sender no worker entrega
+a fila: Meta pela Conversions API for Business Messaging, Google pela Data Manager API. O resultado é
+visível na aba "Conversões enviadas" do /trafego.
 
-Spec: `docs/superpowers/specs/2026-10-08-conversoes-ads-design.md`.
+Specs: `docs/superpowers/specs/2026-10-08-conversoes-ads-design.md` e
+`docs/superpowers/specs/2026-10-13-conversoes-ads-ativacao-design.md` (ativação).
+
+### Configuração feita em 13/10/2026 (vale sobre o que estiver abaixo)
+
+- **Etapa `lead` (clique) não é mais enfileirada.** No Google o clique já é contado pelas conversões
+  do site ("Atacado 2 obg", "Terceirização 2 Obg") e por "Leads de mensagens"; a Meta conta a
+  conversa sozinha. `GOOGLE_ADS_CONVERSION_ACTION_LEAD` fica sem valor.
+- **Valores:** `ad_conversion_values` fica **vazia** — qualificado e oportunidade vão sem valor (só
+  contagem); venda vai com o valor real. Não rode `calcular_valores --aplicar` sem nova decisão (o
+  valor esperado medido em 13/10 era R$ 0,39–3,54 por qualificado). Reavaliar em ~90 dias.
+- **Google:** ações `UPLOAD_CLICKS` na conta 186-141-6291 (login pela MCC 364-380-9068):
+  Lead_Qualificado `7832684373` (`_QUALIFIED`), Oportunidade_Criada `7832557577` (`_OPPORTUNITY`),
+  Venda_Fechada `7832537162` (`_PURCHASE`). Data Manager API ativada no projeto Cloud **GAds-CRM**
+  (conta canastrainteligencia@gmail.com). Refresh token regerado com `adwords` + `datamanager` pela
+  conta canastrainteligencia. Todo evento leva `eventSource: "OTHER"` (sem ele a API responde 400).
+- **Meta:** `META_CAPI_ACCESS_TOKEN` = o mesmo token dos canais `meta_cloud` (system user
+  **Sistema_API**, já tem `whatsapp_business_manage_events`). Dataset `950217978158864`, ligado ao WABA
+  `1399531671927018`, fica no portfólio dono do WABA: **"Café Canastra Torrefação de Cafés
+  Especiais"** (`1338125734024745`) — não aparece no portfólio "Café Canastra". O Rafael tem acesso
+  pela conta principal.
+- **⚠️ Teste na Meta só com o código ATIVO** copiado da aba Testar eventos do dataset (com a aba
+  aberta). Código inventado ou expirado: a Meta responde "does not match an active Test Events
+  session… processed normally" e o evento conta como **real** (aconteceu em 13/10 com 3 eventos de R$ 1).
+- Valores prontos para o `.env` ficam em `/root/.secrets/conversoes-ads.env` na VPS (root, 600).
 
 ## 2. Variáveis de ambiente
 
