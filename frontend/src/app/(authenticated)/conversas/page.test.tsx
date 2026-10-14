@@ -67,6 +67,7 @@ vi.mock("@/components/conversas/contact-detail", () => ({
     onBack?: () => void;
     painelAcoplado?: boolean;
     onPainelAcopladoChange?: (aberto: boolean) => void;
+    onPainelAbertoChange?: (aberto: boolean) => void;
   }) =>
     p.onBack ? (
       <div data-testid="detalhe-mobile" data-props={JSON.stringify(Object.keys(p))} />
@@ -74,16 +75,29 @@ vi.mock("@/components/conversas/contact-detail", () => ({
       <div data-testid="detalhe" data-acoplado={String(p.painelAcoplado)}>
         <button type="button" onClick={() => p.onPainelAcopladoChange?.(true)}>abre painel</button>
         <button type="button" onClick={() => p.onPainelAcopladoChange?.(false)}>fecha painel</button>
+        <button type="button" onClick={() => p.onPainelAbertoChange?.(true)}>painel aberto</button>
+        <button type="button" onClick={() => p.onPainelAbertoChange?.(false)}>painel fechado</button>
       </div>
     ),
 }));
 
 import ConversasPage from "./page";
+import { MenuLateralProvider, useMenuLateral } from "@/components/menu-lateral";
+
+function SondaMenu() {
+  const { recolhido, alternar } = useMenuLateral();
+  return (
+    <div>
+      <span data-testid="menu">{recolhido ? "recolhido" : "aberto"}</span>
+      <button type="button" onClick={alternar}>alternar menu</button>
+    </div>
+  );
+}
 
 function mockMatchMedia() {
   window.matchMedia = vi.fn((query: string) => ({
     get matches() {
-      return query === "(min-width: 1280px)" ? h.telaLarga : false;
+      return query === "(min-width: 1100px)" ? h.telaLarga : false;
     },
     media: query,
     onchange: null,
@@ -129,7 +143,7 @@ describe("/conversas — painel de venda/orçamento ao lado do chat", () => {
     expect(recolhida(listaDesktop())).toBe(false);
   });
 
-  it("tela estreita (abaixo de 1280 px): painel não acopla e a lista fica", async () => {
+  it("tela estreita (abaixo de 1100 px): painel não acopla e a lista fica", async () => {
     h.telaLarga = false;
     render(<ConversasPage />);
     const detalhe = await screen.findByTestId("detalhe");
@@ -152,5 +166,31 @@ describe("/conversas — painel de venda/orçamento ao lado do chat", () => {
     const props = JSON.parse(mobile.dataset.props ?? "[]") as string[];
     expect(props).not.toContain("painelAcoplado");
     expect(props).not.toContain("onPainelAcopladoChange");
+    expect(props).not.toContain("onPainelAbertoChange");
+  });
+});
+
+// Cartão a22d0f72: o painel tampava o chat em telas < 1280. Ao abrir venda ou
+// orçamento o menu lateral recolhe sozinho e volta ao fechar.
+describe("/conversas — painel recolhe o menu lateral", () => {
+  beforeEach(() => localStorage.clear());
+
+  it("abrir o painel recolhe o menu; fechar devolve", async () => {
+    render(<MenuLateralProvider><SondaMenu /><ConversasPage /></MenuLateralProvider>);
+    await screen.findByTestId("detalhe");
+    expect(screen.getByTestId("menu").textContent).toBe("aberto");
+    fireEvent.click(screen.getByRole("button", { name: "painel aberto" }));
+    expect(screen.getByTestId("menu").textContent).toBe("recolhido");
+    fireEvent.click(screen.getByRole("button", { name: "painel fechado" }));
+    expect(screen.getByTestId("menu").textContent).toBe("aberto");
+  });
+
+  it("menu recolhido à mão continua recolhido ao fechar o painel", async () => {
+    render(<MenuLateralProvider><SondaMenu /><ConversasPage /></MenuLateralProvider>);
+    await screen.findByTestId("detalhe");
+    fireEvent.click(screen.getByRole("button", { name: "alternar menu" }));
+    fireEvent.click(screen.getByRole("button", { name: "painel aberto" }));
+    fireEvent.click(screen.getByRole("button", { name: "painel fechado" }));
+    expect(screen.getByTestId("menu").textContent).toBe("recolhido");
   });
 });

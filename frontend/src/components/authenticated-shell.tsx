@@ -3,6 +3,7 @@
 import { useState, useEffect } from "react";
 import { usePathname } from "next/navigation";
 import { Sidebar } from "@/components/sidebar";
+import { MenuLateralProvider, useMenuLateral } from "@/components/menu-lateral";
 import { NotificationToast } from "@/components/notification-toast";
 import { SlaReminderPopup } from "@/components/sla-reminder-popup";
 import { PresenceProvider } from "@/hooks/use-presence";
@@ -31,10 +32,11 @@ export function AuthenticatedShell({ children }: { children: React.ReactNode }) 
 
   return (
     <PresenceProvider>
+    <MenuLateralProvider>
     <div className="flex h-svh bg-[#faf9f6] overflow-x-hidden">
       {/* Desktop sidebar — hidden on mobile */}
       <div className="hidden md:flex flex-shrink-0">
-        <Sidebar />
+        <SidebarDesktop />
       </div>
 
       {/* Mobile top bar — hidden on desktop */}
@@ -81,7 +83,14 @@ export function AuthenticatedShell({ children }: { children: React.ReactNode }) 
       <NotificationToast />
       <SlaReminderPopup />
     </div>
+    </MenuLateralProvider>
     </PresenceProvider>
   );
 }
 
+
+/** Menu do desktop: recolhível, com o estado do MenuLateralProvider. */
+function SidebarDesktop() {
+  const { recolhido, alternar } = useMenuLateral();
+  return <Sidebar recolhido={recolhido} onAlternar={alternar} />;
+}

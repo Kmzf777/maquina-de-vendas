@@ -9,6 +9,7 @@ import { ChatView, type SiblingConversationSummary } from "@/components/conversa
 import { ContactDetail } from "@/components/conversas/contact-detail";
 import { setActiveConversation } from "@/lib/active-conversation";
 import { useMediaQuery } from "@/hooks/use-media-query";
+import { useMenuLateral } from "@/components/menu-lateral";
 import {
   conversationsListUrl,
   type ConversationsPage,
@@ -19,12 +20,13 @@ import type { Conversation, Channel, Tag, Lead } from "@/lib/types";
 
 /**
  * Ponto de corte do painel de venda/orçamento ACOPLADO (coluna ao lado do
- * chat, com a lista de conversas recolhida). Conta: menu 220 + painel "lg"
- * 672 (42rem) + chat mínimo ~360 = 1252 px → 1280 (o `xl` do Tailwind) deixa o
- * chat com ≥ 388 px. Abaixo disso o painel volta a sobrepor o chat, como nas
- * outras telas do CRM.
+ * chat, com a lista de conversas recolhida). Ao abrir o painel o menu lateral
+ * recolhe sozinho (cartão a22d0f72), então a conta é: menu recolhido 56 +
+ * painel "lg" 672 (42rem) + chat mínimo ~360 ≈ 1090 px → 1100. O modo é
+ * fixado na abertura pelo ContactDetail. Abaixo disso o painel volta a
+ * sobrepor o chat (sem overlay), como nas outras telas do CRM.
  */
-const QUERY_PAINEL_ACOPLADO = "(min-width: 1280px)";
+const QUERY_PAINEL_ACOPLADO = "(min-width: 1100px)";
 
 export default function ConversasPage() {
   return (
@@ -50,6 +52,13 @@ function ConversasContent() {
   // Painel de venda/orçamento aberto como coluna: a lista recolhe para o chat
   // não ficar espremido (o ContactDetail avisa ao abrir/fechar/trocar conversa).
   const [painelAcopladoAberto, setPainelAcopladoAberto] = useState(false);
+  // Painel de venda/orçamento aberto (acoplado ou não): o menu lateral recolhe
+  // para o chat ficar à vista, e volta ao fechar se foi o painel que recolheu.
+  const { recolherPeloPainel, restaurarDoPainel } = useMenuLateral();
+  const handlePainelAbertoChange = useCallback(
+    (aberto: boolean) => (aberto ? recolherPeloPainel() : restaurarDoPainel()),
+    [recolherPeloPainel, restaurarDoPainel],
+  );
 
   // Lista paginada + contadores + seleção + tempo real (ver use-conversation-list.ts).
   const {
@@ -456,6 +465,7 @@ function ConversasContent() {
               onLeadUpdate={handleLeadUpdate}
               painelAcoplado={telaLarga}
               onPainelAcopladoChange={setPainelAcopladoAberto}
+              onPainelAbertoChange={handlePainelAbertoChange}
             />
           </>
         ) : (
