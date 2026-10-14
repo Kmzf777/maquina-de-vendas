@@ -74,6 +74,9 @@ def build_event(row: dict[str, Any], lead: dict[str, Any]) -> dict[str, Any]:
         "transactionId": row["event_id"],
         "eventTimestamp": ts,
         "currency": row.get("currency") or "BRL",
+        # Obrigatório na Data Manager API (sem ele: 400 REQUIRED_FIELD_MISSING). O repasse e a venda
+        # acontecem fora do site (WhatsApp/telefone).
+        "eventSource": "OTHER",
     }
     if row.get("value") is not None:
         ev["conversionValue"] = float(row["value"])

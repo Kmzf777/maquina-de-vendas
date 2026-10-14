@@ -46,6 +46,13 @@ def test_build_event():
     assert {"phoneNumber": _h("+5534992009777")} in ids
 
 
+def test_build_event_tem_event_source_other():
+    # A Data Manager API recusa o evento sem event_source (400 REQUIRED_FIELD_MISSING, visto em
+    # 13/10/2026). A conversão é offline (fechada por WhatsApp/telefone): OTHER.
+    ev = google.build_event(ROW, LEAD)
+    assert ev["eventSource"] == "OTHER"
+
+
 def test_gbraid_vai_no_campo_certo():
     ev = google.build_event({**ROW, "click_id_type": "gbraid", "click_id": "B1"}, LEAD)
     assert ev["adIdentifiers"] == {"gbraid": "B1"}
