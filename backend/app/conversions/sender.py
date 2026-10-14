@@ -13,18 +13,24 @@ em `status` nem em `attempts`, dê certo ou errado: a linha continua `pendente`,
 em `last_error`/`last_response` (marcado `modo_teste`) e ela sai de verdade quando o modo teste
 for desligado.
 
+Janela retroativa (`CONVERSIONS_BACKFILL_DAYS`, padrão 90): evento mais velho que ela vira
+`fora_da_janela` sem envio. Simulação (`dry_run=True` / `simulate_sender`): conta o que sairia da
+fila, sem claim, envio nem gravação.
+
 Erro de credencial (`SendResult.auth_error`): disjuntor — a plataforma para no resto do tick e a
 linha que bateu no erro não gasta tentativa (volta em 30 min). Token trocado, a fila segue.
 """
 import logging
 import os
 import time
+from collections import Counter
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from app.conversions import google, meta
-from app.conversions.eligibility import WINDOW, parse_ts
+from app.conversions.eligibility import WINDOW, age_bucket, backfill_window, parse_ts
 from app.conversions.types import SendResult
+from app.db.paginacao import paginar
 from app.db.supabase import get_supabase
 
 logger = logging.getLogger(__name__)
@@ -54,9 +60,12 @@ def _test_mode() -> bool:
     return (os.getenv("CONVERSIONS_TEST_MODE") or "").strip().lower() in ("1", "true", "yes", "on")
 
 
-def outside_window(row: dict[str, Any], now: datetime) -> bool:
-    """Meta recusa event_time > 7 dias antes do envio (aqui 7 d − 1 h de folga); Google recusa
-    clique > 90 dias."""
+def outside_window(row: dict[str, Any], now: datetime, backfill: timedelta | None = None) -> bool:
+    """Evento mais velho que a janela retroativa (`backfill`; padrão `backfill_window()`) não sai.
+    Além disso: Meta recusa event_time > 7 dias antes do envio (aqui 7 d − 1 h de folga); Google
+    recusa clique > 90 dias."""
+    if now - parse_ts(row["event_at"]) > (backfill or backfill_window()):
+        return True
     if row["platform"] == "meta":
         return now - parse_ts(row["event_at"]) > WINDOW["meta"] - _META_MARGIN
     return now - parse_ts(row["click_at"]) > WINDOW["google"]
@@ -184,17 +193,47 @@ def _google_stages() -> list[str]:
     return prontas
 
 
-def run_sender(now: datetime | None = None, limit: int = 100) -> dict[str, int]:
+def simulate_sender(now: datetime | None = None, platforms: tuple[str, ...] = ("meta", "google"),
+                    google_stages: list[str] | None = None, backfill_days: int | None = None) -> dict[str, Any]:
+    """Dry-run: o que sairia da fila agora (pendente e vencido), sem claim, envio nem gravação.
+    Pagina sem limite de lote: mostra o tamanho real do salto de uma ativação. Não exige a
+    plataforma ligada (serve para simular ANTES de ligar)."""
+    now = now or datetime.now(timezone.utc)
+    backfill = backfill_window(backfill_days)
+    sb = get_supabase()
+    enviaria: Counter = Counter()
+    fora = 0
+    for platform in platforms:
+        rows = paginar(lambda: sb.table("ad_conversions").select("id,platform,stage,event_at,click_at")
+                       .eq("status", "pendente").eq("platform", platform)
+                       .lte("next_attempt_at", now.isoformat()).order("id"))
+        for r in rows:
+            if platform == "google" and google_stages is not None and r["stage"] not in google_stages:
+                continue
+            if outside_window(r, now, backfill):
+                fora += 1
+            else:
+                enviaria[(platform, r["stage"], age_bucket(now - parse_ts(r["event_at"])))] += 1
+    return {"enviaria": dict(enviaria), "fora_da_janela": fora, "backfill_days": backfill.days}
+
+
+def run_sender(now: datetime | None = None, limit: int = 100, dry_run: bool = False) -> dict[str, Any]:
     now = now or datetime.now(timezone.utc)
     platforms = _ready_platforms()
-    counts = {"enviado": 0, "pendente": 0, "erro": 0, "fora_da_janela": 0, "ignorado": 0}
+    counts: dict[str, Any] = {"enviado": 0, "pendente": 0, "erro": 0, "fora_da_janela": 0, "ignorado": 0}
     google_stages: list[str] = []
     if "google" in platforms:
         google_stages = _google_stages()
         if not google_stages:
             platforms.remove("google")
+    if dry_run:
+        # Simulação: nenhum claim, envio ou gravação — só a contagem do que sairia.
+        sim = simulate_sender(now, platforms=tuple(platforms), google_stages=google_stages)["enviaria"]             if platforms else {}
+        logger.info("[CONVERSOES][SIMULACAO] envio: %s", sim)
+        return {**counts, "simulacao": sim}
     if not platforms:
         return counts
+    backfill = backfill_window()
     test_mode = _test_mode()
     if test_mode:
         limit = min(limit, TEST_MODE_LIMIT)
@@ -231,7 +270,7 @@ def run_sender(now: datetime | None = None, limit: int = 100) -> dict[str, int]:
         claim_at = _utcnow()
         if not _claim(sb, row["id"], claim_at):
             continue
-        if outside_window(row, now):
+        if outside_window(row, now, backfill):
             upd = {"status": "fora_da_janela", "claimed_at": None}
         elif row.get("stage") == "purchase" and not row.get("sale_id"):
             # A venda foi apagada depois de enfileirada (FK `on delete set null`).

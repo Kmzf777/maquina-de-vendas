@@ -504,3 +504,66 @@ def test_meta_claim_abandonado_vira_erro_tambem_em_modo_teste(monkeypatch):
     send.assert_not_called()
     assert counts["erro"] == 1
     assert _updates(log)[-1]["last_error"].startswith("envio interrompido")
+
+
+# --- Janela retroativa (CONVERSIONS_BACKFILL_DAYS) e simulação (dry-run) — 14/10 ---
+
+
+def test_outside_window_respeita_a_janela_retroativa(monkeypatch):
+    monkeypatch.delenv("CONVERSIONS_BACKFILL_DAYS", raising=False)
+    r = _row(platform="google", event_at=(NOW - timedelta(days=40)).isoformat(),
+             click_at=(NOW - timedelta(days=41)).isoformat())
+    assert outside_window(r, NOW) is False                         # padrão 90
+    assert outside_window(r, NOW, backfill=timedelta(days=30)) is True
+
+
+def test_run_sender_evento_fora_da_janela_retroativa_nao_envia(monkeypatch):
+    _env(monkeypatch)
+    monkeypatch.setenv("CONVERSIONS_BACKFILL_DAYS", "3")
+    row = _qrow(platform="meta", event_at=(NOW - timedelta(days=5)).isoformat(),
+                click_at=(NOW - timedelta(days=5, hours=1)).isoformat())
+    sb, log = _fake_sb([row])
+    monkeypatch.setattr(sender_mod, "get_supabase", lambda: sb)
+    send = MagicMock()
+    monkeypatch.setattr(sender_mod.meta, "send", send)
+    counts = sender_mod.run_sender(now=NOW)
+    send.assert_not_called()
+    assert counts["fora_da_janela"] == 1
+
+
+def test_run_sender_dry_run_nao_envia_nem_grava(monkeypatch):
+    _env(monkeypatch)
+    monkeypatch.delenv("CONVERSIONS_BACKFILL_DAYS", raising=False)
+    sb, log = _fake_sb([_qrow(platform="meta")])
+    monkeypatch.setattr(sender_mod, "get_supabase", lambda: sb)
+    send = MagicMock()
+    monkeypatch.setattr(sender_mod.meta, "send", send)
+    claim = MagicMock(return_value=True)
+    monkeypatch.setattr(sender_mod, "_claim", claim)
+    res = sender_mod.run_sender(now=NOW, dry_run=True)
+    send.assert_not_called()
+    claim.assert_not_called()
+    assert _updates(log) == []
+    assert res["simulacao"] == {("meta", _qrow()["stage"], "0-7d"): 1}
+
+
+def test_run_sender_dry_run_sem_plataforma_pronta_simulacao_vazia(monkeypatch):
+    monkeypatch.setenv("CONVERSIONS_META_ENABLED", "false")
+    monkeypatch.setenv("CONVERSIONS_GOOGLE_ENABLED", "false")
+    called = MagicMock()
+    monkeypatch.setattr(sender_mod, "get_supabase", called)
+    assert sender_mod.run_sender(now=NOW, dry_run=True)["simulacao"] == {}
+    called.assert_not_called()
+
+
+def test_simulate_sender_conta_plataformas_pedidas_sem_estarem_ligadas(monkeypatch):
+    monkeypatch.delenv("CONVERSIONS_META_ENABLED", raising=False)
+    monkeypatch.delenv("CONVERSIONS_GOOGLE_ENABLED", raising=False)
+    monkeypatch.delenv("CONVERSIONS_BACKFILL_DAYS", raising=False)
+    velho = _qrow(platform="meta", event_at=(NOW - timedelta(days=8)).isoformat())
+    sb, log = _fake_sb([_qrow(platform="meta"), velho])
+    monkeypatch.setattr(sender_mod, "get_supabase", lambda: sb)
+    res = sender_mod.simulate_sender(now=NOW, platforms=("meta",))
+    assert sum(res["enviaria"].values()) == 1 and res["fora_da_janela"] == 1
+    assert res["backfill_days"] == 90
+    assert _updates(log) == []
