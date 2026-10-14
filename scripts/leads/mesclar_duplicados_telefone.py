@@ -17,7 +17,10 @@ REGRAS:
     telefone canonico e recebe todo o historico dos outros (tabelas com `lead_id`, conferidas
     contra information_schema — tabela nao coberta ABORTA, igual ao script do Bling).
   - Automatico: 2 leads com o mesmo primeiro nome (sem acento/caixa) ou um nome vazio.
-    Revisar a mao: 3+ leads, primeiros nomes diferentes, telefone fixo (9 injetado).
+    Revisar a mao: 3+ leads, primeiros nomes diferentes, possivel telefone fixo
+    (canonico `55DD9[2-5]...`: pode ser fixo com o 9 injetado ou celular novo, como
+    11 92092-1686). O sobrevivente fica SEMPRE com o canonico de 13 digitos, igual ao
+    backend, que reescreve para 13 no proximo inbound de qualquer jeito.
   - Conversas do duplicado no mesmo canal de uma do sobrevivente sao FUNDIDAS (mensagens,
     follow-ups e vendas vao para a conversa do sobrevivente). Follow-up/matricula aberta
     que colidiria e CANCELADO (nao apagado). Demais colisoes: a linha do duplicado e apagada
@@ -109,7 +112,7 @@ def classificar(grupo):
     if len(grupo["duplicados"]) > 1:
         return "revisar", f"{len(grupo['duplicados']) + 1} leads no grupo"
     if grupo["canonico"][5] in "2345":
-        return "revisar", "telefone fixo (9 injetado)"
+        return "revisar", "possivel telefone fixo (confira)"
     nomes = {_primeiro_nome(l.get("name")) for l in [grupo["sobrevivente"], *grupo["duplicados"]]}
     nomes.discard("")
     if len(nomes) > 1:
@@ -141,12 +144,6 @@ CAMPOS_OPT_OUT = ("opt_out_at", "opt_out_channel", "opt_out_evidence")
 CAMPOS_JA_ERA_CLIENTE = ("ja_era_cliente_fonte", "ja_era_cliente_em", "ja_era_cliente_por")
 
 _CANONICO = re.compile(r"^55\d{11}$")
-
-
-def telefone_final(c):
-    """Telefone que o sobrevivente fica: o canonico; em fixo (`55DD9[2-5]...`, o 9 foi
-    injetado pela regra), o numero sem o 9 — `55DD` + 8 digitos."""
-    return c[:4] + c[5:] if c[5] in "2345" else c
 
 
 # A mesma regra de `canonico()`, em SQL, sobre `l.phone` (conferida dentro da transacao).
@@ -362,7 +359,7 @@ def sql_mesclar_grupo(grupo, tabelas, chaves=None, colunas=None):
 
     linhas.append(f"delete from public.leads where id in ({lista_dups});")
 
-    sets = [f"phone = '{telefone_final(c)}'"]
+    sets = [f"phone = '{c}'"]
     sets += [f"{k} = case when coalesce(btrim(s.{k}), '') = '' then coalesce(d.{k}, s.{k})"
              f" else s.{k} end" for k in CAMPOS_TEXTO]
     sets += [f"{k} = coalesce(s.{k}, d.{k})" for k in CAMPOS_COALESCE]

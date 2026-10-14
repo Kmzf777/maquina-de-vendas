@@ -100,10 +100,13 @@ def test_classificar_3_leads_vai_para_revisar():
     assert m.classificar(g) == ("revisar", "3 leads no grupo")
 
 
-def test_classificar_fixo_com_9_injetado_vai_para_revisar():
+def test_classificar_possivel_fixo_vai_para_revisar():
+    # 55DD9[2-5]... pode ser fixo com o 9 injetado OU celular novo (11 92092-1686, Petter):
+    # nao da para saber pelo numero, entao vai para revisao a mao
     m = _script()
-    assert m.classificar(_grupo("Loja", "Loja", canonico="5549934415750")) == \
-        ("revisar", "telefone fixo (9 injetado)")
+    for canonico in ("5549934415750", "5511920921686"):
+        assert m.classificar(_grupo("Loja", "Loja", canonico=canonico)) == \
+            ("revisar", "possivel telefone fixo (confira)")
 
 
 # ── Task 5: SQL de um grupo ─────────────────────────────────────────────────────────
@@ -163,16 +166,18 @@ def test_sql_confere_que_o_telefone_de_cada_membro_ainda_e_do_grupo():
     assert "is distinct from '5549999170363'" in sql
 
 
-def test_fixo_fica_sem_o_9_injetado():
+def test_possivel_fixo_tambem_fica_com_o_canonico_de_13_digitos():
+    # mesma regra do backend (normalize_phone + get_or_create_lead): sempre 13 digitos.
+    # Tirar o 9 de "11 92092-1686" quebraria um celular real.
     m = _script()
-    g = {"canonico": "5549934415750",
-         "sobrevivente": _lead(A, "4934415750", "2026-05-08", "Loja"),
-         "duplicados": [_lead(B, "554934415750", "2026-06-15", "Loja")]}
-    sql = m.sql_mesclar_grupo(g, TABELAS, CHAVES, COLUNAS)
-    assert "update public.leads s set phone = '554934415750'," in sql
-    assert "is distinct from '5549934415750'" in sql  # a conferencia usa o canonico
-    assert m.telefone_final("5549934415750") == "554934415750"
-    assert m.telefone_final("5549999170363") == "5549999170363"
+    for canonico, antigo in (("5549934415750", "4934415750"), ("5511920921686", "11920921686")):
+        g = {"canonico": canonico,
+             "sobrevivente": _lead(A, antigo, "2026-05-08", "Petter"),
+             "duplicados": [_lead(B, canonico, "2026-06-15", "Petter")]}
+        sql = m.sql_mesclar_grupo(g, TABELAS, CHAVES, COLUNAS)
+        assert f"update public.leads s set phone = '{canonico}'," in sql
+        assert f"is distinct from '{canonico}'" in sql
+    assert not hasattr(m, "telefone_final")
 
 
 def test_sql_apaga_os_duplicados_so_depois_de_mover_as_mensagens():

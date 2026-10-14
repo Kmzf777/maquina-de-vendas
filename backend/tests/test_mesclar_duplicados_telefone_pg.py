@@ -335,7 +335,7 @@ def test_telefone_que_mudou_depois_do_calculo_aborta_o_grupo(banco):
     assert q(f"select count(*) from public.leads where id in ('{A}', '{B}', '{C}')") == "3"
 
 
-def test_fixo_fica_com_o_numero_sem_o_9(banco, tmp_path):
+def test_possivel_fixo_fica_com_o_canonico_de_13_digitos(banco, tmp_path):
     fixo1 = "00000000-0000-4000-8000-00000000f101"
     fixo2 = "00000000-0000-4000-8000-00000000f102"
     q(f"insert into public.leads (id, phone, name, created_at) values"
@@ -344,13 +344,13 @@ def test_fixo_fica_com_o_numero_sem_o_9(banco, tmp_path):
     m = _script()
     m.executar(m.Psql(banco), tmp_path / "dry")
     fixo = [r for r in _ler(tmp_path / "dry" / "revisar.csv") if r["canonico"] == "5549934415750"]
-    assert fixo and fixo[0]["motivo"] == "telefone fixo (9 injetado)"
+    assert fixo and fixo[0]["motivo"] == "possivel telefone fixo (confira)"
     csv_ = _csv_aprovado(tmp_path / "dry", tmp_path / "fixo.csv")
     csv_.write_text("canonico,sobrevivente,duplicados\n"
                     f"5549934415750,{fixo1},{fixo2}\n", encoding="utf-8")
     r = m.executar(m.Psql(banco), tmp_path, aplicar=True, pares_csv=csv_)
     assert r["contagens"]["aplicados_ok"] == 1, r["aplicados"]
-    assert q(f"select phone from public.leads where id = '{fixo1}'") == "554934415750"
+    assert q(f"select phone from public.leads where id = '{fixo1}'") == "5549934415750"
     assert q(f"select count(*) from public.leads where id = '{fixo2}'") == "0"
 
 
