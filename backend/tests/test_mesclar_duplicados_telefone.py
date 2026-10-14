@@ -695,3 +695,78 @@ def test_executar_passa_as_colunas_do_banco_para_o_sql(tmp_path):
     m.executar(db, tmp_path / "s", aplicar=True, pares_csv=csv_)
     assert "unread_count = coalesce(sc.unread_count, 0)" in db.escritas[0]
     assert "cancel_reason = 'mesclagem'" in db.escritas[0]
+
+
+# -- re-revisao de 14/10: controle humano, notas, campanha manual, resumo, evento ---------
+
+def _copia(sql):
+    return sql[sql.index("update public.leads s set phone"):]
+
+
+def test_lead_herda_o_controle_humano_do_jeito_conservador():
+    m = _script()
+    copia = _copia(m.sql_mesclar_grupo(_trio(), TABELAS, CHAVES, COLUNAS))
+    # IA so continua ligada se estava ligada em TODOS (null conta como desligada)
+    assert ("ai_enabled = case when s.ai_enabled is not true or not d.ai_enabled"
+            " then false else true end") in copia
+    assert "coalesce(bool_and(coalesce(x.ai_enabled, false)), true) as ai_enabled" in copia
+    # controle humano / pausado: basta um ter
+    for c in ("human_control", "on_hold"):
+        assert (f"{c} = case when coalesce(s.{c}, false) or d.{c} then true"
+                f" else s.{c} end") in copia
+        assert f"coalesce(bool_or(x.{c}), false) as {c}" in copia
+
+
+def test_fusao_de_conversa_herda_controle_humano_se_as_colunas_existirem():
+    m = _script()
+    fusao = _fusao(m.sql_mesclar_grupo(_trio(), TABELAS, CHAVES, COLUNAS))
+    assert "ai_enabled" not in fusao and "human_control" not in fusao  # producao nao tem
+    com = {**COLUNAS, "conversations": COLUNAS["conversations"]
+           | {"ai_enabled", "human_control", "on_hold"}}
+    fusao = _fusao(m.sql_mesclar_grupo(_trio(), TABELAS, CHAVES, com))
+    assert ("ai_enabled = case when sc.ai_enabled is not true or dc.ai_enabled is not true"
+            " then false else true end") in fusao
+    for c in ("human_control", "on_hold"):
+        assert (f"{c} = case when coalesce(sc.{c}, false) or coalesce(dc.{c}, false)"
+                f" then true else sc.{c} end") in fusao
+
+
+def test_notas_sao_concatenadas_com_o_telefone_de_origem():
+    m = _script()
+    copia = _copia(m.sql_mesclar_grupo(_trio(), TABELAS, CHAVES, COLUNAS))
+    assert ("string_agg(E'\\n\\n--- mesclado de ' || coalesce(x.phone, '') || E' ---\\n'"
+            " || x.notes, '' order by x.created_at, x.id)"
+            " filter (where coalesce(btrim(x.notes), '') <> '') as notes") in copia
+    assert ("notes = case when coalesce(btrim(s.notes), '') = ''"
+            " then coalesce(substr(d.notes, 3), s.notes)"
+            " else s.notes || coalesce(d.notes, '') end") in copia
+
+
+def test_campanha_manual_vem_inteira_do_duplicado_mais_antigo_que_tem():
+    m = _script()
+    copia = _copia(m.sql_mesclar_grupo(_trio(), TABELAS, CHAVES, COLUNAS))
+    for c in ("canal", "id", "nome", "por", "em"):
+        k = f"campanha_manual_{c}"
+        assert (f"{k} = case when coalesce(btrim(s.campanha_manual_id), '') = ''"
+                f" and d.campanha_manual_id is not null then d.{k} else s.{k} end") in copia
+        assert (f"(array_agg(x.{k} order by x.created_at, x.id)"
+                " filter (where coalesce(btrim(x.campanha_manual_id), '') <> ''))[1]"
+                f" as {k}") in copia
+
+
+def test_resumo_so_se_o_do_sobrevivente_estiver_vazio():
+    m = _script()
+    copia = _copia(m.sql_mesclar_grupo(_trio(), TABELAS, CHAVES, COLUNAS))
+    assert ("rolling_summary = case when coalesce(btrim(s.rolling_summary), '') = ''"
+            " then coalesce(d.rolling_summary, s.rolling_summary) else s.rolling_summary end"
+            ) in copia
+    assert ("rolling_summary_updated_at = case when coalesce(btrim(s.rolling_summary), '') = ''"
+            " and d.rolling_summary is not null then d.rolling_summary_updated_at"
+            " else s.rolling_summary_updated_at end") in copia
+
+
+def test_evento_guarda_a_linha_inteira_do_duplicado():
+    m = _script()
+    sql = m.sql_mesclar_grupo(_trio(), TABELAS, CHAVES, COLUNAS)
+    assert "jsonb_build_object('duplicado', to_jsonb(d), 'motivo'" in sql
+    assert sql.count(f"from _dups d where d.id = '{B}'") == 1

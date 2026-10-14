@@ -135,13 +135,18 @@ CAMPOS_TEXTO = (
     "name", "company", "email", "cnpj", "razao_social", "nome_fantasia", "endereco",
     "telefone_comercial", "instagram", "inscricao_estadual", "wa_id", "bsuid", "ctwa_clid",
     "fbclid", "gclid", "gbraid", "wbraid", "utm_source", "utm_medium", "utm_campaign",
-    "meta_ad_id", "traffic_type",
+    "meta_ad_id", "traffic_type", "rolling_summary",
 )
 # Nao-texto: o do sobrevivente, senao o primeiro nao nulo dos duplicados.
 CAMPOS_COALESCE = ("bling_contact_id", "assigned_to", "first_response_at", "wa_id_confirmed_at")
 # Acompanham o opt_out / ja_era_cliente: vem do duplicado so quando a flag vem dele.
 CAMPOS_OPT_OUT = ("opt_out_at", "opt_out_channel", "opt_out_evidence")
 CAMPOS_JA_ERA_CLIENTE = ("ja_era_cliente_fonte", "ja_era_cliente_em", "ja_era_cliente_por")
+# Atribuicao manual de campanha: o conjunto inteiro vem junto (do duplicado mais antigo que
+# tem campanha_manual_id), so se o sobrevivente nao tem.
+CAMPOS_CAMPANHA_MANUAL = tuple(f"campanha_manual_{c}" for c in ("canal", "id", "nome", "por", "em"))
+# Pausas: basta um membro ter (conservador — humano no controle, lead pausado).
+CAMPOS_OR = ("human_control", "on_hold")
 
 _CANONICO = re.compile(r"^55\d{11}$")
 
@@ -233,6 +238,12 @@ def _sql_fundir_conversas(d, s, tabelas, colunas):
         # conservador: se alguma das duas tinha o follow-up desligado, fica desligado
         sets.append("followup_enabled = coalesce(sc.followup_enabled, true)"
                     " and coalesce(dc.followup_enabled, true)")
+    if "ai_enabled" in conv:
+        # IA so fica ligada se estava ligada nas duas (null conta como desligada)
+        sets.append("ai_enabled = case when sc.ai_enabled is not true or dc.ai_enabled is not true"
+                    " then false else true end")
+    sets += [f"{k} = case when coalesce(sc.{k}, false) or coalesce(dc.{k}, false)"
+             f" then true else sc.{k} end" for k in CAMPOS_OR if k in conv]
     sets += [f"{k} = greatest(sc.{k}, dc.{k})" for k in _CONV_GREATEST if k in conv]
     if "unread_count" in conv:
         sets.append("unread_count = coalesce(sc.unread_count, 0) + coalesce(dc.unread_count, 0)")
@@ -348,9 +359,7 @@ def sql_mesclar_grupo(grupo, tabelas, chaves=None, colunas=None):
             "insert into public.lead_events"
             " (lead_id, event_type, old_value, new_value, metadata, occurred_at, source, dedupe_key)\n"
             f"select '{s}', 'mesclagem', '{d}', '{s}',"
-            " jsonb_build_object('duplicado', jsonb_build_object('id', d.id, 'phone', d.phone,"
-            " 'name', d.name, 'channel', d.channel, 'created_at', d.created_at),"
-            f" 'motivo', {motivo}, 'movidos', {_movidos('_mesclagem_movidos')}),"
+            f" jsonb_build_object('duplicado', to_jsonb(d), 'motivo', {motivo}, 'movidos', {_movidos('_mesclagem_movidos')}),"
             f" now(), 'sistema', 'mesclagem:{d}'\n"
             f"from _dups d where d.id = '{d}'\non conflict do nothing;")
         linhas.append(f"insert into _mesclagem_total select '{d}', tabela, chave"
@@ -373,6 +382,24 @@ def sql_mesclar_grupo(grupo, tabelas, chaves=None, colunas=None):
     sets += [f"{k} = case when coalesce(s.ja_era_cliente, false) or not d.ja_era_cliente"
              f" then s.{k} else d.{k} end" for k in CAMPOS_JA_ERA_CLIENTE]
     sets.append("metadata = d.metadata || coalesce(s.metadata, '{}'::jsonb)")
+    # o resumo da conversa anda junto com a data dele
+    sets.append("rolling_summary_updated_at = case when coalesce(btrim(s.rolling_summary), '') = ''"
+                " and d.rolling_summary is not null then d.rolling_summary_updated_at"
+                " else s.rolling_summary_updated_at end")
+    sets += [f"{k} = case when coalesce(btrim(s.campanha_manual_id), '') = ''"
+             f" and d.campanha_manual_id is not null then d.{k} else s.{k} end"
+             for k in CAMPOS_CAMPANHA_MANUAL]
+    # notas: a do sobrevivente e depois as dos duplicados (por created_at), cada uma com o
+    # telefone de origem; `d.notes` ja vem com o separador na frente de cada uma
+    sets.append("notes = case when coalesce(btrim(s.notes), '') = ''"
+                " then coalesce(substr(d.notes, 3), s.notes)"
+                " else s.notes || coalesce(d.notes, '') end")
+    # controle humano, do jeito conservador: IA so continua ligada se estava em todos
+    # (null conta como desligada); humano no controle / pausado se qualquer um estava.
+    sets.append("ai_enabled = case when s.ai_enabled is not true or not d.ai_enabled"
+                " then false else true end")
+    sets += [f"{k} = case when coalesce(s.{k}, false) or d.{k} then true else s.{k} end"
+             for k in CAMPOS_OR]
 
     agregados = [_primeiro(f"x.{k}", "coalesce(btrim(x.%s), '') <> ''" % k) + f" as {k}"
                  for k in CAMPOS_TEXTO]
@@ -383,6 +410,17 @@ def sql_mesclar_grupo(grupo, tabelas, chaves=None, colunas=None):
     agregados.append("coalesce(bool_or(x.ja_era_cliente), false) as ja_era_cliente")
     agregados += [f"{_primeiro(f'x.{k}', 'x.ja_era_cliente')} as {k}"
                   for k in CAMPOS_JA_ERA_CLIENTE]
+    agregados.append(_primeiro("x.rolling_summary_updated_at",
+                               "coalesce(btrim(x.rolling_summary), '') <> ''")
+                     + " as rolling_summary_updated_at")
+    agregados += [_primeiro(f"x.{k}", "coalesce(btrim(x.campanha_manual_id), '') <> ''")
+                  + f" as {k}" for k in CAMPOS_CAMPANHA_MANUAL]
+    agregados.append(
+        "string_agg(E'\\n\\n--- mesclado de ' || coalesce(x.phone, '') || E' ---\\n'"
+        " || x.notes, '' order by x.created_at, x.id)"
+        " filter (where coalesce(btrim(x.notes), '') <> '') as notes")
+    agregados.append("coalesce(bool_and(coalesce(x.ai_enabled, false)), true) as ai_enabled")
+    agregados += [f"coalesce(bool_or(x.{k}), false) as {k}" for k in CAMPOS_OR]
     # metadata de todos os duplicados; na mesma chave vence o duplicado mais antigo (e o
     # sobrevivente vence todos, no `||` do set).
     agregados.append(

@@ -96,6 +96,15 @@ insert into public.broadcasts (id, name, template_name) values ('{BROAD}', 'Prom
 insert into public.broadcast_leads (broadcast_id, lead_id)
   values ('{BROAD}', '{A}'), ('{BROAD}', '{B}');
 
+-- controle humano, notas, campanha manual e resumo (re-revisao de 14/10)
+update public.leads set notes = 'primeira nota' where id = '{A}';
+update public.leads set human_control = true, ai_enabled = false,
+       notes = 'cliente pediu desconto', campanha_manual_canal = 'meta',
+       campanha_manual_id = 'cmp1', campanha_manual_nome = 'Promo Junho',
+       rolling_summary = 'resumo do B' where id = '{B}';
+update public.leads set notes = 'nota do C', campanha_manual_id = 'cmp2',
+       campanha_manual_nome = 'Outra' where id = '{C}';
+
 insert into public.tags (id, name) values ('{TAG}', 'cliente');
 insert into public.lead_tags (lead_id, tag_id) values ('{A}', '{TAG}'), ('{B}', '{TAG}');
 """
@@ -212,6 +221,23 @@ def test_aplicar_funde_o_trio_e_o_par(banco, tmp_path):
              f" from public.leads where id = '{A}'") == \
         "true|whatsapp_texto|douglas@exemplo.com|BR.douglas"
     assert q(f"select name from public.leads where id = '{A}'") == "Douglas"
+    # controle humano: IA desligada e humano no controle (vieram do B)
+    assert q(f"select ai_enabled::text || '|' || human_control::text || '|'"
+             f" || coalesce(on_hold::text, 'null') from public.leads where id = '{A}'") == \
+        "false|true|false"
+    # notas concatenadas com o telefone de origem, na ordem de created_at
+    assert q(f"select notes from public.leads where id = '{A}'") == (
+        "primeira nota\n\n--- mesclado de 5549999170363 ---\ncliente pediu desconto"
+        "\n\n--- mesclado de 554999170363 ---\nnota do C")
+    # campanha manual inteira do duplicado mais antigo que tinha (B, nao C)
+    assert q(f"select campanha_manual_canal || '|' || campanha_manual_id || '|'"
+             f" || campanha_manual_nome from public.leads where id = '{A}'") == \
+        "meta|cmp1|Promo Junho"
+    assert q(f"select rolling_summary from public.leads where id = '{A}'") == "resumo do B"
+    # o evento guarda a linha inteira do duplicado
+    assert q(f"select metadata->'duplicado'->>'notes' || '|'"
+             f" || (metadata->'duplicado'->>'human_control') from public.lead_events"
+             f" where dedupe_key = 'mesclagem:{B}'") == "cliente pediu desconto|true"
 
     # follow-up: o do B foi cancelado (nao apagado), mudou de dono e de conversa
     assert q(f"select status || '|' || cancel_reason || '|' || lead_id || '|' || conversation_id"
