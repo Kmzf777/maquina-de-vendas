@@ -36,6 +36,30 @@ Specs: `docs/superpowers/specs/2026-10-08-conversoes-ads-design.md` e
   session… processed normally" e o evento conta como **real** (aconteceu em 13/10 com 3 eventos de R$ 1).
 - Valores prontos para o `.env` ficam em `/root/.secrets/conversoes-ads.env` na VPS (root, 600).
 
+### Ajuste de 14/10/2026 (cartão cf1d26dd — conversões infladas no Google Ads)
+
+- **As ações do CRM no Google (Lead_Qualificado, Oportunidade_Criada, Venda_Fechada) são
+  secundárias**: ficam fora da coluna "Conversões" e aparecem só em "Todas as conv.". Se ficarem
+  principais, somam com as conversões do site e a mesma pessoa conta duas vezes (em 14/10, na
+  campanha Terceirização: 29 + 9).
+- **"Lead captado" = metas personalizadas**, não uma ação: **Empório e Cafeteria** (Atacado 2 obg
+  `7382055753` + Conversation started `7288479086`) e **Terceirização** (Terceirização 2 Obg
+  `7394745545` + Conversation started). Não existe ação Lead_Captado.
+- **Janela retroativa** `CONVERSIONS_BACKFILL_DAYS` (padrão 90, limitada a 1..90): idade máxima do
+  **evento** para entrar na fila e para ser enviado; evento mais velho vira `fora_da_janela` sem
+  envio. As janelas das plataformas (Meta 7 dias, Google 90 dias de clique) continuam valendo por
+  cima. A seleção de leads segue olhando cliques de 90 dias (venda recente de clique antigo continua
+  válida).
+- **Modo simulação** `CONVERSIONS_DRY_RUN=true`: o worker roda varredura e envio só contando — não
+  grava na fila, não reivindica, não envia. O log mostra `[CONVERSOES][SIMULACAO] ...`.
+- **Scripts** (de dentro do container, em `/app`; ambos só leem):
+  - `python -m scripts.conversoes.checar_duplicatas` — relatório de duplicatas por lead × etapa ×
+    plataforma, venda × plataforma e `event_id`; sai com 1 se houver duplicata.
+  - `python -m scripts.conversoes.simular_ativacao [--dias N]` — quantos eventos a varredura
+    enfileiraria e quantos o sender enviaria agora, por plataforma × etapa × idade do evento.
+- **Regra: simular antes de qualquer reativação** (fim de pausa, etapa ou plataforma nova). Rode
+  `simular_ativacao` (com o `--dias` que pretende usar), confira o tamanho do salto e só então ligue.
+
 ## 2. Variáveis de ambiente
 
 Lidas com `os.getenv` (api e worker leem o mesmo `.env`). Plataforma **ligada mas sem
@@ -55,6 +79,8 @@ com `strip()` (espaço/quebra de linha no fim não quebram a credencial).
 | `CONVERSIONS_META_ENABLED` | Liga o envio para a Meta. Desligada, as linhas ficam `pendente`. | `false` |
 | `CONVERSIONS_GOOGLE_ENABLED` | Idem, Google. | `false` |
 | `CONVERSIONS_TEST_MODE` | Meta: inclui `test_event_code`; **sem `META_CAPI_TEST_EVENT_CODE` a Meta fica pulada** (o evento sairia como real). Google: `validateOnly: true`. | `false` |
+| `CONVERSIONS_BACKFILL_DAYS` | Janela retroativa: idade máxima do evento (dias) para entrar na fila e ser enviado. Inválido → 90; limitado a 1..90. | `90` |
+| `CONVERSIONS_DRY_RUN` | Simulação: varredura e envio só contam (log `[CONVERSOES][SIMULACAO]`), sem gravar nem enviar. | `false` |
 | `META_CAPI_DATASET_ID` | Dataset ligado ao WABA (destino do `POST /{id}/events`). | sem default |
 | `META_CAPI_ACCESS_TOKEN` | Token de system user (seção 4). | sem default |
 | `META_CAPI_TEST_EVENT_CODE` | Código da aba Test Events. | sem default |
@@ -200,7 +226,7 @@ dedup é nossa (`dedupe_key`/`event_id`); só eventos padrão (`LeadSubmitted` n
 | `pendente` | Na fila. Também é onde ficam as linhas quando a plataforma está desligada ou aguardando retentativa (`next_attempt_at`). |
 | `enviado` | Aceito pela API da plataforma (HTTP 200). No Google isso é **aceite do request**: o processamento é assíncrono e um clique que não casa (ou ação errada) só aparece depois, no diagnóstico da ação de conversão no Google Ads — `enviado` não garante conversão registrada. Envio em modo teste nunca vira `enviado` (ver seção 3). |
 | `erro` | Erro permanente (4xx de validação), 6 falhas seguidas, **ou envio à Meta com desfecho desconhecido** (ver abaixo). Veja `last_error` e `last_response`. Limites (Meta 4/17/32/341/613), 5xx e rede **não** são permanentes: entram no backoff. |
-| `fora_da_janela` | O clique ficou velho demais antes do envio (Meta 7 dias, Google 90). Não há o que fazer. |
+| `fora_da_janela` | O clique ficou velho demais antes do envio (Meta 7 dias, Google 90) ou o evento passou da janela retroativa (`CONVERSIONS_BACKFILL_DAYS`). Não há o que fazer. |
 | `ignorado` | Venda cancelada (`venda cancelada antes do envio`) ou apagada (`venda removida antes do envio`) antes do envio. |
 
 Retentativas: 1 min, 5 min, 30 min, 2 h, 12 h; na 6ª falha vai para `erro`. Variável de ambiente

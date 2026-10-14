@@ -85,13 +85,15 @@ async def _bling_pedidos_tick() -> None:
 
 
 async def _conversions_sweep_tick() -> None:
+    from app.conversions.eligibility import dry_run_enabled
     from app.conversions.sweep import run_sweep
-    await asyncio.to_thread(run_sweep)
+    await asyncio.to_thread(run_sweep, dry_run=dry_run_enabled())
 
 
 async def _conversions_send_tick() -> None:
+    from app.conversions.eligibility import dry_run_enabled
     from app.conversions.sender import run_sender
-    await asyncio.to_thread(run_sender)
+    await asyncio.to_thread(run_sender, dry_run=dry_run_enabled())
 
 
 async def _valeria_repasse_tick() -> None:
