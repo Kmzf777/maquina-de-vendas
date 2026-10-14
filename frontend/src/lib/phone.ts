@@ -21,3 +21,14 @@ export function normalizePhoneBR(raw: string): string | null {
   }
   return digits.length === 13 && digits.startsWith("55") ? digits : null;
 }
+
+/**
+ * Formas em que um telefone canônico (saída de `normalizePhoneBR`) já foi gravado
+ * em `leads.phone` antes de existir normalização: sem o 9, sem o 55, sem os dois.
+ * Usado para achar o lead existente antes de criar outro (cartão b747da43).
+ */
+export function phoneVariantsBR(canonical: string): string[] {
+  if (!/^55\d{2}9\d{8}$/.test(canonical)) return [canonical];
+  const semNove = canonical.slice(0, 4) + canonical.slice(5);
+  return [canonical, semNove, canonical.slice(2), semNove.slice(2)];
+}

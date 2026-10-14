@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { normalizePhoneBR } from "@/lib/phone";
+import { normalizePhoneBR, phoneVariantsBR } from "@/lib/phone";
 
 describe("normalizePhoneBR", () => {
   it("injects the 9th digit for 12-digit BR mobile numbers", () => {
@@ -28,5 +28,27 @@ describe("normalizePhoneBR", () => {
   });
   it("returns null for a 12/13-digit number that does not start with 55", () => {
     expect(normalizePhoneBR("123456789012")).toBeNull();
+  });
+});
+
+describe("phoneVariantsBR", () => {
+  it("lista o canônico e as formas antigas (sem 9, sem 55, sem os dois)", () => {
+    expect(phoneVariantsBR("5549999170363")).toEqual([
+      "5549999170363",
+      "554999170363",
+      "49999170363",
+      "4999170363",
+    ]);
+  });
+  it("número fixo com 9 injetado também acha a forma de 12 dígitos", () => {
+    expect(phoneVariantsBR("5549934415750")).toEqual([
+      "5549934415750",
+      "554934415750",
+      "49934415750",
+      "4934415750",
+    ]);
+  });
+  it("valor que não é canônico de 13 dígitos devolve só ele mesmo", () => {
+    expect(phoneVariantsBR("123")).toEqual(["123"]);
   });
 });
