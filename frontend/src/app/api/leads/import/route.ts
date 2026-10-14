@@ -3,6 +3,7 @@ import { getServiceSupabase } from "@/lib/supabase/api";
 import { buildImportDeals, type ImportDealLead } from "@/lib/import-deals";
 import { dedupeByPhone } from "@/lib/dedupe-leads";
 import { normalizePhoneBR } from "@/lib/phone";
+import { findLeadsByPhoneVariants, type LeadPorTelefone } from "@/lib/lead-phone-lookup";
 
 interface ImportLead {
   phone: string;
@@ -43,19 +44,21 @@ export async function POST(request: NextRequest) {
   const leads = dedupeByPhone(normalizedLeads);
 
   const phones = leads.map((l) => l.phone);
-  const { data: existing } = await supabase
-    .from("leads")
-    .select("phone")
-    .in("phone", phones);
-
-  const existingPhones = new Set((existing || []).map((e) => e.phone));
+  // Existente em qualquer formato antigo do número (sem 9 / sem 55), chaveado
+  // pelo canônico; o valor traz o telefone gravado de fato (cartão b747da43).
+  let existingByPhone: Map<string, LeadPorTelefone>;
+  try {
+    existingByPhone = await findLeadsByPhoneVariants(supabase, phones);
+  } catch (err) {
+    return NextResponse.json({ error: err instanceof Error ? err.message : String(err) }, { status: 500 });
+  }
 
   const toInsert: ImportLead[] = [];
   const toUpdate: ImportLead[] = [];
   const skipped: string[] = [];
 
   for (const lead of leads) {
-    if (existingPhones.has(lead.phone)) {
+    if (existingByPhone.has(lead.phone)) {
       if (skipDuplicates) {
         skipped.push(lead.phone);
       } else {
@@ -104,7 +107,9 @@ export async function POST(request: NextRequest) {
     if (lead.telefone_comercial) updateData.telefone_comercial = lead.telefone_comercial;
 
     if (Object.keys(updateData).length > 0) {
-      await supabase.from("leads").update(updateData).eq("phone", lead.phone);
+      // Telefone gravado de fato, não o canônico: o lead pode estar sem o 9/sem o 55.
+      const gravado = existingByPhone.get(lead.phone)?.phone ?? lead.phone;
+      await supabase.from("leads").update(updateData).eq("phone", gravado);
       updatedCount++;
     }
   }
@@ -149,13 +154,16 @@ export async function POST(request: NextRequest) {
       .maybeSingle();
 
     if (resolvedStageId && pipeline) {
-      // 3. Buscar todos os leads importados (novos + duplicados existentes) por telefone.
-      const { data: importedLeads } = await supabase
-        .from("leads")
-        .select("id, name, phone")
-        .in("phone", phones);
+      // 3. Buscar todos os leads importados (novos + duplicados existentes) por
+      //    telefone, em qualquer formato gravado.
+      let importedLeads: LeadPorTelefone[];
+      try {
+        importedLeads = [...(await findLeadsByPhoneVariants(supabase, phones)).values()];
+      } catch (err) {
+        return NextResponse.json({ error: err instanceof Error ? err.message : String(err) }, { status: 500 });
+      }
 
-      const leadList: ImportDealLead[] = (importedLeads ?? []).map((l) => ({
+      const leadList: ImportDealLead[] = importedLeads.map((l) => ({
         id: l.id,
         name: l.name,
         phone: l.phone,
