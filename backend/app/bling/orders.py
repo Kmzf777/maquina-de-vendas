@@ -12,6 +12,7 @@ from datetime import datetime, timedelta, timezone
 from decimal import ROUND_HALF_UP, Decimal
 
 from app.bling import config
+from app.bling.alertas import alertar
 from app.bling.errors import BlingValidationError
 
 logger = logging.getLogger(__name__)
@@ -612,7 +613,10 @@ def _existing_sale(order_id: int, account: str) -> dict | None:
     # bling_order_id sozinho NAO identifica mais uma venda: e sequencia POR
     # CONTA, entao o pedido 10 pode existir (com lead/deal diferentes) nas
     # duas. Sem o filtro por conta, a conta 2 acharia a venda da conta 1.
-    res = (get_supabase().table("sales").select("id, origin, deal_id, lead_id, status")
+    res = (get_supabase().table("sales")
+           .select("id, origin, deal_id, lead_id, status, bling_situacao_id, "
+                   "bling_situacao_nome, sold_by, payment_method_id, payment_terms, "
+                   "devolucao_parcial")
            .eq("bling_order_id", order_id).eq("bling_account", account)
            .limit(1).execute())
     linhas = getattr(res, "data", None) or []
@@ -656,16 +660,287 @@ def _replace_items(sale_id: str, itens: list[dict]) -> None:
             [{**i, "sale_id": sale_id} for i in itens]).execute()
 
 
+# --------------------------------------------------------------------------
+# Situacao -> status (B10 / G4 da avaliacao 2026-10-13, decisao D7)
+# --------------------------------------------------------------------------
+# Situacao padrao "Cancelado" do Bling. As situacoes PADRAO compartilham id entre
+# contas (as personalizadas nao), entao este id vale como rede de seguranca
+# quando o espelho `bling_situacoes` ainda nao tem a linha.
+SITUACAO_CANCELADO_PADRAO = 12
+# Trechos do nome (sem acento, minusculo) que tornam a situacao "cancelada" no
+# CRM: Cancelado/Cancelada e as de devolucao TOTAL (Devolvido, Em devolucao, ...).
+# Conferir os nomes reais de cada conta antes do deploy (runbook, secao 0).
+_TRECHOS_CANCELAMENTO = ("cancelad", "devolv", "devoluc")
+# Decisao do dono (revisao 2026-10-13): devolucao PARCIAL nao cancela a venda —
+# parte do pedido ficou com o cliente. A venda continua contando e ganha a marca
+# `sales.devolucao_parcial` + o alerta `bling_devolucao_parcial` para revisao.
+_TRECHO_PARCIAL = "parcial"
+# Decisao do dono (2026-10-13): "Em devolucao" (devolucao EM ANDAMENTO) tambem nao
+# cancela — ainda pode nao se concretizar. Trata como a parcial: a venda segue
+# contando e fica marcada para revisao. So "Cancelado" e devolucao TOTAL CONCLUIDA
+# ("Devolvido", sem "parcial" e sem "em ") cancelam.
+# OBS: a coluna `sales.devolucao_parcial` e o alerta `bling_devolucao_parcial`
+# significam, na pratica, "devolucao a revisar" (parcial OU em andamento).
+_TRECHO_EM_ANDAMENTO = "em devoluc"
+
+# Classes de situacao (ver `classificar_situacao`).
+CANCELA = "cancela"
+DEVOLUCAO_PARCIAL = "devolucao_parcial"
+NORMAL = "normal"
+DESCONHECIDA = "desconhecida"
+
+
+def _sem_acento(texto: str) -> str:
+    import unicodedata
+    return "".join(c for c in unicodedata.normalize("NFKD", texto)
+                   if not unicodedata.combining(c)).lower()
+
+
+def classificar_situacao(nome: str | None, situacao_id=None) -> str:
+    """CANCELA, DEVOLUCAO_PARCIAL, NORMAL ou DESCONHECIDA.
+
+    DESCONHECIDA = sem nome (lookup falhou ou situacao personalizada fora do
+    espelho) e id diferente do Cancelado padrao. Com ela ninguem decide status
+    nem apaga dado: nao da para saber se a venda foi cancelada ou nao.
+    """
+    if nome:
+        normal = _sem_acento(str(nome))
+        if any(t in normal for t in _TRECHOS_CANCELAMENTO):
+            if "cancelad" not in normal and (
+                    _TRECHO_PARCIAL in normal or _TRECHO_EM_ANDAMENTO in normal):
+                return DEVOLUCAO_PARCIAL
+            return CANCELA
+        return NORMAL
+    try:
+        if situacao_id is not None and int(situacao_id) == SITUACAO_CANCELADO_PADRAO:
+            return CANCELA
+    except (TypeError, ValueError):
+        pass
+    return DESCONHECIDA
+
+
+def situacao_cancela(nome: str | None, situacao_id=None) -> bool:
+    """A situacao do Bling faz a venda contar como cancelada no CRM?"""
+    return classificar_situacao(nome, situacao_id) == CANCELA
+
+
+def _status_da_venda(existente: dict | None, pedido: dict, nome_situacao: str | None) -> str:
+    """Status da venda depois deste pedido.
+
+    - situacao de cancelamento/devolucao TOTAL -> 'cancelada';
+    - devolucao PARCIAL continua venda (decisao do dono, ver `_TRECHO_PARCIAL`);
+    - venda que estava cancelada POR CAUSA da situacao e saiu dela -> 'registrada'
+      (reabertura no Bling);
+    - venda cancelada por outro motivo (`order.deleted`, cancelamento no CRM)
+      continua cancelada: um evento em situacao normal nao desfaz isso;
+    - nome da situacao DESCONHECIDO (lookup falhou, situacao fora do espelho)
+      nunca reabre: cancelada continua cancelada;
+    - payload sem `situacao` nao decide nada: mantem o que havia.
+    """
+    atual = (existente or {}).get("status")
+    if not pedido.get("situacao"):
+        return "cancelada" if atual == "cancelada" else "registrada"
+    classe = classificar_situacao(nome_situacao, (pedido.get("situacao") or {}).get("id"))
+    if classe == CANCELA:
+        return "cancelada"
+    if atual == "cancelada":
+        if classe == DESCONHECIDA:
+            return "cancelada"
+        estava_por_situacao = situacao_cancela(
+            (existente or {}).get("bling_situacao_nome"),
+            (existente or {}).get("bling_situacao_id"))
+        return "registrada" if estava_por_situacao else "cancelada"
+    return "registrada"
+
+
+def _mesmo_id(a, b) -> bool:
+    try:
+        return a is not None and b is not None and int(a) == int(b)
+    except (TypeError, ValueError):
+        return False
+
+
+def _avisar_devolucao_parcial(account: str, order_id: int, nome: str | None) -> None:
+    """Alerta de revisao, com dedup POR PEDIDO. Nunca levanta (`alertar` e fail-soft)."""
+    alertar("bling_devolucao_parcial", account,
+            f"Devolucao parcial no Bling ({config.account(account).label})",
+            f"Pedido {order_id} esta em '{nome}'. A venda continua contando no CRM; "
+            "revisar o valor (sales.devolucao_parcial = true).",
+            metadata={"pedido": order_id, "situacao": nome},
+            chave=f"pedido:{order_id}", dedup_horas=24 * 30)
+
+
+# --------------------------------------------------------------------------
+# Frete, desconto e pagamento do pedido (G7)
+# --------------------------------------------------------------------------
+def _frete(pedido: dict) -> float | None:
+    """`transporte.frete`, ou None quando o payload nao traz `transporte` (nao zera)."""
+    if "transporte" not in pedido:
+        return None
+    return float(_money(_dec((pedido.get("transporte") or {}).get("frete"))))
+
+
+def _desconto(pedido: dict) -> float | None:
+    """Desconto de cabecalho em R$. PERCENTUAL e convertido sobre o total dos itens."""
+    desconto = pedido.get("desconto")
+    if not isinstance(desconto, dict):
+        return None
+    valor = _dec(desconto.get("valor"))
+    if str(desconto.get("unidade") or "REAL").upper() == "PERCENTUAL":
+        itens = _map_bling_items(pedido)
+        if not itens:
+            return None
+        base = sum((_dec(i["total"]) for i in itens), Decimal("0"))
+        return float(_money(base * valor / Decimal("100")))
+    return float(_money(valor))
+
+
+def _pagamento(pedido: dict) -> dict:
+    """Forma de pagamento e prazos ("30/60") a partir das parcelas do pedido."""
+    parcelas = [p for p in (pedido.get("parcelas") or []) if isinstance(p, dict)]
+    if not parcelas:
+        return {}
+    saida: dict = {}
+    forma = (parcelas[0].get("formaPagamento") or {}).get("id")
+    if forma:
+        saida["payment_method_id"] = int(forma)
+    try:
+        base = datetime.strptime(str(pedido.get("data")), "%Y-%m-%d").date()
+        dias = [(datetime.strptime(str(p["dataVencimento"]), "%Y-%m-%d").date() - base).days
+                for p in parcelas if p.get("dataVencimento")]
+        if dias:
+            saida["payment_terms"] = "/".join(str(max(d, 0)) for d in dias)
+    except (KeyError, ValueError):
+        pass
+    return saida
+
+
+# --------------------------------------------------------------------------
+# Vendedor da venda: cascata D8 (B1)
+# --------------------------------------------------------------------------
+_cache_email_usuario: dict[str, str | None] = {}
+
+
+def _email_do_mapa(account: str, seller_id) -> str | None:
+    try:
+        seller_id = int(seller_id or 0)
+    except (TypeError, ValueError):
+        return None
+    if not seller_id:
+        return None
+    res = (get_supabase().table("bling_seller_map").select("user_email")
+           .eq("account", account).eq("bling_seller_id", seller_id)
+           .order("user_email").limit(1).execute())
+    linhas = getattr(res, "data", None) or []
+    email = (linhas[0] or {}).get("user_email") if linhas else None
+    return email.strip().lower() if email else None
+
+
+def _vendedor_do_contato(account: str, contact_id) -> int | None:
+    if not contact_id:
+        return None
+    res = (get_supabase().table("bling_contacts").select("vendedor_id")
+           .eq("account", account).eq("id", int(contact_id)).limit(1).execute())
+    linhas = getattr(res, "data", None) or []
+    return (linhas[0] or {}).get("vendedor_id") if linhas else None
+
+
+def _email_do_usuario(user_id: str) -> str | None:
+    """E-mail do usuario do CRM (auth.users) pelo uuid. Cache em processo; falha -> None."""
+    if user_id in _cache_email_usuario:
+        return _cache_email_usuario[user_id]
+    try:
+        resp = get_supabase().auth.admin.get_user_by_id(user_id)
+        email = getattr(getattr(resp, "user", None), "email", None)
+        email = email.strip().lower() if email else None
+    except Exception:  # noqa: BLE001 — vendedor e enriquecimento, nunca derruba a venda
+        logger.warning("[BLING] nao consegui ler o e-mail do usuario %s", user_id, exc_info=True)
+        return None
+    _cache_email_usuario[user_id] = email
+    return email
+
+
+def _responsavel_do_lead(lead_id: str | None) -> str | None:
+    if not lead_id:
+        return None
+    res = (get_supabase().table("leads").select("assigned_to")
+           .eq("id", lead_id).limit(1).execute())
+    linhas = getattr(res, "data", None) or []
+    uid = (linhas[0] or {}).get("assigned_to") if linhas else None
+    return _email_do_usuario(str(uid)) if uid else None
+
+
+def _venda_na_janela_do_lead(sold_at_iso: str | None, agora: datetime | None = None) -> bool:
+    """`sold_at` cai nos ultimos `config.vendedor_lead_dias()` dias? Data
+    ausente/ilegivel -> False (na duvida, nao atribui vendedor)."""
+    if not sold_at_iso:
+        return False
+    try:
+        quando = datetime.fromisoformat(str(sold_at_iso).replace("Z", "+00:00"))
+    except ValueError:
+        return False
+    if quando.tzinfo is None:
+        quando = quando.replace(tzinfo=timezone.utc)
+    agora = agora or datetime.now(timezone.utc)
+    return quando >= agora - timedelta(days=config.vendedor_lead_dias())
+
+
+def _vendedor_da_venda(pedido: dict, lead_id: str | None, account: str,
+                       sold_at: str | None = None) -> tuple[str | None, str | None]:
+    """(sold_by, vendedor_fonte) pela regra D8, ou (None, None).
+
+    1. `pedido.vendedor.id` -> `bling_seller_map` da conta  => 'bling_pedido'
+    2. `bling_contacts.vendedor_id` do contato do pedido     => 'bling_contato'
+    3. `leads.assigned_to` (uuid -> e-mail em auth.users)    => 'lead_assigned'
+    Cada degrau falha sozinho (log) e cai para o proximo.
+
+    Decisao do dono (revisao 2026-10-13): o 3o degrau e o responsavel ATUAL do
+    lead, nao quem vendeu na epoca. So vale para venda com `sold_at` nos ultimos
+    `BLING_VENDEDOR_LEAD_DIAS` dias (padrao 60). Venda mais antiga sem vendedor no
+    pedido nem no contato fica SEM vendedor (`sold_by` e `vendedor_fonte` NULL —
+    o "sem fonte" que ja existia). Vale para todos os caminhos (webhook,
+    varredura, backfill e reconciliacao), porque todos passam por aqui.
+    """
+    contato_id = (pedido.get("contato") or {}).get("id")
+    degraus = [
+        ("bling_pedido",
+         lambda: _email_do_mapa(account, (pedido.get("vendedor") or {}).get("id"))),
+        ("bling_contato",
+         lambda: _email_do_mapa(account, _vendedor_do_contato(account, contato_id))),
+    ]
+    if _venda_na_janela_do_lead(sold_at):
+        degraus.append(("lead_assigned", lambda: _responsavel_do_lead(lead_id)))
+    for fonte, resolver in degraus:
+        try:
+            email = resolver()
+        except Exception:  # noqa: BLE001
+            logger.warning("[BLING] vendedor: degrau %s falhou", fonte, exc_info=True)
+            continue
+        if email:
+            return email, fonte
+    return None, None
+
+
+class PedidoSemLead(ValueError):
+    """Venda nova sem lead: `sales.lead_id` e NOT NULL. Erro legivel no lugar do
+    23502 do Postgres (que era o que enchia `bling_webhook_events.last_error`)."""
+
+
 async def upsert_from_bling(pedido: dict, *, lead_id: str | None,
                             event_date: str | None,
                             account: str = config.DEFAULT_ACCOUNT) -> str | None:
-    """Projeta um pedido do Bling em `sales` (webhook e backfill).
+    """Projeta um pedido do Bling em `sales` (webhook, backfill, varredura).
 
     O UNIQUE composto em (bling_account, bling_order_id) faz o pedido que o CRM
     acabou de criar casar com a linha ja gravada — nao duplica quando o webhook
     volta. E composto, e nao so `bling_order_id`, porque o numero do pedido e
     uma sequencia POR CONTA: o pedido 10 pode existir, com clientes diferentes,
     nas duas contas Bling ao mesmo tempo.
+
+    Fase 1 (avaliacao 2026-10-13): tambem grava a situacao como status
+    (cancelado/devolucao -> 'cancelada', com reversao), o frete, o desconto, a
+    forma de pagamento e o vendedor (D8). So entra no upsert o que o pedido
+    TRAZ: chave ausente no payload nao zera coluna nenhuma.
     """
     order_id = int(pedido["id"])
     existente = await asyncio.to_thread(_existing_sale, order_id, account)
@@ -676,29 +951,73 @@ async def upsert_from_bling(pedido: dict, *, lead_id: str | None,
     # produto para "Pedido Bling".
     traz_itens = bool(pedido.get("itens"))
 
+    lead_final = (existente or {}).get("lead_id") or lead_id
+    if not lead_final and not existente:
+        raise PedidoSemLead(
+            f"pedido {order_id} (conta {account}) sem lead: contato "
+            f"{(pedido.get('contato') or {}).get('id')} nao resolvido")
+
+    situacao_id = (pedido.get("situacao") or {}).get("id")
+    situacao_nome = await asyncio.to_thread(_situacao_nome, situacao_id, account)
+    if situacao_nome is None and _mesmo_id(situacao_id, (existente or {}).get("bling_situacao_id")):
+        # Lookup falhou (transitorio) ou a situacao saiu do espelho, mas o pedido
+        # continua na MESMA situacao: o nome ja gravado continua valendo.
+        situacao_nome = (existente or {}).get("bling_situacao_nome")
+
     linha = {
         "bling_account": account,
         "bling_order_id": order_id,
-        "lead_id": (existente or {}).get("lead_id") or lead_id,
+        "lead_id": lead_final,
         # Venda vinda do ERP entra sem deal (D7); venda do CRM mantem o dela.
         "deal_id": (existente or {}).get("deal_id"),
         "value": float(_dec(pedido.get("total"))),
         # A origem e imutavel depois de definida: o webhook de volta nao pode
         # reescrever 'crm' para 'bling'.
         "origin": (existente or {}).get("origin") or "bling",
-        # Venda ja cancelada nao volta a 'registrada' no proximo evento.
-        "status": ("cancelada" if (existente or {}).get("status") == "cancelada"
-                   else "registrada"),
+        "status": _status_da_venda(existente, pedido, situacao_nome),
         "bling_order_number": pedido.get("numero"),
-        "bling_situacao_id": (pedido.get("situacao") or {}).get("id"),
-        "bling_situacao_nome": await asyncio.to_thread(
-            _situacao_nome, (pedido.get("situacao") or {}).get("id"), account),
+        "bling_situacao_id": situacao_id,
         "bling_event_date": event_date,
     }
+    # Nome desconhecido nunca apaga um nome ja gravado (nem decide status, ver
+    # `_status_da_venda`). Venda nova sem nome segue gravando NULL, como antes.
+    if situacao_nome is not None or not (existente or {}).get("bling_situacao_nome"):
+        linha["bling_situacao_nome"] = situacao_nome
+
+    # Devolucao parcial (decisao do dono): continua venda, marcada para revisao.
+    # So decide com a situacao conhecida; ausente/desconhecida nao mexe na marca.
+    classe = (classificar_situacao(situacao_nome, situacao_id)
+              if pedido.get("situacao") else DESCONHECIDA)
+    if classe != DESCONHECIDA:
+        linha["devolucao_parcial"] = classe == DEVOLUCAO_PARCIAL
+        if classe == DEVOLUCAO_PARCIAL and not (existente or {}).get("devolucao_parcial"):
+            _avisar_devolucao_parcial(account, order_id, situacao_nome)
 
     sold_at = _sold_at_iso(pedido, event_date)
     if sold_at:
         linha["sold_at"] = sold_at
+
+    frete = _frete(pedido)
+    if frete is not None:
+        linha["freight"] = frete
+    desconto = _desconto(pedido)
+    if desconto is not None:
+        linha["discount"] = desconto
+
+    # Pagamento: o Bling e a fonte para a venda importada; na venda do CRM so
+    # completa o que estiver vazio (o CRM ja gravou o que o vendedor escolheu).
+    origem = linha["origin"]
+    for coluna, valor in _pagamento(pedido).items():
+        if not existente or origem == "bling" or existente.get(coluna) in (None, ""):
+            linha[coluna] = valor
+
+    # Vendedor (D8): nunca em venda do CRM/manual, nunca por cima de `sold_by`.
+    if origem == "bling" and not (existente or {}).get("sold_by"):
+        email, fonte = await asyncio.to_thread(_vendedor_da_venda, pedido, lead_final,
+                                               account, linha.get("sold_at"))
+        if email:
+            linha["sold_by"] = email
+            linha["vendedor_fonte"] = fonte
 
     if traz_itens:
         linha["product"] = product_summary(_map_bling_items(pedido))

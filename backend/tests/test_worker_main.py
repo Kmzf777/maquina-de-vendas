@@ -7,8 +7,8 @@ def test_task_specs_cobrem_todos_os_dominios():
     assert names == {
         "broadcasts", "followups", "automation",
         "llm-parking", "memory", "channel-health", "reconcile",
-        "ad-spend-sync", "bling-sync", "bling-jobs", "bling-webhook", "valeria_repasse_parados",
-        "conversions-sweep", "conversions-send",
+        "ad-spend-sync", "bling-sync", "bling-jobs", "bling-webhook", "bling-pedidos",
+        "valeria_repasse_parados", "conversions-sweep", "conversions-send",
     }
 
 

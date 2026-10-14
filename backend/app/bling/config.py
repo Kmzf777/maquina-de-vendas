@@ -190,3 +190,54 @@ def accounts() -> list[BlingAccount]:
     """Todas as contas configuradas, na mesma ordem de account_keys()
     ('default' primeiro quando o env nao a menciona explicitamente)."""
     return [account(k) for k in account_keys()]
+
+
+# Varredura periodica de pedidos (Fase 2 da avaliacao 2026-10-13). Em HORAS no
+# env, porque e assim que o dono pensa; limitada a [1, 3] h: menos que 1 h so
+# gasta orcamento a toa (o webhook ja cobre o caso quente), mais que 3 h deixa
+# situacao/cancelamento velhos por tempo demais no CRM.
+VARREDURA_HORAS_PADRAO = 2
+
+
+def varredura_intervalo_segundos() -> int:
+    bruto = _env("BLING_VARREDURA_HORAS")
+    try:
+        horas = float(bruto) if bruto else VARREDURA_HORAS_PADRAO
+    except ValueError:
+        logger.warning("Valor invalido para BLING_VARREDURA_HORAS: %r (esperava horas)", bruto)
+        horas = VARREDURA_HORAS_PADRAO
+    return int(min(max(horas, 1), 3) * 3600)
+
+
+def varredura_ativa() -> bool:
+    """Liga a varredura periodica de pedidos alterados (`BLING_VARREDURA_ATIVA=true`).
+
+    Padrao: DESLIGADA. O filtro `dataAlteracaoInicial` de `GET /pedidos/vendas`
+    ainda nao foi confirmado no Bling; so ligar depois de confirmar. Nao afeta a
+    reconciliacao diaria (ver `reconciliacao_ativa`)."""
+    return _env("BLING_VARREDURA_ATIVA").lower() in ("1", "true", "yes", "on")
+
+
+def reconciliacao_ativa() -> bool:
+    """Chave da reconciliacao diaria (`BLING_RECONCILIACAO_ATIVA=false` desliga).
+
+    Padrao: LIGADA — usa dataInicial/dataFinal, que ja funcionam em producao.
+    Independente da varredura."""
+    return _env("BLING_RECONCILIACAO_ATIVA").lower() not in ("0", "false", "no", "off")
+
+
+# Decisao do dono (revisao 2026-10-13): o 3o degrau da cascata de vendedor
+# (`leads.assigned_to`, o responsavel ATUAL do lead) so vale para venda recente.
+# Venda mais antiga que isso, sem vendedor no pedido nem no contato, fica sem
+# vendedor: o responsavel de hoje nao e quem vendeu ha meses.
+VENDEDOR_LEAD_DIAS_PADRAO = 60
+
+
+def vendedor_lead_dias() -> int:
+    bruto = _env("BLING_VENDEDOR_LEAD_DIAS")
+    try:
+        dias = int(bruto) if bruto else VENDEDOR_LEAD_DIAS_PADRAO
+    except ValueError:
+        logger.warning("Valor invalido para BLING_VENDEDOR_LEAD_DIAS: %r (esperava dias)", bruto)
+        dias = VENDEDOR_LEAD_DIAS_PADRAO
+    return max(dias, 0)
