@@ -140,7 +140,21 @@ const NAV_GROUPS: NavGroup[] = [
   },
 ];
 
-export function Sidebar({ onClose }: { onClose?: () => void }) {
+/**
+ * Menu lateral. No desktop pode ficar recolhido (só ícones, 56 px) para o
+ * painel de venda/orçamento caber ao lado do chat (cartão a22d0f72). O estado
+ * vem de fora (MenuLateralProvider); o drawer mobile nunca passa
+ * `recolhido`/`onAlternar`.
+ */
+export function Sidebar({
+  onClose,
+  recolhido = false,
+  onAlternar,
+}: {
+  onClose?: () => void;
+  recolhido?: boolean;
+  onAlternar?: () => void;
+}) {
   const pathname = usePathname();
   const { email, role, loading } = useUser();
   const [signingOut, setSigningOut] = useState(false);
@@ -153,17 +167,48 @@ export function Sidebar({ onClose }: { onClose?: () => void }) {
     router.push("/login");
   }
 
+  const logo = (
+    <div className="w-7 h-7 rounded-[4px] bg-[#111111] flex items-center justify-center flex-shrink-0">
+      <span className="text-xs font-medium text-white">V</span>
+    </div>
+  );
+
   return (
-    <aside className="w-[220px] flex flex-col h-screen bg-[#f0ede8] border-r border-[#dedbd6] flex-shrink-0">
-      <div className="px-5 py-5 border-b border-[#dedbd6] flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <div className="w-7 h-7 rounded-[4px] bg-[#111111] flex items-center justify-center flex-shrink-0">
-            <span className="text-xs font-medium text-white">V</span>
+    <aside
+      className={`${recolhido ? "w-[56px]" : "w-[220px]"} flex flex-col h-screen bg-[#f0ede8] border-r border-[#dedbd6] flex-shrink-0 transition-[width] duration-150`}
+    >
+      <div
+        className={`${recolhido ? "px-0 justify-center" : "px-5 justify-between"} py-5 border-b border-[#dedbd6] flex items-center`}
+      >
+        {recolhido ? (
+          <button
+            onClick={onAlternar}
+            aria-label="Abrir menu"
+            title="Abrir menu"
+            className="rounded-[4px] hover:opacity-80 transition-opacity"
+          >
+            {logo}
+          </button>
+        ) : (
+          <div className="flex items-center gap-2">
+            {logo}
+            <span className="text-[15px] font-medium text-[#111111] tracking-tight">
+              ValerIA<span className="text-[#ff5600] ml-0.5">·</span>
+            </span>
           </div>
-          <span className="text-[15px] font-medium text-[#111111] tracking-tight">
-            ValerIA<span className="text-[#ff5600] ml-0.5">·</span>
-          </span>
-        </div>
+        )}
+        {!recolhido && onAlternar && (
+          <button
+            onClick={onAlternar}
+            className="w-7 h-7 flex items-center justify-center rounded-[4px] text-[#7b7b78] hover:bg-[#dedbd6]/60 hover:text-[#111111] transition-colors"
+            aria-label="Recolher menu"
+            title="Recolher menu"
+          >
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.5}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M18.75 19.5l-7.5-7.5 7.5-7.5m-6 15L5.25 12l7.5-7.5" />
+            </svg>
+          </button>
+        )}
         {onClose && (
           <button
             onClick={onClose}
@@ -177,14 +222,18 @@ export function Sidebar({ onClose }: { onClose?: () => void }) {
         )}
       </div>
 
-      <nav className="flex-1 px-3 py-4 overflow-y-auto space-y-5">
+      <nav className={`flex-1 ${recolhido ? "px-2" : "px-3"} py-4 overflow-y-auto space-y-5`}>
         {NAV_GROUPS.filter((group) =>
           group.items.some((item) => !item.roles || item.roles.includes(role))
-        ).map((group) => (
+        ).map((group, i) => (
           <div key={group.label}>
-            <p className="text-[10px] font-medium uppercase tracking-[1.2px] text-[#7b7b78] px-3 mb-1.5">
-              {group.label}
-            </p>
+            {recolhido ? (
+              i > 0 && <div className="border-t border-[#dedbd6] mx-2 mb-1.5" />
+            ) : (
+              <p className="text-[10px] font-medium uppercase tracking-[1.2px] text-[#7b7b78] px-3 mb-1.5">
+                {group.label}
+              </p>
+            )}
             <div className="space-y-0.5">
               {group.items
                 .filter((item) => !item.roles || item.roles.includes(role))
@@ -195,14 +244,17 @@ export function Sidebar({ onClose }: { onClose?: () => void }) {
                     key={item.href}
                     href={item.href}
                     {...(onClose ? { onClick: onClose } : {})}
-                    className={`flex items-center gap-3 px-3 py-2 rounded-[6px] text-[13px] transition-all duration-150 ${
+                    {...(recolhido ? { title: item.label, "aria-label": item.label } : {})}
+                    className={`flex items-center ${
+                      recolhido ? "justify-center px-0" : "gap-3 px-3"
+                    } py-2 rounded-[6px] text-[13px] transition-all duration-150 ${
                       isActive
                         ? "bg-[#111111] text-white"
                         : "text-[#313130] hover:bg-[#dedbd6]/60 hover:text-[#111111]"
                     }`}
                   >
                     {item.icon}
-                    {item.label}
+                    {!recolhido && item.label}
                   </Link>
                 );
               })}
@@ -211,8 +263,8 @@ export function Sidebar({ onClose }: { onClose?: () => void }) {
         ))}
       </nav>
 
-      <div className="px-3 pb-4 border-t border-[#dedbd6] pt-3">
-        <div className="flex items-center gap-2.5 px-3 py-2">
+      <div className={`${recolhido ? "px-2" : "px-3"} pb-4 border-t border-[#dedbd6] pt-3`}>
+        <div className={`flex items-center ${recolhido ? "flex-col gap-2 py-2" : "gap-2.5 px-3 py-2"}`}>
           {/* Avatar com inicial ou ícone de fallback */}
           <div className="w-7 h-7 rounded-[6px] bg-[#dedbd6] flex items-center justify-center flex-shrink-0">
             {email ? (
@@ -226,14 +278,15 @@ export function Sidebar({ onClose }: { onClose?: () => void }) {
             )}
           </div>
 
-          {/* Email truncado + botão de sair */}
+          {/* Email truncado (só aberto) + botão de sair */}
           {!loading && (
             <>
-              <p className="text-[13px] text-[#7b7b78] truncate flex-1">{email}</p>
+              {!recolhido && <p className="text-[13px] text-[#7b7b78] truncate flex-1">{email}</p>}
               <button
                 onClick={handleSignOut}
                 disabled={signingOut}
                 aria-label="Sair"
+                {...(recolhido ? { title: "Sair" } : {})}
                 className="w-7 h-7 flex items-center justify-center rounded-[4px] text-[#7b7b78] hover:bg-[#dedbd6]/60 hover:text-[#c41c1c] transition-colors disabled:opacity-40 flex-shrink-0"
               >
                 <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.5}>
