@@ -10,7 +10,7 @@
  */
 import { useCallback, useEffect, useSyncExternalStore } from "react";
 import { createClient } from "@/lib/supabase/client";
-import type { ContactForm } from "@/lib/bling-contact-form";
+import { cepDigits, type ContactForm } from "@/lib/bling-contact-form";
 import { docDigits } from "@/lib/documento";
 
 export type FonteJaEraCliente = "auto" | "vendedor";
@@ -22,6 +22,14 @@ export interface DadosDeContato {
   email?: string | null;
   cnpj?: string | null;
   razao_social?: string | null;
+  /** Endereço estruturado (cartão b3788533); ausente sem a migração 20261014. */
+  cep?: string | null;
+  logradouro?: string | null;
+  numero?: string | null;
+  complemento?: string | null;
+  bairro?: string | null;
+  municipio?: string | null;
+  uf?: string | null;
 }
 
 export interface LeadCliente extends DadosDeContato {
@@ -36,7 +44,17 @@ export interface LeadCliente extends DadosDeContato {
 }
 
 const COLUNAS_BASE = "id, name, phone, email, cnpj, razao_social";
-const COLUNAS_CLIENTE = `${COLUNAS_BASE}, ja_era_cliente, ja_era_cliente_fonte`;
+const COLUNAS_JA_ERA = `${COLUNAS_BASE}, ja_era_cliente, ja_era_cliente_fonte`;
+const COLUNAS_ENDERECO = "cep, logradouro, numero, complemento, bairro, municipio, uf";
+const COLUNAS_CLIENTE = `${COLUNAS_JA_ERA}, ${COLUNAS_ENDERECO}`;
+
+/**
+ * Leituras em ordem, da mais completa à mínima. Cada migração que falta tira
+ * só o que depende dela: sem a do endereço (20261014) o "Já é cliente?" do P0
+ * continua valendo — cair direto para o cadastro faria a venda passar sem a
+ * pergunta obrigatória.
+ */
+const LEITURAS = [COLUNAS_CLIENTE, COLUNAS_JA_ERA, COLUNAS_BASE];
 
 /**
  * Coluna inexistente: `42703` vem do Postgres (select de coluna que não
@@ -50,24 +68,18 @@ function erroDoSupabase(e: { message?: string } | null): Error {
 
 export async function buscarLeadCliente(leadId: string): Promise<LeadCliente | null> {
   const sb = createClient();
-  const completo = await sb
-    .from("leads")
-    .select(COLUNAS_CLIENTE)
-    .eq("id", leadId)
-    .maybeSingle();
-  if (!completo.error) return (completo.data as unknown as LeadCliente | null) ?? null;
-
-  // Sem a migração do P0 as colunas novas não existem e o select inteiro
-  // falha. O cadastro continua valendo para o pré-preenchimento; só o "Já é
-  // cliente?" fica indisponível (undefined) em vez de travar a venda.
-  // SÓ nesse caso: qualquer outro erro (rede, timeout, RLS) propaga — tratá-lo
-  // como "sem a coluna" deixaria a venda passar sem a pergunta obrigatória.
-  if (!COLUNA_INEXISTENTE.has(String((completo.error as { code?: string }).code ?? ""))) {
-    throw erroDoSupabase(completo.error);
+  for (let i = 0; ; i++) {
+    const r = await sb.from("leads").select(LEITURAS[i]).eq("id", leadId).maybeSingle();
+    if (!r.error) return (r.data as unknown as LeadCliente | null) ?? null;
+    // Sem uma migração as colunas dela não existem e o select inteiro falha;
+    // tenta a leitura seguinte, com menos colunas. SÓ nesse caso: qualquer
+    // outro erro (rede, timeout, RLS) propaga — tratá-lo como "sem a coluna"
+    // deixaria a venda passar sem a pergunta obrigatória.
+    const ultima = i === LEITURAS.length - 1;
+    if (ultima || !COLUNA_INEXISTENTE.has(String((r.error as { code?: string }).code ?? ""))) {
+      throw erroDoSupabase(r.error);
+    }
   }
-  const base = await sb.from("leads").select(COLUNAS_BASE).eq("id", leadId).maybeSingle();
-  if (base.error) throw erroDoSupabase(base.error);
-  return (base.data as unknown as LeadCliente | null) ?? null;
 }
 
 /** Pré-preenchimento do cadastro do contato no Bling (resolvedor do 409). */
@@ -85,6 +97,14 @@ export function defaultsDoContato(
     // `bling-<id>` é o telefone sintético dos leads criados pelo webhook do
     // Bling — não é número de ninguém.
     telefone: telefone.startsWith("bling-") ? "" : telefone,
+    // Endereço estruturado da ficha do lead (cartão b3788533).
+    cep: cepDigits(lead.cep),
+    logradouro: (lead.logradouro ?? "").trim(),
+    numero: (lead.numero ?? "").trim(),
+    complemento: (lead.complemento ?? "").trim(),
+    bairro: (lead.bairro ?? "").trim(),
+    municipio: (lead.municipio ?? "").trim(),
+    uf: (lead.uf ?? "").trim().toUpperCase(),
   };
 }
 

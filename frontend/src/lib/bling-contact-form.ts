@@ -36,6 +36,7 @@ export interface ContactForm {
   cep: string;
   logradouro: string;
   numero: string;
+  complemento: string;
   bairro: string;
   municipio: string;
   uf: string;
@@ -44,6 +45,8 @@ export interface ContactForm {
 export interface ContactAddress {
   endereco: string;
   numero: string;
+  /** Opcional: só viaja preenchido (em branco não apaga o do Bling). */
+  complemento?: string;
   bairro: string;
   cep: string;
   municipio: string;
@@ -95,6 +98,7 @@ export function blankContactForm(defaults: Partial<ContactForm> = {}): ContactFo
     cep: "",
     logradouro: "",
     numero: "",
+    complemento: "",
     bairro: "",
     municipio: "",
     uf: "",
@@ -176,6 +180,10 @@ export function buildContactPayload(
     municipio: limpo(form.municipio),
     uf: limpo(form.uf).toUpperCase(),
   };
+  // Complemento não é exigido, mas preenchido sozinho também abre o endereço —
+  // senão sumiria calado do cadastro.
+  const complemento = limpo(form.complemento);
+  if (complemento) geral.complemento = complemento;
   const algumEndereco = Object.values(geral).some((v) => v) || limpo(form.cep) !== "";
   if (algumEndereco) {
     if (!limpo(form.cep)) errors.cep = "Informe o CEP";

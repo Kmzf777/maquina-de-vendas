@@ -40,12 +40,34 @@ describe("buscarLeadCliente", () => {
     expect(lead?.ja_era_cliente).toBeNull();
   });
 
+  it("busca também as colunas do endereço estruturado", async () => {
+    maybeSingle.mockResolvedValueOnce({ data: { id: "l1" }, error: null });
+    await buscarLeadCliente("l1");
+    for (const c of ["cep", "logradouro", "numero", "complemento", "bairro", "municipio", "uf"]) {
+      expect(colunas[0]).toContain(c);
+    }
+  });
+
+  it("sem a migração do endereço, mantém o 'já era cliente' e só perde o endereço", async () => {
+    maybeSingle
+      .mockResolvedValueOnce({ data: null, error: { code: "42703", message: "column leads.cep does not exist" } })
+      .mockResolvedValueOnce({ data: { id: "l1", name: "Iago", ja_era_cliente: null }, error: null });
+    const lead = await buscarLeadCliente("l1");
+    expect(colunas[1]).toContain("ja_era_cliente");
+    expect(colunas[1]).not.toContain("logradouro");
+    expect(lead?.ja_era_cliente).toBeNull();
+    expect(precisaPerguntarJaEraCliente(lead)).toBe(true);
+  });
+
   it("sem a migração do P0, cai para o cadastro e não trava a venda", async () => {
     maybeSingle
+      // Sem o P0 também não há a migração do endereço (posterior): as duas
+      // leituras com colunas novas falham e sobra o cadastro.
+      .mockResolvedValueOnce({ data: null, error: { code: "42703", message: "column leads.cep does not exist" } })
       .mockResolvedValueOnce({ data: null, error: { code: "42703", message: "column leads.ja_era_cliente does not exist" } })
       .mockResolvedValueOnce({ data: { id: "l1", name: "Iago" }, error: null });
     const lead = await buscarLeadCliente("l1");
-    expect(colunas[1]).not.toContain("ja_era_cliente");
+    expect(colunas[2]).not.toContain("ja_era_cliente");
     expect(lead?.name).toBe("Iago");
     expect(lead?.ja_era_cliente).toBeUndefined();
     expect(precisaPerguntarJaEraCliente(lead)).toBe(false);
@@ -53,6 +75,7 @@ describe("buscarLeadCliente", () => {
 
   it("coluna ausente no cache do PostgREST (PGRST204) também cai para o cadastro", async () => {
     maybeSingle
+      .mockResolvedValueOnce({ data: null, error: { code: "PGRST204", message: "Could not find the 'cep' column" } })
       .mockResolvedValueOnce({ data: null, error: { code: "PGRST204", message: "Could not find the 'ja_era_cliente' column" } })
       .mockResolvedValueOnce({ data: { id: "l1", name: "Iago" }, error: null });
     const lead = await buscarLeadCliente("l1");
@@ -74,6 +97,16 @@ describe("buscarLeadCliente", () => {
   });
 });
 
+const SEM_ENDERECO = {
+  cep: "",
+  logradouro: "",
+  numero: "",
+  complemento: "",
+  bairro: "",
+  municipio: "",
+  uf: "",
+};
+
 describe("defaultsDoContato", () => {
   it("caso Vida Natural: razão social, CNPJ só dígitos, e-mail e telefone", () => {
     expect(
@@ -89,6 +122,7 @@ describe("defaultsDoContato", () => {
       documento: "12345678000190",
       email: "compras@vidanatural.com",
       telefone: "5531999998888",
+      ...SEM_ENDERECO,
     });
   });
 
@@ -98,6 +132,30 @@ describe("defaultsDoContato", () => {
       documento: "",
       email: "",
       telefone: "",
+      ...SEM_ENDERECO,
+    });
+  });
+
+  it("lead com endereço estruturado pré-preenche o endereço do contato", () => {
+    expect(
+      defaultsDoContato({
+        name: "Iago",
+        cep: "38.400-100",
+        logradouro: " Av. Rondon Pacheco ",
+        numero: "123",
+        complemento: "Sala 2",
+        bairro: "Centro",
+        municipio: "Uberlândia",
+        uf: "mg",
+      }),
+    ).toMatchObject({
+      cep: "38400100",
+      logradouro: "Av. Rondon Pacheco",
+      numero: "123",
+      complemento: "Sala 2",
+      bairro: "Centro",
+      municipio: "Uberlândia",
+      uf: "MG",
     });
   });
 

@@ -330,6 +330,12 @@ export function BlingContactResolver({
                   className={input}
                 />
               </div>
+              <input
+                value={form.complemento}
+                onChange={campo("complemento")}
+                placeholder="Complemento"
+                className={input}
+              />
               <div className="grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)_64px] gap-2">
                 <input
                   value={form.bairro}

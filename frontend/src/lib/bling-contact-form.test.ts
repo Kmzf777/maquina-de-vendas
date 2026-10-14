@@ -20,7 +20,7 @@ const CHEIO = blankContactForm({
 
 describe("blankContactForm", () => {
   it("comeca vazio", () => {
-    expect(blankContactForm()).toMatchObject({ nome: "", documento: "", uf: "" });
+    expect(blankContactForm()).toMatchObject({ nome: "", documento: "", uf: "", complemento: "" });
   });
   it("aceita valores iniciais vindos do lead", () => {
     expect(blankContactForm({ nome: "Fulano" }).nome).toBe("Fulano");
@@ -238,6 +238,27 @@ describe("buildContactPayload — endereço", () => {
         buildContactPayload(blankContactForm({ ...BASE, ...ENDERECO_OK, uf }), "L1").errors.uf,
       ).toBeUndefined();
     }
+  });
+
+  it("complemento viaja no endereço geral, aparado", () => {
+    const out = buildContactPayload(
+      blankContactForm({ ...BASE, ...ENDERECO_OK, complemento: " Sala 2 " }),
+      "L1",
+    );
+    expect(out.valid).toBe(true);
+    expect(out.payload.endereco?.geral.complemento).toBe("Sala 2");
+  });
+
+  it("complemento é opcional e em branco não viaja", () => {
+    const out = buildContactPayload(blankContactForm({ ...BASE, ...ENDERECO_OK }), "L1");
+    expect(out.valid).toBe(true);
+    expect(out.payload.endereco?.geral).not.toHaveProperty("complemento");
+  });
+
+  it("só o complemento preenchido também dispara a exigência (não some calado)", () => {
+    const out = buildContactPayload(blankContactForm({ ...BASE, complemento: "Sala 2" }), "L1");
+    expect(out.valid).toBe(false);
+    expect(out.errors.cep).toBe("Informe o CEP");
   });
 
   it("espaço em branco não conta como preenchido", () => {

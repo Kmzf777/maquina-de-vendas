@@ -66,6 +66,25 @@ describe("BlingContactResolver — endereço", () => {
   });
 });
 
+describe("BlingContactResolver — complemento", () => {
+  it("o complemento digitado viaja no endereço do cadastro", async () => {
+    abrir();
+    digitar("CEP", "38200000");
+    digitar("Logradouro", "Rua A");
+    digitar("Nº", "12");
+    digitar("Complemento", "Sala 2");
+    digitar("Município", "Frutal");
+    digitar("UF", "MG");
+    fireEvent.click(screen.getByRole("button", { name: "Cadastrar e lançar o pedido" }));
+
+    await waitFor(() => expect(chamadas.some((c) => c.url === "/api/bling/contacts")).toBe(true));
+    const corpo = chamadas.find((c) => c.url === "/api/bling/contacts")!.body as {
+      endereco: { geral: Record<string, string> };
+    };
+    expect(corpo.endereco.geral.complemento).toBe("Sala 2");
+  });
+});
+
 describe("BlingContactResolver — busca de CEP", () => {
   const FRUTAL = {
     cep: "38200-000",
