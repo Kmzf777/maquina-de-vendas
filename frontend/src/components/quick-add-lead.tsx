@@ -1,7 +1,6 @@
 "use client";
 
 import { useState } from "react";
-import { createClient } from "@/lib/supabase/client";
 
 interface QuickAddLeadProps {
   stage: string;
@@ -14,23 +13,34 @@ export function QuickAddLead({ stage, humanControl = false }: QuickAddLeadProps)
   const [phone, setPhone] = useState("");
   const [company, setCompany] = useState("");
   const [saving, setSaving] = useState(false);
-  const supabase = createClient();
+  const [erro, setErro] = useState("");
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    const digits = phone.trim().replace(/\D/g, "");
-    if (!digits || digits.length < 8 || digits.length > 15) return;
+    setErro("");
+    if (!phone.trim()) return;
     setSaving(true);
 
-    await supabase.from("leads").insert({
-      name: name.trim() || null,
-      phone: digits,
-      company: company.trim() || null,
-      stage,
-      human_control: humanControl,
-      status: "active",
-      channel: "manual",
+    // Pela API (não direto no Supabase): ela normaliza o telefone e acha o lead
+    // já cadastrado em qualquer formato antigo do número (cartão b747da43).
+    const res = await fetch("/api/leads", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: name.trim() || null,
+        phone: phone.trim(),
+        company: company.trim() || null,
+        stage,
+        human_control: humanControl,
+        channel: "manual",
+      }),
     });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      setErro(err.error || "Erro ao criar lead");
+      setSaving(false);
+      return;
+    }
 
     setName("");
     setPhone("");
@@ -71,6 +81,7 @@ export function QuickAddLead({ stage, humanControl = false }: QuickAddLeadProps)
         placeholder="Empresa"
         className="bg-white border border-[#dedbd6] rounded-[6px] px-3 py-1.5 text-[12px] text-[#111111] placeholder:text-[#7b7b78] focus:border-[#111111] focus:outline-none w-full"
       />
+      {erro && <p className="text-[11px] text-[#b42318]" role="alert">{erro}</p>}
       <div className="flex gap-2">
         <button
           type="submit"
@@ -81,7 +92,10 @@ export function QuickAddLead({ stage, humanControl = false }: QuickAddLeadProps)
         </button>
         <button
           type="button"
-          onClick={() => setOpen(false)}
+          onClick={() => {
+            setErro("");
+            setOpen(false);
+          }}
           className="flex-1 bg-transparent text-[#111111] border border-[#111111] py-1.5 rounded-[4px] text-[12px] transition-transform hover:scale-110 active:scale-[0.85]"
         >
           Cancelar
