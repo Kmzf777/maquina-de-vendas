@@ -2,6 +2,40 @@ import { NextResponse, type NextRequest } from "next/server";
 import { getServiceSupabase } from "@/lib/supabase/api";
 import { normalizePhoneBR } from "@/lib/phone";
 import { findLeadByPhoneVariants } from "@/lib/lead-phone-lookup";
+import { cepDigits } from "@/lib/bling-contact-form";
+import { formatAddress, hasAddressChange, isAddressComplete } from "@/lib/lead-address";
+
+function backendUrl(): string {
+  return (process.env.NEXT_PUBLIC_FASTAPI_URL || "http://localhost:8000").replace(/\/+$/, "");
+}
+
+/** Resultado da atualização do endereço no Bling, devolvido junto do lead. */
+type BlingEndereco = { status: string; message?: string; contas?: unknown[] };
+
+const BLING_INDISPONIVEL: BlingEndereco = {
+  status: "error",
+  message: "Bling indisponível — tente salvar de novo",
+};
+
+/**
+ * Pede ao backend que copie o endereço do lead para o(s) contato(s) vinculado(s)
+ * no Bling. Nunca lança: falha vira `status: "error"` e o PATCH segue 200 — o
+ * endereço já está salvo no CRM, só a cópia no ERP ficou pendente.
+ */
+async function sincronizarEnderecoNoBling(leadId: string): Promise<BlingEndereco> {
+  try {
+    const resp = await fetch(`${backendUrl()}/api/bling/contacts/address`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ lead_id: leadId }),
+      signal: AbortSignal.timeout(20000),
+    });
+    if (!resp.ok) return BLING_INDISPONIVEL;
+    return (await resp.json()) as BlingEndereco;
+  } catch {
+    return BLING_INDISPONIVEL;
+  }
+}
 
 export async function PATCH(
   request: NextRequest,
@@ -48,6 +82,14 @@ export async function PATCH(
     body.phone = canonical;
   }
 
+  // Endereço estruturado (cartão b3788533): CEP só com dígitos e UF maiúscula,
+  // no mesmo formato que o Bling recebe.
+  const mudouEndereco = hasAddressChange(body);
+  if (mudouEndereco) {
+    if ("cep" in body) body.cep = cepDigits(typeof body.cep === "string" ? body.cep : "") || null;
+    if ("uf" in body && typeof body.uf === "string") body.uf = body.uf.trim().toUpperCase();
+  }
+
   const { data, error } = await supabase
     .from("leads")
     .update(body)
@@ -75,8 +117,7 @@ export async function PATCH(
 
     // Fire automation trigger for stage_enter (fire-and-forget)
     if (body.stage && body.stage !== currentLead.stage) {
-      const backendUrl = (process.env.NEXT_PUBLIC_FASTAPI_URL || "http://localhost:8000").replace(/\/+$/, "");
-      void fetch(`${backendUrl}/api/automation/trigger`, {
+      void fetch(`${backendUrl()}/api/automation/trigger`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -86,6 +127,24 @@ export async function PATCH(
         }),
       }).catch(() => {});
     }
+  }
+
+  if (mudouEndereco && data) {
+    // O texto livre `endereco` (legado, lido por telas e pelo agente) passa a
+    // espelhar os campos estruturados. Todos vazios → `formatAddress` dá null
+    // e o texto antigo fica como estava.
+    const formatado = formatAddress(data);
+    if (formatado && formatado !== data.endereco) {
+      const { error: erroTexto } = await supabase
+        .from("leads")
+        .update({ endereco: formatado })
+        .eq("id", id);
+      if (!erroTexto) data.endereco = formatado;
+    }
+    const bling_endereco = isAddressComplete(data)
+      ? await sincronizarEnderecoNoBling(id)
+      : { status: "incomplete" };
+    return NextResponse.json({ ...data, bling_endereco });
   }
 
   return NextResponse.json(data);
