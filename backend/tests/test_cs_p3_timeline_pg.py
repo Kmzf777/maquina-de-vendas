@@ -374,6 +374,37 @@ rollback;
 """
 
 
+# 20261008 (conversões): lead que chega só com gbraid/wbraid (clique de iOS do Google) também
+# gera `entrada` com canal Google Ads. Roda só se a 20261008 estiver aplicada no banco de teste.
+CENARIO_GBRAID = """
+begin;
+insert into public.leads (id, phone, gbraid) values ('cdcdcdcd-0000-0000-0000-000000000001', '5511900000091', 'GB-1');
+insert into public.leads (id, phone, wbraid) values ('cdcdcdcd-0000-0000-0000-000000000002', '5511900000092', 'WB-1');
+do $$
+declare e public.lead_events;
+begin
+  select * into e from public.lead_events where lead_id = 'cdcdcdcd-0000-0000-0000-000000000001';
+  assert e.event_type = 'entrada', 'insert so com gbraid gera entrada';
+  assert e.metadata->>'canal' = 'Google Ads' and e.new_value = 'Google Ads' and e.source = 'google', e.metadata::text;
+  assert e.metadata->>'gbraid' = 'GB-1', e.metadata::text;
+  select * into e from public.lead_events where lead_id = 'cdcdcdcd-0000-0000-0000-000000000002';
+  assert e.metadata->>'canal' = 'Google Ads' and e.metadata->>'wbraid' = 'WB-1', e.metadata::text;
+end $$;
+rollback;
+"""
+
+
+@_precisa_pg
+def test_gbraid_wbraid_geram_entrada_google():
+    tem = _psql("select count(*) from information_schema.columns "
+                "where table_schema = 'public' and table_name = 'leads' and column_name = 'gbraid';").strip()
+    if tem.splitlines()[-1] == "0":
+        if pytest is not None:
+            pytest.skip("20261008_ad_conversions.sql não aplicada neste banco")
+        return
+    _psql(CENARIO_GBRAID)
+
+
 @_precisa_pg
 def test_so_meta_ad_id_enriquece_sem_criar_entrada():
     _psql(CENARIO_META_AD_ID)

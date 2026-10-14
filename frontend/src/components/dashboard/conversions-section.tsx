@@ -1,8 +1,6 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Download } from "lucide-react";
-import { Button } from "@/components/ui/button";
 import {
   PieChart,
   Pie,
@@ -29,10 +27,13 @@ interface TimeseriesPoint {
 }
 
 interface DashboardData {
+  // Fonte: `ad_conversions` (backend/app/campaigns/conversion_analytics.py). Os envios
+  // contam por plataforma; o valor em vendas conta cada venda uma vez, mesmo que tenha
+  // ido para Meta e Google.
   kpis: {
-    google_pending: number;
-    google_exported: number;
     meta_sent: number;
+    google_sent: number;
+    pending: number;
     purchase_value: number;
   };
   traffic_split: {
@@ -429,7 +430,7 @@ export function ConversionsSection() {
             Conversões (Ads)
           </p>
           <p className="text-[12px] text-[#7b7b78] mt-0.5">
-            Atribuição enviada ao Meta e pendente de exportação no Google
+            Conversões devolvidas automaticamente ao Meta e ao Google Ads
           </p>
         </div>
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4 md:gap-5 mb-5">
@@ -456,7 +457,7 @@ export function ConversionsSection() {
               Conversões (Ads)
             </p>
             <p className="text-[12px] text-[#7b7b78] mt-0.5">
-              Atribuição enviada ao Meta e pendente de exportação no Google
+              Conversões devolvidas automaticamente ao Meta e ao Google Ads
             </p>
           </div>
         </div>
@@ -482,7 +483,7 @@ export function ConversionsSection() {
             Conversões (Ads)
           </p>
           <p className="text-[12px] text-[#7b7b78] mt-0.5">
-            Atribuição enviada ao Meta e pendente de exportação no Google
+            Conversões devolvidas automaticamente ao Meta e ao Google Ads
           </p>
         </div>
       </div>
@@ -490,20 +491,20 @@ export function ConversionsSection() {
       {/* KPI cards */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4 md:gap-5 mb-5">
         <KpiCard
-          label="Pendentes p/ Google"
-          value={data.kpis.google_pending}
-          subtitle="aguardando exportação"
+          label="Enviadas ao Meta"
+          value={data.kpis.meta_sent}
+          subtitle="via Conversions API"
           accent
         />
         <KpiCard
-          label="Exportadas (Google)"
-          value={data.kpis.google_exported}
-          subtitle="já enviadas"
+          label="Enviadas ao Google"
+          value={data.kpis.google_sent}
+          subtitle="via Data Manager API"
         />
         <KpiCard
-          label="Enviadas ao Meta"
-          value={data.kpis.meta_sent}
-          subtitle="via CAPI"
+          label="Na fila"
+          value={data.kpis.pending}
+          subtitle="aguardando envio"
         />
         <KpiCard
           label="Valor em vendas"
@@ -513,7 +514,7 @@ export function ConversionsSection() {
       </div>
 
       {/* Charts row */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 md:gap-5 mb-5">
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 md:gap-5">
         <ChartCard title="Orgânico × Pago">
           <DonutChart split={data.traffic_split} />
         </ChartCard>
@@ -527,25 +528,6 @@ export function ConversionsSection() {
         </ChartCard>
       </div>
 
-      {/* Footer: download */}
-      <div className="bg-white border border-[#dedbd6] rounded-[8px] px-5 py-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-        <p className="text-[12px] text-[#7b7b78]">
-          {data.kpis.google_pending} conversão
-          {data.kpis.google_pending !== 1 ? "ões" : ""} pendente
-          {data.kpis.google_pending !== 1 ? "s" : ""} para exportação
-        </p>
-        <Button
-          variant="outline"
-          size="sm"
-          className="border-[#dedbd6] bg-white text-[#111111] hover:bg-[#f7f5f1] active:bg-[#f0ede8] rounded-[4px] text-[13px] h-8 px-3 flex items-center gap-1.5"
-          onClick={() => {
-            window.location.href = "/api/conversions/google-export";
-          }}
-        >
-          <Download size={13} strokeWidth={2} />
-          Baixar conversões Google (CSV)
-        </Button>
-      </div>
     </div>
   );
 }

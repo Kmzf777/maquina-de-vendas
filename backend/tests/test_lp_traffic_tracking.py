@@ -129,3 +129,36 @@ def test_get_or_create_lead_grava_meta_ad_id():
                            tracking={"fbclid": "fb_9", "meta_ad_id": "120250785252590163"})
 
     assert captured["data"]["meta_ad_id"] == "120250785252590163"
+
+
+# --------------------------------------------------------------------------- #
+# gbraid/wbraid — Google manda estes no lugar do gclid em cliques de iPhone
+# --------------------------------------------------------------------------- #
+
+def test_tracking_columns_inclui_gbraid_wbraid():
+    from app.leads.service import TRACKING_COLUMNS
+    assert "gbraid" in TRACKING_COLUMNS and "wbraid" in TRACKING_COLUMNS
+
+
+def test_derive_traffic_type_gbraid_wbraid_sao_pagos():
+    from app.leads.service import derive_traffic_type
+    assert derive_traffic_type({"gbraid": "B1"}) == "paid"
+    assert derive_traffic_type({"wbraid": "W1"}) == "paid"
+
+
+def test_lp_payload_aceita_gbraid_wbraid_e_repassa_ao_servico():
+    from app.lp_webhook.router import LandingPagePayload
+    p = LandingPagePayload(whatsapp="11999999999", gbraid="B1", wbraid="W1")
+    assert p.gbraid == "B1" and p.wbraid == "W1"
+
+
+def test_process_landing_page_lead_repassa_gbraid_no_tracking():
+    import asyncio
+    from app.lp_webhook import service as svc
+
+    with patch.object(svc, "get_or_create_lead", side_effect=RuntimeError("stop")) as g:
+        asyncio.run(svc.process_landing_page_lead(
+            {"whatsapp": "11999999999", "nome": "Ana", "gbraid": "B1", "wbraid": " W1 "}, MagicMock()))
+    tracking = g.call_args.kwargs["tracking"]
+    assert tracking["gbraid"] == "B1"
+    assert tracking["wbraid"] == "W1"

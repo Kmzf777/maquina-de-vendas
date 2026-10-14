@@ -37,19 +37,9 @@ export async function PATCH(
   }
   if (body.dot_color !== undefined) updates.dot_color = body.dot_color;
   if (body.order_index !== undefined) updates.order_index = body.order_index;
-  if (body.conversion_event !== undefined) {
-    const allowed = ["lead", "qualified", "opportunity", "purchase", null, ""];
-    if (!allowed.includes(body.conversion_event)) {
-      return NextResponse.json({ error: "conversion_event inválido." }, { status: 400 });
-    }
-    updates.conversion_event = body.conversion_event || null;
-  }
-  if (body.conversion_value !== undefined) {
-    updates.conversion_value =
-      body.conversion_value === "" || body.conversion_value === null
-        ? null
-        : Number(body.conversion_value);
-  }
+  // `conversion_event`/`conversion_value` não são mais aceitos: a conversão de anúncio
+  // saiu da etapa do Kanban para a varredura do backend (app/conversions/). As colunas
+  // continuam no banco, mas nada as escreve nem as lê.
   const { data, error } = await supabase
     .from("pipeline_stages")
     .update(updates)

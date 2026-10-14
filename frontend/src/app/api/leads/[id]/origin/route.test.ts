@@ -31,7 +31,7 @@ const call = (id = "lead-1") =>
 
 const leadRow = (p: Record<string, unknown>) => ({
   traffic_type: null, utm_source: null, utm_medium: null, utm_campaign: null, gclid: null,
-  fbclid: null, ctwa_clid: null, meta_ad_id: null, channel: null, metadata: null, ...p,
+  gbraid: null, wbraid: null, fbclid: null, ctwa_clid: null, meta_ad_id: null, channel: null, metadata: null, ...p,
 });
 
 describe("GET /api/leads/[id]/origin", () => {
@@ -75,6 +75,16 @@ describe("GET /api/leads/[id]/origin", () => {
       ad_spend: { data: [{ campaign_name: "Search | Marca Própria" }, { campaign_name: "PMAX | Atacado" }], error: null },
     }) as never);
     expect((await (await call()).json()).detail).toBe("Search | Marca Própria");
+  });
+
+  it("Google iOS (gbraid, sem gclid): resolve pelo ad_spend", async () => {
+    vi.mocked(getServiceSupabase).mockResolvedValue(fakeSupabase({
+      leads: { data: leadRow({ gbraid: "b", utm_campaign: "marca_propria" }), error: null },
+      ad_spend: { data: [{ campaign_name: "Search | Marca Própria" }], error: null },
+    }) as never);
+    expect(await (await call()).json()).toEqual({
+      kind: "pago", channel: "Google Ads", detail: "Search | Marca Própria", funnel: null,
+    });
   });
 
   it("Meta (fbclid) com utm_campaign que bateria no Google não credita a campanha Google — detail é o utm_campaign cru", async () => {

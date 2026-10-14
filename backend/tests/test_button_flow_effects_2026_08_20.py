@@ -491,8 +491,7 @@ def test_falha_de_transporte_nas_duas_tentativas_ainda_bloqueia(lead):
 def test_handoff_move_o_card_para_quer_repor(lead):
     """REPRO: `quer_repor` era criada pela migration e ninguém a alimentava.
 
-    É A conversão do agente: a etapa nasceu com conversion_event='qualified', então
-    cada entrada vira uma linha deduplicada em conversion_events (automation/triggers).
+    É A conversão do agente: a métrica dele é a contagem de entradas nessa etapa.
     Sem o move, a métrica do agente é zero por construção.
     """
     with _crm_mockado() as crm:

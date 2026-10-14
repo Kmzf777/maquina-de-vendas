@@ -15,6 +15,7 @@ A distinção vem dos parâmetros da URL de entrada:
 | Sinal presente na URL | Classificação |
 |---|---|
 | `gclid` (Google Ads) | **pago** |
+| `gbraid` / `wbraid` (Google Ads, iPhone) | **pago** — o Google manda um destes no lugar do gclid em cliques de iPhone; a LP deve capturá-los da URL igual ao gclid. |
 | `fbclid` (Meta/site) ou `ctwa_clid` (Click-to-WhatsApp) | **pago** |
 | `utm_medium` ∈ `cpc, ppc, paid, paid_social, paidsocial, paid_search, display, cpm` | **pago** |
 | `utm_medium` ∈ `organic, social, bio, referral, email, qr, sms` | **orgânico** |
@@ -77,17 +78,17 @@ Para isso, a LP deve CAPTURAR os identificadores de origem da URL e ENVIÁ-LOS n
 TAREFA
 1) Crie um utilitário de captura de atribuição (client-side), ex. `lib/attribution.ts`:
    - Ao carregar QUALQUER página, leia da URL (query string) estes parâmetros, se presentes:
-     gclid, fbclid, utm_source, utm_medium, utm_campaign, utm_content, utm_term
+     gclid, gbraid, wbraid, fbclid, utm_source, utm_medium, utm_campaign, utm_content, utm_term
    - Persista em localStorage sob a chave "cc_attribution" com um timestamp, VÁLIDO POR 90 DIAS.
    - Regra de gravação (last-touch de visita marcada): se a URL atual tiver QUALQUER um desses
      parâmetros, SOBRESCREVA o armazenado; se a URL não tiver nenhum, MANTENHA o que já estava
      (não apague). Assim um clique pago posterior atualiza a atribuição, mas navegar entre
      páginas sem parâmetros não zera nada.
    - Exponha:
-       getAttribution(): { gclid, fbclid, utm_source, utm_medium, utm_campaign, utm_content, utm_term }
+       getAttribution(): { gclid, gbraid, wbraid, fbclid, utm_source, utm_medium, utm_campaign, utm_content, utm_term }
        getTrafficType(): "paid" | "organic"
      Regra de getTrafficType:
-       "paid" se: gclid OU fbclid presentes, OU utm_medium ∈
+       "paid" se: gclid, gbraid, wbraid OU fbclid presentes, OU utm_medium ∈
                   {cpc, ppc, paid, paid_social, paidsocial, paid_search, display, cpm};
        senão "organic".
    - Fallback de origem orgânica: se NÃO houver utm_source e houver document.referrer de um
@@ -102,6 +103,8 @@ TAREFA
      const payload = {
        nome, whatsapp, email, timestamp, origem,   // <- campos que já existem, NÃO remover
        gclid: attr.gclid ?? "",
+       gbraid: attr.gbraid ?? "",
+       wbraid: attr.wbraid ?? "",
        fbclid: attr.fbclid ?? "",
        utm_source: attr.utm_source ?? "",
        utm_medium: attr.utm_medium ?? "",

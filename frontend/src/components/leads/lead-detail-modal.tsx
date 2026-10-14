@@ -217,7 +217,7 @@ export function LeadDetailModal({
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
-        <div className="px-6 py-5 border-b border-[#dedbd6] flex justify-between items-center">
+        <div data-testid="lead-detail-header" className="px-6 py-5 border-b border-[#dedbd6] flex justify-between items-center">
           <div className="flex items-center gap-3.5">
             <div className="w-12 h-12 rounded-full bg-[#111111] flex items-center justify-center font-semibold text-base text-white">
               {initials}
@@ -235,6 +235,15 @@ export function LeadDetailModal({
             </div>
           </div>
           <div className="flex items-center gap-2.5">
+            {dirty && (
+              <button
+                onClick={handleSave}
+                disabled={saving}
+                className="h-8 bg-[#111111] text-white px-3 rounded-[4px] text-[13px] border border-[#111111] transition-colors hover:bg-white hover:text-[#111111] disabled:opacity-50"
+              >
+                {saving ? "Salvando..." : "Salvar alterações"}
+              </button>
+            )}
             <span
               className="text-[10px] font-semibold px-2.5 py-1 rounded-[4px]"
               style={{ background: tempConfig.bg, color: tempConfig.color }}
@@ -429,18 +438,6 @@ export function LeadDetailModal({
                   </button>
                 </div>
               </div>
-
-              {dirty && (
-                <div className="mt-4 flex justify-end">
-                  <button
-                    onClick={handleSave}
-                    disabled={saving}
-                    className="bg-[#111111] text-white px-[14px] py-2 rounded-[4px] text-[14px] transition-transform hover:scale-110 hover:bg-white hover:text-[#111111] hover:border hover:border-[#111111] active:scale-[0.85] disabled:opacity-50"
-                  >
-                    {saving ? "Salvando..." : "Salvar alteracoes"}
-                  </button>
-                </div>
-              )}
             </div>
           )}
 

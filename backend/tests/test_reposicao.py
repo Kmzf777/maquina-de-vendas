@@ -89,7 +89,6 @@ def test_fire_trigger_deal_won_calls_ensure(monkeypatch):
         called["deal_id"] = deal_id
     monkeypatch.setattr(trg, "ensure_reposicao_deal", fake_ensure)
     monkeypatch.setattr(trg, "deal_is_won", lambda did: True)
-    monkeypatch.setattr(trg, "_maybe_fire_stage_conversion", lambda lid, data: None)
     monkeypatch.setattr(trg, "get_campaigns_with_trigger_type", lambda t: [])
     asyncio.run(trg.fire_trigger("deal_stage_enter", "lead-9", {"deal_id": "d1"}))
     assert called.get("lead") == "lead-9"
@@ -115,7 +114,6 @@ def test_fire_trigger_non_won_stage_does_not_call_ensure(monkeypatch):
     called = {}
     monkeypatch.setattr(trg, "ensure_reposicao_deal", lambda lid: called.setdefault("lead", lid))
     monkeypatch.setattr(trg, "deal_is_won", lambda did: False)
-    monkeypatch.setattr(trg, "_maybe_fire_stage_conversion", lambda lid, data: None)
     monkeypatch.setattr(trg, "get_campaigns_with_trigger_type", lambda t: [])
     asyncio.run(trg.fire_trigger("deal_stage_enter", "lead-1", {"deal_id": "d1"}))
     assert "lead" not in called

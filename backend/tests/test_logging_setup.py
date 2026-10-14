@@ -51,3 +51,18 @@ def test_setup_logging_text_para_dev(monkeypatch):
         assert not any(isinstance(h.formatter, JsonFormatter) for h in root.handlers)
     finally:
         root.handlers = old_handlers
+
+
+def test_setup_logging_silencia_o_info_do_httpx(monkeypatch):
+    """O httpx loga a URL completa de cada request em INFO — com token em query string (ex.:
+    `access_token=` da Graph) o segredo ia parar no log do worker."""
+    monkeypatch.delenv("LOG_FORMAT", raising=False)
+    root = logging.getLogger()
+    old_handlers = root.handlers[:]
+    try:
+        setup_logging()
+        assert logging.getLogger("httpx").level == logging.WARNING
+        assert logging.getLogger("httpcore").level == logging.WARNING
+        assert not logging.getLogger("httpx").isEnabledFor(logging.INFO)
+    finally:
+        root.handlers = old_handlers

@@ -57,7 +57,8 @@ SQL_ESQUEMA = """select json_build_object(
                  where table_schema = 'public' and table_name = 'lead_events'
                    and column_name = 'dedupe_key'),
   'arquivo', to_regclass('public.meta_referrals_arquivo') is not null,
-  'p3', to_regprocedure('public.fn_lead_entrada_metadata(text,text,text,text,text,text,text,text)') is not null
+  'p3', (to_regprocedure('public.fn_lead_entrada_metadata(text,text,text,text,text,text,text,text)') is not null
+         or to_regprocedure('public.fn_lead_entrada_metadata(text,text,text,text,text,text,text,text,text,text)') is not null)
 );
 """
 

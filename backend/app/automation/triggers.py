@@ -9,7 +9,6 @@ from app.campaigns.service import (
     create_enrollment,
 )
 from app.automation import engine as _engine
-from app.campaigns.conversions import fire_conversion_for_deal_stage
 from app.leads.reposicao import ensure_reposicao_deal, deal_is_won
 # Direto da origem (app.leads.service). app.broadcast.worker so re-exporta, e
 # importa-lo aqui puxaria a cadeia inteira do broadcast por uma funcao de uma linha.
@@ -93,18 +92,6 @@ def _lead_hard_stop_reason(lead_id: str) -> str | None:
     return None
 
 
-def _maybe_fire_stage_conversion(lead_id: str, data: dict) -> None:
-    """Se a etapa que o deal entrou estiver marcada com conversion_event, dispara a conversão.
-
-    Delega para fire_conversion_for_deal_stage (campaigns/conversions.py) — helper
-    compartilhado também chamado por engine._execute_action em move_deal_stage/mark_deal_won.
-    """
-    deal_id = data.get("deal_id")
-    if not deal_id:
-        return
-    fire_conversion_for_deal_stage(lead_id, deal_id)
-
-
 async def fire_trigger(event_type: str, lead_id: str, data: dict | None = None) -> None:
     """Event-driven: enroll lead in all active campaigns with matching trigger."""
     try:
@@ -112,7 +99,10 @@ async def fire_trigger(event_type: str, lead_id: str, data: dict | None = None) 
         now = datetime.now(timezone.utc)
 
         if event_type == "deal_stage_enter":
-            _maybe_fire_stage_conversion(lead_id, data)
+            # Conversão de anúncio NÃO sai mais daqui: até 10/2026 entrar numa etapa com
+            # `conversion_event` disparava Meta CAPI. Agora a varredura do worker
+            # (app/conversions/sweep.py) lê a linha do tempo do lead e enfileira em
+            # `ad_conversions` — independente de quem moveu o card.
             # Ciclo de reposição: se o deal entrou em 'fechado_ganho', garante nova oportunidade.
             # deal_id repassado: o destino do card de reposição depende do funil de
             # ORIGEM deste deal (ver reposicao.reposicao_pipeline_para).

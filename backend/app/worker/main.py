@@ -84,6 +84,16 @@ async def _bling_pedidos_tick() -> None:
     await bling_pedidos_tick()
 
 
+async def _conversions_sweep_tick() -> None:
+    from app.conversions.sweep import run_sweep
+    await asyncio.to_thread(run_sweep)
+
+
+async def _conversions_send_tick() -> None:
+    from app.conversions.sender import run_sender
+    await asyncio.to_thread(run_sender)
+
+
 async def _valeria_repasse_tick() -> None:
     from app.button_flow.valeria_repasse import varrer
     await varrer()
@@ -118,6 +128,11 @@ TASK_SPECS = [
     # "event": o receiver publica no event bus ao gravar o webhook — o
     # processamento acorda na hora, com varredura de fallback a cada 60s.
     ("bling-webhook", "event", _bling_webhook_tick, 60),
+    # Devolução de conversões (spec 2026-10-08-conversoes-ads): a varredura relê ~3 mil leads de
+    # 90 dias, então roda a cada 30 min; o envio é barato e roda a cada 5. A janela mais curta
+    # (Meta, 7 dias) torna essa latência irrelevante.
+    ("conversions-sweep", "periodic", _conversions_sweep_tick, 1800),
+    ("conversions-send", "periodic", _conversions_send_tick, 300),
 ]
 
 

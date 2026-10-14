@@ -1,7 +1,12 @@
 """Analytics agregados das conversões p/ a seção do Dashboard (organic vs paid, série, ROI).
 
-Funções puras (build_timeseries, aggregate_value_by_traffic) isoladas do I/O p/ teste. As
-funções que tocam o banco (traffic_split, conversion_dashboard) são fail-soft (zeros em erro).
+Fonte: `ad_conversions` (fila da varredura de conversões — app/conversions/). Até 10/2026 a
+fonte era `conversion_events`, gravada quando um card do Kanban entrava numa etapa marcada
+com `conversion_event`; esse caminho foi aposentado junto com o CSV manual do Google.
+
+Funções puras (build_timeseries, aggregate_value_by_traffic, dedupe_conversions,
+to_timeseries_events) isoladas do I/O p/ teste. As funções que tocam o banco
+(traffic_split, conversion_dashboard) são fail-soft (zeros em erro).
 """
 import logging
 from collections import OrderedDict
@@ -9,8 +14,8 @@ from datetime import date, datetime, timedelta, timezone
 from typing import Any
 from zoneinfo import ZoneInfo
 
+from app.db.paginacao import paginar
 from app.db.supabase import get_supabase
-from app.campaigns.google_export import conversion_stats
 
 logger = logging.getLogger(__name__)
 
@@ -89,37 +94,81 @@ def traffic_split() -> dict[str, int]:
     }
 
 
-def conversion_dashboard() -> dict[str, Any]:
-    """Compõe o payload do Dashboard. Fail-soft: qualquer falha vira zeros na parte afetada."""
-    stats = conversion_stats()
-    kpis = {
-        "google_pending": stats.get("google_pending", 0),
-        "google_exported": stats.get("google_exported", 0),
-        "meta_sent": stats.get("meta_sent", 0),
-        "purchase_value": stats.get("purchase_value", 0.0),
-    }
+def dedupe_conversions(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Uma linha por (lead_id, stage, sale_id), mantendo a primeira.
 
-    ts_events: list[dict[str, Any]] = []
+    A mesma etapa do mesmo lead vira UMA linha por plataforma em `ad_conversions` (Meta e
+    Google recebem o mesmo evento). Contar as linhas cruas dobraria a série e a receita de
+    todo lead que tem clique nas duas plataformas.
+    """
+    seen: set[tuple[Any, Any, Any]] = set()
+    out: list[dict[str, Any]] = []
+    for r in rows:
+        key = (r.get("lead_id"), r.get("stage"), r.get("sale_id"))
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(r)
+    return out
+
+
+def to_timeseries_events(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Linhas de `ad_conversions` → formato que `build_timeseries` espera (event, created_at).
+
+    A data é `event_at` (quando o lead atingiu a etapa), não `sent_at`: um envio atrasado
+    por backoff não pode empurrar a conversão para outro dia do gráfico.
+    """
+    return [{"event": r.get("stage"), "created_at": r.get("event_at")} for r in dedupe_conversions(rows)]
+
+
+def _count_ad_conversions(**eq) -> int:
+    try:
+        q = get_supabase().table("ad_conversions").select("id", count="exact")
+        for k, v in eq.items():
+            q = q.eq(k, v)
+        return q.execute().count or 0
+    except Exception as exc:
+        logger.error("conversion_analytics._count_ad_conversions(%s) falhou: %s", eq, exc)
+        return 0
+
+
+def conversion_dashboard() -> dict[str, Any]:
+    """Compõe o payload do Dashboard. Fail-soft: qualquer falha vira zeros na parte afetada.
+
+    KPIs por plataforma contam linhas (cada envio é um evento distinto para aquela
+    plataforma); série e receita deduplicam por (lead, etapa, venda) — ver dedupe_conversions.
+    """
+    ts_rows: list[dict[str, Any]] = []
     purchase_rows: list[dict[str, Any]] = []
     try:
         cutoff = (datetime.now(timezone.utc) - timedelta(days=30)).isoformat()
-        ts_events = (
-            get_supabase().table("conversion_events").select("event, created_at")
-            .gte("created_at", cutoff).execute().data or []
+        ts_rows = paginar(
+            lambda: get_supabase().table("ad_conversions")
+            .select("lead_id, stage, sale_id, event_at")
+            .eq("status", "enviado").gte("event_at", cutoff).order("id")
         )
     except Exception as exc:
         logger.error("conversion_dashboard: falha no fetch da série: %s", exc)
     try:
-        purchase_rows = (
-            get_supabase().table("conversion_events").select("value, leads(traffic_type)")
-            .eq("event", "purchase").execute().data or []
-        )
+        purchase_rows = dedupe_conversions(paginar(
+            lambda: get_supabase().table("ad_conversions")
+            .select("lead_id, stage, sale_id, value, leads(traffic_type)")
+            .eq("status", "enviado").eq("stage", "purchase").order("id")
+        ))
     except Exception as exc:
         logger.error("conversion_dashboard: falha no fetch de valor por origem: %s", exc)
+
+    value_by_traffic = aggregate_value_by_traffic(purchase_rows)
+    kpis = {
+        "meta_sent": _count_ad_conversions(platform="meta", status="enviado"),
+        "google_sent": _count_ad_conversions(platform="google", status="enviado"),
+        "pending": _count_ad_conversions(status="pendente"),
+        "purchase_value": round(sum(value_by_traffic.values()), 2),
+    }
 
     return {
         "kpis": kpis,
         "traffic_split": traffic_split(),
-        "timeseries": build_timeseries(ts_events, days=30),
-        "value_by_traffic": aggregate_value_by_traffic(purchase_rows),
+        "timeseries": build_timeseries(to_timeseries_events(ts_rows), days=30),
+        "value_by_traffic": value_by_traffic,
     }

@@ -18,6 +18,8 @@ Contrato do `POST /webhook/landing-page` e o que configurar em cada plataforma p
 
   // --- rastreio de tráfego pago ---
   "gclid": "",                      // Google auto-tagging
+  "gbraid": "",                     // Google, iPhone (app → web): vem no lugar do gclid
+  "wbraid": "",                     // Google, iPhone (web → web): vem no lugar do gclid
   "fbclid": "",                     // Meta
   "meta_ad_id": "",                 // ID do anúncio do Meta ({{ad.id}})
   "utm_source": "",
@@ -91,8 +93,10 @@ números e o sufixo `_sitelink_NN` são ignorados no casamento.
 Os parâmetros chegam na **URL de entrada**. Se a pessoa navega para outra página antes de
 enviar o formulário, eles somem. Grave no primeiro load e leia na hora do submit:
 
+> `gbraid` e `wbraid`: o Google manda um destes no lugar do gclid em cliques de iPhone; a LP deve capturá-los da URL igual ao gclid.
+
 ```js
-const CAMPOS = ["gclid", "fbclid", "meta_ad_id", "utm_source", "utm_medium", "utm_campaign"];
+const CAMPOS = ["gclid", "gbraid", "wbraid", "fbclid", "meta_ad_id", "utm_source", "utm_medium", "utm_campaign"];
 
 // No carregamento de QUALQUER página: guarda o primeiro toque e não sobrescreve com vazio.
 (function capturaRastreio() {

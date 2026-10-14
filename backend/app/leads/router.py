@@ -1,6 +1,6 @@
 import logging
 
-from fastapi import APIRouter, BackgroundTasks, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 from app.db.supabase import get_supabase
 
@@ -158,15 +158,14 @@ async def optout_lead(lead_id: str, body: BlockPayload | None = None):
 
 
 @router.post("/{lead_id}/won")
-async def mark_lead_won(lead_id: str, body: WonSalePayload, background_tasks: BackgroundTasks):
-    """Marca a venda como Ganha (Kanban → coluna 'Ganho') e dispara a conversão outbound.
+async def mark_lead_won(lead_id: str, body: WonSalePayload):
+    """Marca a venda como Ganha (Kanban → coluna 'Ganho').
 
-    Atualiza o CRM de forma síncrona e agenda o disparo Meta CAPI / Google em BackgroundTask
-    — assim a latência das APIs de anúncio não bloqueia a resposta ao frontend.
+    A conversão de compra para Meta/Google NÃO sai daqui: a varredura do worker
+    (app/conversions/sweep.py) acha a venda e enfileira em `ad_conversions`.
     """
     from app.leads.service import get_lead
     from app.campaigns.sales import mark_deal_won
-    from app.campaigns.conversions import fire_stage_conversion
 
     if not get_lead(lead_id):
         raise HTTPException(status_code=404, detail="Lead not found")
@@ -179,13 +178,6 @@ async def mark_lead_won(lead_id: str, body: WonSalePayload, background_tasks: Ba
     if result.get("deals_updated"):
         from app.leads.reposicao import ensure_reposicao_deal
         ensure_reposicao_deal(lead_id, deal_id=result.get("deal_id"))
-
-    # Disparo da conversão fora do caminho crítico (latência da Meta/Google).
-    if result.get("deal_id"):
-        background_tasks.add_task(
-            fire_stage_conversion, result["lead"], result["deal_id"], "purchase",
-            body.value, body.currency,
-        )
 
     logger.info("mark_lead_won: lead %s marcado como Ganho (%d deal(s))", lead_id, result["deals_updated"])
     return {"status": "ok", "deals_updated": result["deals_updated"]}

@@ -110,7 +110,7 @@ class FakeQuery:
 
     `.not_.is_(key, "null")` (property `not_` devolvendo um accessor com `.is_()`)
     filtra `IS NOT NULL` e volta a encadear no proprio FakeQuery — mesmo padrao real
-    do supabase-py usado em app/automation/triggers.py e app/campaigns/google_export.py.
+    do supabase-py usado em app/automation/triggers.py.
     `gte()`/`not_.is_()` tambem registram suas chamadas (`_gte_calls`/
     `_not_is_null_keys`) no `call_log`, usado pelo pushdown server-side do Check 5
     (ver test_watchdog_handoff_sla_2026_07_03.py::test_check5_query_pushes_down_not_null_lookback_and_limit).

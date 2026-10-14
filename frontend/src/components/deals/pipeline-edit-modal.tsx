@@ -12,23 +12,17 @@ import {
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import type { PipelineStage } from "@/lib/types";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 
 const COLOR_PALETTE = [
   "#e07a7a", "#d4a04a", "#d4b84a", "#5aad65",
   "#5b8aad", "#9b7abf", "#9ca3af", "#111111",
 ];
 
-interface EditableStage extends Omit<PipelineStage, "conversion_value"> {
+// Sem `conversion_event`/`conversion_value` no editor: marcar etapa como conversão
+// disparava Meta CAPI ao entrar nela. Desde 10/2026 a conversão de anúncio sai da
+// varredura do backend (app/conversions/), não da etapa do Kanban.
+interface EditableStage extends PipelineStage {
   _dirty?: boolean;
-  // conversion_value may be held as a string while the user is typing
-  conversion_value?: number | string | null;
 }
 
 
@@ -52,9 +46,6 @@ function SortableStageRow({
   onDelete: (id: string) => void;
 }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: stage.id });
-
-  const convEvent = stage.conversion_event ?? null;
-  const hasEvent = convEvent !== null;
 
   return (
     <div
@@ -104,54 +95,6 @@ function SortableStageRow({
             <path d="M4 4l8 8M12 4l-8 8" />
           </svg>
         </button>
-      </div>
-
-      {/* Conversion event + value row */}
-      <div className="flex items-end gap-2 pl-[26px]">
-        {/* Evento de conversão */}
-        <div className="flex-1 min-w-0">
-          <label className="block text-[10px] uppercase tracking-[0.5px] text-[#7b7b78] mb-1">
-            Evento de conversão
-          </label>
-          <Select
-            value={convEvent ?? "__none__"}
-            onValueChange={(v) =>
-              onChange(stage.id, "conversion_event", v === "__none__" ? null : v)
-            }
-          >
-            <SelectTrigger className="w-full h-[30px] bg-white border border-[#dedbd6] rounded-[4px] px-2 text-[12px] text-[#111111] focus:border-[#111111] focus:ring-0">
-              <SelectValue placeholder="Nenhum" />
-            </SelectTrigger>
-            <SelectContent position="popper">
-              <SelectItem value="__none__">Nenhum</SelectItem>
-              <SelectItem value="lead">Lead Captado</SelectItem>
-              <SelectItem value="qualified">Qualificado</SelectItem>
-              <SelectItem value="opportunity">Oportunidade</SelectItem>
-              <SelectItem value="purchase">Venda</SelectItem>
-            </SelectContent>
-          </Select>
-        </div>
-
-        {/* Valor — só aparece quando há evento selecionado */}
-        {hasEvent && (
-          <div className="w-[100px] flex-shrink-0">
-            <label className="block text-[10px] uppercase tracking-[0.5px] text-[#7b7b78] mb-1">
-              Valor
-            </label>
-            <input
-              type="number"
-              min="0"
-              step="0.01"
-              placeholder={convEvent === "purchase" ? "Real" : "0,00"}
-              value={stage.conversion_value ?? ""}
-              onChange={(e) => onChange(stage.id, "conversion_value", e.target.value)}
-              className="w-full h-[30px] bg-white border border-[#dedbd6] rounded-[4px] px-2 text-[12px] text-[#111111] placeholder:text-[#9ca3af] focus:border-[#111111] focus:outline-none"
-            />
-            {convEvent === "purchase" && (
-              <p className="text-[10px] text-[#7b7b78] mt-0.5 leading-tight">Usa o valor real da venda</p>
-            )}
-          </div>
-        )}
       </div>
     </div>
   );
@@ -277,13 +220,6 @@ export function PipelineEditModal({
               label: s.label,
               dot_color: s.dot_color,
               order_index: s.order_index,
-              conversion_event: s.conversion_event ?? null,
-              conversion_value:
-                s.conversion_value === "" || s.conversion_value === undefined
-                  ? null
-                  : s.conversion_value === null
-                  ? null
-                  : Number(s.conversion_value),
             }),
           }).then(async (r) => {
             if (!r.ok) {

@@ -13,9 +13,10 @@
  * — adotá-la faz o movimento automático funcionar sem código
  * novo. O rótulo visível e a key são coisas diferentes, e é para isso que servem.
  *
- * `conversion_event` fica AUSENTE de propósito: preenchê-lo despacha o card para a
- * Meta CAPI e para o CSV do Google Ads. A migration 20260909 documenta por que isso
- * contamina a série "Conversões (Ads)".
+ * `conversion_event` fica AUSENTE de propósito. Até 10/2026 preenchê-lo despachava o
+ * card para a Meta CAPI e para o CSV do Google Ads (a migration 20260909 documenta por
+ * que isso contaminava a série "Conversões (Ads)"); o gatilho foi removido e a coluna é
+ * legada — a conversão de anúncio sai da varredura do backend (app/conversions/).
  */
 export const DEFAULT_STAGES = [
   { label: "Novo",             key: "novo",              dot_color: "#e07a7a", order_index: 0, is_protected: false },

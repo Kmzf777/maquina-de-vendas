@@ -1,7 +1,14 @@
 -- 20261006b_lead_timeline_triggers.sql
 --
+-- ⚠️ NAO RODE DE NOVO DEPOIS DA 20261008_ad_conversions.sql (ou rode a 20261008 logo em seguida).
+--    A 20261008 apaga as versoes antigas de fn_lead_canal / fn_lead_tem_rastreio /
+--    fn_lead_entrada_metadata e cria versoes com mais parametros (click-ids do iOS). Re-rodar este
+--    arquivo recria as versoes antigas AO LADO das novas (sobrecargas), a chamada do trigger de
+--    leads fica ambigua e TODO insert em leads quebra com "function ... is not unique".
+--    Se precisar re-rodar este arquivo, re-rode a 20261008_ad_conversions.sql imediatamente depois.
+--
 -- ⛔ NAO E APLICADA PELO DEPLOY. Roda a mao, DEPOIS da 20261006_call_semanal_base.sql (P0).
---    Idempotente: pode rodar de novo sem efeito colateral.
+--    Idempotente: pode rodar de novo sem efeito colateral — ATE a 20261008 ser aplicada (ver acima).
 --
 -- Linha do tempo do lead (spec docs/superpowers/specs/2026-10-06-call-semanal-0110-design.md,
 -- pacote P3). Captura por trigger, num lugar so, o que hoje esta espalhado:

@@ -8,6 +8,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Switch } from "@/components/ui/switch";
 import { Skeleton } from "@/components/ui/skeleton";
 import { CampaignReportTable, type CampaignRow, type ReportTotal, type ChannelSubtotals } from "@/components/trafego/campaign-report-table";
+import { ConversoesEnviadas } from "@/components/trafego/conversoes-enviadas";
 import { ReportSummaryPanel } from "@/components/trafego/report-summary";
 import type { ReportSummary } from "@/lib/traffic-summary";
 
@@ -20,6 +21,7 @@ export default function TrafegoPage() {
   const [dateTo, setDateTo] = useState("");
   const [dateMode, setDateMode] = useState<"preset" | "mes" | "custom">("preset");
   const [mode, setMode] = useState<"lead" | "sale">("lead");
+  const [view, setView] = useState<"campanhas" | "conversoes">("campanhas");
   const router = useRouter();
   const [report, setReport] = useState<Report | null>(null);
   const [loading, setLoading] = useState(true);
@@ -66,8 +68,9 @@ export default function TrafegoPage() {
   };
 
   useEffect(() => {
-    if (roleLoading || role !== "admin") return;
-    // eslint-disable-next-line react-hooks/set-state-in-effect
+    // A aba "Conversões enviadas" busca os próprios dados: o relatório de campanhas (pesado) só
+    // é pedido quando a aba Campanhas está na tela — e de novo ao voltar para ela.
+    if (roleLoading || role !== "admin" || view !== "campanhas") return;
     setLoading(true);
     const q = (dateFrom || dateTo)
       ? `mode=${mode}${dateFrom ? `&date_from=${dateFrom}` : ""}${dateTo ? `&date_to=${dateTo}` : ""}`
@@ -77,7 +80,7 @@ export default function TrafegoPage() {
       .then((d: Report) => setReport(d))
       .catch(() => setReport(null))
       .finally(() => setLoading(false));
-  }, [period, mode, dateFrom, dateTo, role, roleLoading, refreshTick]);
+  }, [period, mode, dateFrom, dateTo, role, roleLoading, refreshTick, view]);
 
   if (!roleLoading && role !== "admin") {
     return <div className="p-8 text-[14px] text-[#7b7b78]">Acesso restrito a administradores.</div>;
@@ -96,10 +99,27 @@ export default function TrafegoPage() {
           </p>
         </div>
         <div className="flex items-center gap-4 flex-wrap">
-          <label className="flex items-center gap-2 cursor-pointer">
-            <span className="text-[13px] text-[#7b7b78]">Por venda</span>
-            <Switch checked={mode === "sale"} onCheckedChange={(c) => setMode(c ? "sale" : "lead")} />
-          </label>
+          <div className="inline-flex gap-1">
+            {([["campanhas", "Campanhas"], ["conversoes", "Conversões enviadas"]] as const).map(([v, label]) => (
+              <button
+                key={v}
+                type="button"
+                aria-pressed={view === v}
+                onClick={() => setView(v)}
+                className={`px-3 py-1.5 rounded-[4px] text-[13px] md:text-[14px] border border-[#111111] ${
+                  view === v ? "bg-[#111111] text-white" : "bg-transparent text-[#111111]"
+                }`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+          {view === "campanhas" && (
+            <label className="flex items-center gap-2 cursor-pointer">
+              <span className="text-[13px] text-[#7b7b78]">Por venda</span>
+              <Switch checked={mode === "sale"} onCheckedChange={(c) => setMode(c ? "sale" : "lead")} />
+            </label>
+          )}
           <Select value={dateMode} onValueChange={(v) => {
             setDateMode(v as "preset" | "mes" | "custom");
             setDateFrom(""); setDateTo("");
@@ -148,7 +168,9 @@ export default function TrafegoPage() {
 
       {/* Content — rola como um todo: o resumo expandido não pode espremer a tabela */}
       <div className="flex-1 min-h-0 overflow-y-auto flex flex-col gap-4 px-4 md:px-8 py-4 md:py-8 bg-[#faf9f6]">
-        {loading ? (
+        {view === "conversoes" ? (
+          <ConversoesEnviadas period={period} dateFrom={dateFrom} dateTo={dateTo} refreshTick={refreshTick} />
+        ) : loading ? (
           <>
             <Skeleton className="h-[220px] w-full flex-shrink-0 rounded-[8px]" />
             <div className="bg-white border border-[#dedbd6] rounded-[8px] p-4 md:p-5 space-y-2">
