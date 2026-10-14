@@ -793,3 +793,43 @@ def test_fusao_persona_primeira_resposta_e_conversa_apagada():
     apaga = ("insert into _mesclagem_movidos select 'conversas_apagadas', to_jsonb(dc)"
              " from public.conversations dc where dc.id = r.de;")
     assert fusao.index(apaga) < fusao.index("delete from public.conversations where id = r.de;")
+
+
+
+def test_aplicar_nao_regrava_os_csvs_do_dry_run(tmp_path):
+    m = _script()
+    saida = tmp_path / "s"
+    m.executar(BancoFalso(m), saida)
+    nomes = ("pares.csv", "revisar.csv", "excluidos.csv", "deals_repetidos.csv", "backup.json")
+    for nome in nomes:
+        (saida / nome).write_text(f"revisado a mao: {nome}", encoding="utf-8")
+    csv_ = _csv_pares(tmp_path / "p.csv", [FRANCINE])
+    r = m.executar(BancoFalso(m), saida, aplicar=True, pares_csv=csv_)
+    assert r["contagens"]["aplicados_ok"] == 1
+    for nome in nomes:
+        assert (saida / nome).read_text(encoding="utf-8") == f"revisado a mao: {nome}"
+    # pasta nova: o --aplicar so grava o backup e o aplicados com carimbo
+    novo = tmp_path / "novo"
+    m.executar(BancoFalso(m), novo, aplicar=True, pares_csv=csv_)
+    assert sorted(p.name.split("-")[0] for p in novo.iterdir()) == ["aplicados", "backup"]
+
+
+def test_backup_e_gravado_atomicamente(tmp_path, monkeypatch):
+    m = _script()
+    trocas = []
+    original = m.os.replace
+
+    def replace(origem, destino):
+        trocas.append((Path(origem).name, Path(destino).name))
+        return original(origem, destino)
+
+    monkeypatch.setattr(m.os, "replace", replace)
+    monkeypatch.setattr(m, "_carimbo", lambda: "20261014-120000")
+    m.executar(BancoFalso(m), tmp_path / "dry")
+    assert trocas == [("backup.json.tmp", "backup.json")]
+    trocas.clear()
+    m.executar(BancoFalso(m), tmp_path / "s", aplicar=True,
+               pares_csv=_csv_pares(tmp_path / "p.csv", [FRANCINE]))
+    # antes de aplicar e depois, com os movidos
+    assert trocas == [("backup-20261014-120000.json.tmp", "backup-20261014-120000.json")] * 2
+    assert not list((tmp_path / "s").glob("*.tmp"))

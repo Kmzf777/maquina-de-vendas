@@ -39,8 +39,9 @@ USO (dry-run e o padrao — so le):
   ... --limite N                    # aplica no maximo N grupos (0 = nenhum)
 
 Saida: pares.csv, revisar.csv, excluidos.csv, deals_repetidos.csv e backup.json (dry-run). O
---aplicar grava backup-<AAAAMMDD-HHMMSS>.json e aplicados-<AAAAMMDD-HHMMSS>.csv e NUNCA
-sobrescreve um backup anterior (aborta se o arquivo ja existir). O CSV do --aplicar precisa da
+--aplicar grava SO backup-<AAAAMMDD-HHMMSS>.json e aplicados-<AAAAMMDD-HHMMSS>.csv (nao
+regrava os CSVs do dry-run) e NUNCA sobrescreve um backup anterior (aborta se o arquivo ja
+existir). O backup e gravado atomicamente (.tmp + os.replace). O CSV do --aplicar precisa da
 coluna `duplicados`. Contagens em JSON no stdout. So stdlib: roda no host da VPS (psql), sem o venv do backend.
 """
 import argparse
@@ -632,6 +633,14 @@ def _json_do_stdout(saida, prefixo):
     return None
 
 
+def _gravar_json_atomico(arquivo, dados):
+    """Grava num .tmp ao lado e troca com os.replace: uma queda no meio nunca deixa o backup
+    pela metade (ou um backup anterior truncado)."""
+    tmp = arquivo.with_name(arquivo.name + ".tmp")
+    tmp.write_text(json.dumps(dados, ensure_ascii=False, indent=1), encoding="utf-8")
+    os.replace(tmp, arquivo)
+
+
 def _carimbo():
     return f"{datetime.now():%Y%m%d-%H%M%S}"
 
@@ -698,12 +707,15 @@ def executar(db, saida, aplicar=False, limite=None, pares_csv=None, excluir=()):
                 item["sobrevivente_antes"] = antes.get(g["sobrevivente"]["id"])
             item["conversas_duplicados"] = conversas.get(item["lead"]["id"], [])
 
-    bling._csv(saida / "pares.csv", pares, COLUNAS_GRUPO)
-    bling._csv(saida / "revisar.csv", revisar, COLUNAS_GRUPO)
-    bling._csv(saida / "excluidos.csv", excluidos, COLUNAS_GRUPO)
-    bling._csv(saida / "deals_repetidos.csv", repetidos,
-               ["canonico", "sobrevivente", "pipeline_id", "deals"])
-    arq_backup.write_text(json.dumps(backup, ensure_ascii=False, indent=1), encoding="utf-8")
+    # Os CSVs de revisao sao do dry-run: o --aplicar nao os regrava (o Rafael pode estar
+    # usando uma copia editada deles na mesma pasta).
+    if not aplicar:
+        bling._csv(saida / "pares.csv", pares, COLUNAS_GRUPO)
+        bling._csv(saida / "revisar.csv", revisar, COLUNAS_GRUPO)
+        bling._csv(saida / "excluidos.csv", excluidos, COLUNAS_GRUPO)
+        bling._csv(saida / "deals_repetidos.csv", repetidos,
+                   ["canonico", "sobrevivente", "pipeline_id", "deals"])
+    _gravar_json_atomico(arq_backup, backup)
 
     aplicados = []
     if aplicar:
@@ -734,8 +746,7 @@ def executar(db, saida, aplicar=False, limite=None, pares_csv=None, excluir=()):
         for item in backup:
             if item["lead"]["id"] in movidos:
                 item["movidos"] = movidos[item["lead"]["id"]]
-        arq_backup.write_text(json.dumps(backup, ensure_ascii=False, indent=1),
-                              encoding="utf-8")
+        _gravar_json_atomico(arq_backup, backup)
 
     contagens = {
         "leads_lidos": len(leads), "grupos": len(todos),
