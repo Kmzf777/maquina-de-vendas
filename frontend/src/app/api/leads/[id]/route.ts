@@ -1,5 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { getServiceSupabase } from "@/lib/supabase/api";
+import { normalizePhoneBR } from "@/lib/phone";
+import { findLeadByPhoneVariants } from "@/lib/lead-phone-lookup";
 
 export async function PATCH(
   request: NextRequest,
@@ -9,16 +11,25 @@ export async function PATCH(
   const supabase = await getServiceSupabase();
   const body = await request.json();
 
-  // Sanitize phone if being updated
+  // Telefone: grava o canônico e recusa número que outro lead já usa em
+  // qualquer formato antigo (cartão b747da43).
   if (body.phone !== undefined) {
-    const digits = (body.phone ?? "").replace(/\D/g, "");
-    if (digits.length < 8 || digits.length > 15) {
+    const canonical = normalizePhoneBR(body.phone ?? "");
+    if (!canonical) {
+      const n = (body.phone ?? "").replace(/\D/g, "").length;
       return NextResponse.json(
-        { error: `Telefone inválido: ${digits.length} dígito(s) (esperado: 8–15)` },
-        { status: 422 }
+        { error: `Telefone inválido: ${n} dígito(s). Use DDD + número (ex.: 34 99999-9999)` },
+        { status: 422 },
       );
     }
-    body.phone = digits;
+    const outro = await findLeadByPhoneVariants(supabase, canonical, id);
+    if (outro) {
+      return NextResponse.json(
+        { error: `Outro lead já usa este telefone: ${outro.name || outro.phone}`, lead: outro },
+        { status: 409 },
+      );
+    }
+    body.phone = canonical;
   }
 
   const { data: currentLead } = await supabase

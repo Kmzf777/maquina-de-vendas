@@ -2,18 +2,22 @@ import { NextResponse, type NextRequest } from "next/server";
 import { getServiceSupabase } from "@/lib/supabase/api";
 import { buildLeadSearchOrFilter } from "@/lib/search";
 import { CONTACT_SEARCH_MIN_LEN } from "@/lib/contact-search";
+import { normalizePhoneBR } from "@/lib/phone";
+import { findLeadByPhoneVariants } from "@/lib/lead-phone-lookup";
 
 /** Teto da busca `?q=`: o seletor mostra uma lista curta, não a base. */
 const BUSCA_LIMITE_MAX = 30;
 /** Colunas do seletor de lead (rótulo + pré-preenchimento do contato no Bling). */
 const BUSCA_COLUNAS = "id, name, phone, email, cnpj, razao_social";
 
+/** Telefone canônico (`normalizePhoneBR`) ou erro legível para o 422. */
 function sanitizePhone(raw: string | undefined | null): { digits: string; error?: string } {
-  const digits = (raw ?? "").replace(/\D/g, "");
-  if (digits.length < 8 || digits.length > 15) {
-    return { digits, error: `Telefone inválido: ${digits.length} dígito(s) (esperado: 8–15)` };
+  const canonical = normalizePhoneBR(raw ?? "");
+  if (!canonical) {
+    const n = (raw ?? "").replace(/\D/g, "").length;
+    return { digits: "", error: `Telefone inválido: ${n} dígito(s). Use DDD + número (ex.: 34 99999-9999)` };
   }
-  return { digits };
+  return { digits: canonical };
 }
 
 export async function GET(request: NextRequest) {
@@ -144,16 +148,12 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: phoneError }, { status: 422 });
   }
 
-  const { data: existing } = await supabase
-    .from("leads")
-    .select("id")
-    .eq("phone", phoneDigits)
-    .maybeSingle();
-
+  // Acha o lead mesmo gravado em formato antigo (sem 9 / sem 55).
+  const existing = await findLeadByPhoneVariants(supabase, phoneDigits);
   if (existing) {
     return NextResponse.json(
-      { error: "Lead com este telefone ja existe" },
-      { status: 409 }
+      { error: `Lead com este telefone já existe: ${existing.name || existing.phone}`, lead: existing },
+      { status: 409 },
     );
   }
 
@@ -168,6 +168,7 @@ export async function POST(request: NextRequest) {
       cnpj: body.cnpj || null,
       stage: body.stage || "secretaria",
       channel: body.channel || "manual",
+      human_control: body.human_control === true,
       status: "active",
     })
     .select()
