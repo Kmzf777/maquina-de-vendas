@@ -452,6 +452,11 @@ export interface Sale {
   status?: "registrada" | "cancelada" | "pendente_bling";
   payment_method_id?: number | null;
   payment_terms?: string | null;
+  // Frete do pedido (20261013_sales_freight.sql), para a edicao nascer com ele
+  // e o PUT no Bling nao apagar o frete. `value` ja inclui o frete. Opcionais
+  // porque rotas antigas/selects parciais nao trazem as colunas.
+  freight?: number | null;
+  freight_mode?: number | null;
   // Divergencia entre o que o CRM guarda e o que o Bling aceitou, quando uma
   // edicao foi salva so no CRM porque o Bling recusou (20260821_sales_divergencia_bling.sql).
   bling_divergent?: boolean | null;

@@ -233,7 +233,8 @@ def build_order_payload(*, contact_id: int, sold_at: str, itens: list[dict],
 
 async def update_order(client, *, order_id: int, contact_id: int, sold_at: str,
                        itens: list[dict], payment: dict, seller_id: int | None,
-                       notes: str, account: str = config.DEFAULT_ACCOUNT) -> dict:
+                       notes: str, freight=0, freight_mode: int | None = None,
+                       account: str = config.DEFAULT_ACCOUNT) -> dict:
     """Altera o pedido no Bling. Reaproveita o mesmo payload do POST — o Bling
     nao tem formato separado para alteracao.
 
@@ -249,12 +250,17 @@ async def update_order(client, *, order_id: int, contact_id: int, sold_at: str,
     conta Bling o PUT vai. Isso e do `client` recebido, e precisa ser o mesmo
     account: um `client` da conta 1 com `account="secundaria"` aqui gravaria
     loja/situacao da conta 2 num pedido que fisicamente esta na conta 1.
+
+    `freight`/`freight_mode` precisam vir de novo a cada PUT: o Bling substitui
+    o pedido inteiro, entao um PUT sem frete apaga o `transporte` que o POST
+    gravou e as parcelas voltam a fechar so com os itens.
     """
     conta = config.account(account)
     payload = build_order_payload(
         contact_id=contact_id, sold_at=sold_at, itens=itens,
         payment=payment, seller_id=seller_id, notes=notes,
         store_id=conta.store_id, situacao_id=conta.situacao_id,
+        freight=freight, freight_mode=freight_mode,
     )
     return await client.put(f"/pedidos/vendas/{order_id}", payload)
 
@@ -480,6 +486,11 @@ async def create_order(client, *, lead_id: str, deal_id: str | None, contact_id:
         "conversation_id": conversation_id,
         "sold_at": f"{sold_at}T12:00:00+00:00",
         "value": float(total),
+        # Frete guardado a parte (alem de ja estar dentro de `value`) para a
+        # edicao reabrir com ele: o PUT no Bling manda o pedido inteiro e, sem
+        # este valor, salvar a edicao apagaria o frete do ERP.
+        "freight": float(_money(_dec(freight))),
+        "freight_mode": freight_mode,
         "product": product_summary(itens),
         "sold_by": sold_by,
         "origin": "crm",

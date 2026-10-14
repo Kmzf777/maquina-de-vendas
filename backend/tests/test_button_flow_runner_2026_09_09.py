@@ -987,3 +987,41 @@ def test_evidencia_de_texto_longo_e_truncada():
         engine.Classificado(engine.CLASSE_SAIR), "x" * 3000, "wamid.1")
     assert len(prova["texto"]) == runner._MAX_TEXTO_EVIDENCIA
     assert prova["origem"] == "classe"
+
+
+# ── metadata.interativo: o CRM mostra os botões que o lead recebeu (09/10/2026) ──
+def _enviar_recuperacao(mensagem):
+    salvas = []
+    provider = _provider()
+    provider.send_interactive_buttons = AsyncMock(
+        return_value={"messages": [{"id": "wamid.btn"}]})
+    with patch.object(runner, "save_message",
+                      side_effect=lambda *a, **k: salvas.append({"content": a[3], **k})), \
+         patch.object(runner, "resolve_send_target", lambda _l, phone: phone):
+        import asyncio
+        asyncio.run(runner._enviar(engine.Decisao(proximo_no="x", mensagem=mensagem),
+                                   lead=_lead(), conversation=_conversa(),
+                                   provider=provider))
+    return salvas, provider
+
+
+def test_recuperacao_grava_os_botoes_no_metadata():
+    botoes = (flows.Botao("sim", "Quero retomar"), flows.Botao("nao", "Não agora"))
+    salvas, provider = _enviar_recuperacao(engine.Mensagem(corpo="oi de novo", botoes=botoes))
+    provider.send_interactive_buttons.assert_awaited_once()
+    assert salvas[0]["metadata"] == {"interativo": {
+        "tipo": "botoes", "imagem": None, "botoes": ["Quero retomar", "Não agora"],
+    }}
+
+
+def test_recuperacao_texto_puro_nao_grava_estrutura():
+    salvas, _ = _enviar_recuperacao(engine.Mensagem(corpo="até mais"))
+    assert salvas[0].get("metadata") is None
+
+
+def test_recuperacao_erro_ao_montar_nao_custa_o_registro():
+    from app.button_flow import interativo
+    botoes = (flows.Botao("sim", "Quero retomar"),)
+    with patch.object(interativo, "botoes", side_effect=RuntimeError("x")):
+        salvas, _ = _enviar_recuperacao(engine.Mensagem(corpo="oi", botoes=botoes))
+    assert salvas and salvas[0].get("metadata") is None

@@ -22,7 +22,7 @@ from datetime import datetime, timedelta, timezone
 
 from app.agent.tools import SUPERVISOR_NAME, SUPERVISOR_PHONE
 from app.agent_profiles.service import get_agent_profile
-from app.button_flow import config, effects, engine, flows
+from app.button_flow import config, effects, engine, flows, interativo
 from app.button_flow import valeria_registry, valeria_registry_v2
 from app.button_flow.valeria_engine import _encerrado
 from app.conversations.service import (
@@ -577,11 +577,16 @@ async def _enviar(
         logger.error("[BUTTON FLOW] falha ao enviar p/ conv %s: %s",
                      conversation_id, exc, exc_info=True)
         return
+    # A tela de botões que o lead recebeu, para a bolha do CRM (`button_flow/interativo.py`).
+    metadata = None
+    if mensagem.botoes:
+        metadata = interativo.metadata(
+            lambda: interativo.botoes([b.titulo for b in mensagem.botoes]))
     try:
         await asyncio.to_thread(
             save_message, conversation_id, lead_id, "assistant", mensagem.corpo,
             conversation.get("stage"), sent_by="button_flow",
-            wamid=extract_wamid(resultado),
+            wamid=extract_wamid(resultado), metadata=metadata,
         )
     except Exception as exc:
         logger.warning("[BUTTON FLOW] mensagem enviada mas não persistida conv=%s: %s",

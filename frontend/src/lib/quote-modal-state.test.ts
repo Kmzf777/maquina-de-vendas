@@ -104,6 +104,8 @@ describe("linesFromOrderPayload", () => {
       notes: "",
       items,
       payment: { method_id: 45, terms: [30] },
+      freight: 0,
+      freight_mode: null,
     },
   });
 

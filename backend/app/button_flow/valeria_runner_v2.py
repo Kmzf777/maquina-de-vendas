@@ -50,7 +50,7 @@ from dataclasses import dataclass, fields
 from datetime import datetime, timezone
 
 from app.agent import catalog as _catalogo
-from app.button_flow import config, effects, valeria_classifier, valeria_content, valeria_tabela
+from app.button_flow import config, effects, interativo, valeria_classifier, valeria_content, valeria_tabela
 from app.button_flow import runner as _irmao
 from app.button_flow import valeria_engine as motor_v1
 from app.button_flow import valeria_registry as reg1
@@ -402,7 +402,8 @@ class _Saida:
         self.viu: list[str] = []
 
     async def _registrar(self, texto: str, resultado, *, message_type: str | None = None,
-                         media_url: str | None = None) -> None:
+                         media_url: str | None = None, metadata: dict | None = None) -> None:
+        """`metadata` leva a tela interativa (`metadata.interativo`) para a bolha do CRM."""
         if resultado is None:
             return
         try:
@@ -410,7 +411,7 @@ class _Saida:
                 save_message, self.conversation.get("id"), self.lead.get("id"), "assistant",
                 texto, self.conversation.get("stage"), sent_by=SENT_BY,
                 media_url=media_url, message_type=message_type,
-                wamid=extract_wamid(resultado),
+                wamid=extract_wamid(resultado), metadata=metadata,
             )
         except Exception as exc:
             logger.warning("%s mensagem enviada mas não persistida conv=%s: %s", _LOG,
@@ -434,8 +435,11 @@ class _Saida:
             logger.error("%s falha ao enviar botões conv=%s: %s", _LOG,
                          self.conversation.get("id"), exc, exc_info=True)
             return False
-        await self._registrar(corpo, resultado, media_url=image_url,
-                              message_type="image" if image_url else None)
+        await self._registrar(
+            corpo, resultado, media_url=image_url,
+            message_type="image" if image_url else None,
+            metadata=interativo.metadata(lambda: interativo.botoes(
+                [b.titulo for b in botoes], imagem=image_url)))
         return True
 
     async def faq(self, ramo: str | None, faq_id: str) -> None:
@@ -539,8 +543,13 @@ class _Saida:
                 # SEM `message_type`: o CRM (frontend lib/message-preview.ts) só lê o
                 # `content` de None/"text"/"button"; "interactive" virava "📎 Mídia" e o
                 # vendedor não via o que o lead recebeu.
+                # `metadata.interativo` leva os cards (foto, texto e botão como saíram)
+                # para a bolha do CRM desenhar o carrossel; o `content` segue texto.
                 await self._registrar(
-                    "\n\n".join([corpo, *(texto for _, texto in cards)]), resultado)
+                    "\n\n".join([corpo, *(texto for _, texto in cards)]), resultado,
+                    metadata=interativo.metadata(lambda: interativo.carrossel(
+                        (c["image_url"], c["body"], [titulo for _, titulo in c["buttons"]])
+                        for c in payload)))
                 self.viu.append("vitrine")
                 return None
             logger.warning("%s foto de card não publicada em %s — cards como texto", _LOG, no.id)

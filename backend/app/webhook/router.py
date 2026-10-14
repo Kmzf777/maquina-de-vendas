@@ -8,6 +8,7 @@ from app.webhook.parser import parse_webhook_payload
 from app.whatsapp.registry import get_provider
 from app.buffer.manager import push_to_buffer
 from app.leads.service import get_or_create_lead, reset_lead
+from app.leads.google_message_asset import stamp_google_message_asset
 from app.channels.service import get_channel_by_provider_config
 from app.dev_router.service import get_dev_route, is_dev_number
 from app.dev_router.forwarder import forward_to_dev
@@ -19,15 +20,19 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
-def _register_lead(from_number: str, push_name: str | None) -> None:
+def _register_lead(from_number: str, push_name: str | None, text: str | None = None) -> None:
     """Ensure the lead exists in the CRM the moment they contact us.
 
     Called as a BackgroundTask so it never delays the webhook response.
     Runs before the buffer flushes, guaranteeing CRM registration even if
     the buffer fails (e.g. backend restart during buffering).
+
+    Botão de WhatsApp do anúncio Google: o texto pronto marca o lead sem origem como
+    Google Ads (ver app.leads.google_message_asset).
     """
     try:
-        get_or_create_lead(from_number, name=push_name, channel="whatsapp")
+        lead = get_or_create_lead(from_number, name=push_name, channel="whatsapp")
+        stamp_google_message_asset(lead, text)
     except Exception as exc:
         logger.warning("Failed to register lead for %s: %s", from_number, exc)
 
@@ -126,7 +131,7 @@ async def receive_evolution_webhook(request: Request, background_tasks: Backgrou
         msg.channel_id = channel["id"]
 
         # Register lead immediately — guarantees CRM entry before buffer flushes
-        background_tasks.add_task(_register_lead, msg.from_number, msg.push_name)
+        background_tasks.add_task(_register_lead, msg.from_number, msg.push_name, msg.text)
 
         try:
             provider = get_provider(channel)

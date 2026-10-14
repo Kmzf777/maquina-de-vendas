@@ -1369,3 +1369,80 @@ def test_frete_zerado_nao_gera_bloco_de_transporte():
         freight=0, freight_mode=0,
     )
     assert "transporte" not in payload
+
+
+# ---------------------------------------------------------------------------
+# Frete no Registrar venda: PUT de alteracao e projecao em `sales`
+# ---------------------------------------------------------------------------
+# O PUT no Bling manda o pedido INTEIRO. Se `update_order` nao repassar o frete,
+# editar uma venda com frete apaga o `transporte` no ERP e as parcelas voltam a
+# fechar so com os itens. E sem `sales.freight` a tela de edicao nao tem de onde
+# reabrir o valor — por isso os testes cobrem os dois lados.
+
+class _ClientePut:
+    def __init__(self):
+        self.chamadas = []
+
+    async def put(self, path, json=None):
+        self.chamadas.append((path, json))
+        return {"data": {"id": 34215992}}
+
+
+def test_update_order_com_frete_manda_transporte_e_parcelas_com_frete(monkeypatch):
+    monkeypatch.setattr(orders.config, "account", _fake_account_sem_loja)
+    cliente = _ClientePut()
+
+    asyncio.run(orders.update_order(
+        cliente, order_id=34215992, contact_id=555, sold_at="2026-08-18",
+        itens=_ITENS, payment={"method_id": 45, "terms": [30, 60]}, seller_id=None,
+        notes="", freight=40.0, freight_mode=0,
+    ))
+
+    _, payload = cliente.chamadas[0]
+    assert payload["transporte"] == {"frete": 40.0, "fretePorConta": 0}
+    # 100 de itens + 40 de frete = 140, em 2x de 70. Sem o frete seriam 50 + 50.
+    assert [p["valor"] for p in payload["parcelas"]] == [70.0, 70.0]
+
+
+def test_update_order_sem_frete_nao_ganha_transporte(monkeypatch):
+    """Regressao: quem chama sem frete (o default) tem o mesmo PUT de antes."""
+    monkeypatch.setattr(orders.config, "account", _fake_account_sem_loja)
+    cliente = _ClientePut()
+
+    asyncio.run(orders.update_order(
+        cliente, order_id=34215992, contact_id=555, sold_at="2026-08-18",
+        itens=_ITENS, payment={"method_id": 45, "terms": [0]}, seller_id=None,
+        notes="",
+    ))
+
+    _, payload = cliente.chamadas[0]
+    assert "transporte" not in payload
+    assert payload["parcelas"][0]["valor"] == 100.0
+
+
+def test_create_order_grava_frete_e_modalidade_na_venda(monkeypatch):
+    """`sales.freight` e o que a edicao usa para reabrir o frete; `value`
+    continua sendo o total com frete, igual ao pedido no ERP."""
+    store = {}
+    _prepara(monkeypatch, store)
+
+    _cria_pedido(deal_id=None, freight=40.0, freight_mode=1)
+
+    linha = store["sales_inserts"][0]
+    assert linha["freight"] == 40.0
+    assert linha["freight_mode"] == 1
+    assert linha["value"] == 140.0, "100 de itens + 40 de frete"
+
+
+def test_create_order_sem_frete_grava_zero_e_modalidade_nula(monkeypatch):
+    """Zero (e nao nulo) espelha o DEFAULT 0 da coluna; modalidade nula e
+    "nao informada", diferente de 0 (por conta do remetente)."""
+    store = {}
+    _prepara(monkeypatch, store)
+
+    _cria_pedido(deal_id=None)
+
+    linha = store["sales_inserts"][0]
+    assert linha["freight"] == 0.0
+    assert linha["freight_mode"] is None
+    assert linha["value"] == 100.0

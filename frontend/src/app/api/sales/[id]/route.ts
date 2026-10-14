@@ -87,6 +87,8 @@ export async function PATCH(
   // `bling_divergent`/`bling_divergence` entram aqui a partir da edicao em modo
   // Bling (Fase E): o CRM grava a alteracao mesmo quando o Bling recusa, e essas
   // colunas tornam a divergencia auditavel em vez de silenciosa.
+  // `freight`/`freight_mode` vem da mesma edicao: sem eles a venda guardaria o
+  // frete antigo e a proxima edicao mandaria ao Bling um frete desatualizado.
   const ALLOWED = [
     "product",
     "value",
@@ -97,6 +99,8 @@ export async function PATCH(
     "conversation_id",
     "bling_divergent",
     "bling_divergence",
+    "freight",
+    "freight_mode",
   ];
   const updates = Object.fromEntries(
     Object.entries(body).filter(([k]) => ALLOWED.includes(k))
