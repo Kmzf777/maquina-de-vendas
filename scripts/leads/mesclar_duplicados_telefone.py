@@ -35,8 +35,10 @@ USO (dry-run e o padrao — so le):
   ... --excluir <lead_id,lead_id>   # tira os grupos que contem esses leads
   ... --limite N                    # aplica no maximo N grupos (0 = nenhum)
 
-Saida: pares.csv, revisar.csv, excluidos.csv, deals_repetidos.csv, backup.json (+ aplicados.csv)
-e as contagens em JSON no stdout. So stdlib: roda no host da VPS (psql), sem o venv do backend.
+Saida: pares.csv, revisar.csv, excluidos.csv, deals_repetidos.csv e backup.json (dry-run). O
+--aplicar grava backup-<AAAAMMDD-HHMMSS>.json e aplicados-<AAAAMMDD-HHMMSS>.csv e NUNCA
+sobrescreve um backup anterior (aborta se o arquivo ja existir). O CSV do --aplicar precisa da
+coluna `duplicados`. Contagens em JSON no stdout. So stdlib: roda no host da VPS (psql), sem o venv do backend.
 """
 import argparse
 import csv
@@ -398,17 +400,19 @@ def ler_grupos_revisados(caminho):
     for lin in linhas:
         item = {"canonico": (lin.get("canonico") or "").strip(),
                 "sobrevivente": bling._uuid((lin.get("sobrevivente") or "").strip())}
-        if "duplicados" in campos:
-            item["duplicados"] = sorted(bling._uuid(i.strip())
-                                        for i in (lin.get("duplicados") or "").split("|")
-                                        if i.strip())
+        # Sem a coluna `duplicados` a linha e recusada: so o sobrevivente nao basta para
+        # garantir que o grupo de hoje e o mesmo que foi revisado.
+        item["duplicados"] = (sorted(bling._uuid(i.strip())
+                                     for i in (lin.get("duplicados") or "").split("|")
+                                     if i.strip())
+                              if "duplicados" in campos else None)
         saida.append(item)
     return saida
 
 
 def selecionar_revisados(grupos, excluidos, revisados):
     """Cruza o CSV revisado com os grupos recalculados AGORA. So passa o grupo que ainda
-    existe igual (mesmo sobrevivente e, se o CSV trouxer, mesmos duplicados)."""
+    existe igual (mesmo sobrevivente e mesmos duplicados)."""
     atuais = {g["canonico"]: g for g in grupos}
     aplicar, recusados, vistos = [], [], set()
     for rev in revisados:
@@ -416,19 +420,20 @@ def selecionar_revisados(grupos, excluidos, revisados):
             continue
         vistos.add(rev["canonico"])
         g = atuais.get(rev["canonico"])
-        if g is None:
+        if not rev.get("duplicados"):
+            erro = "linha sem a coluna duplicados (ou vazia) — use o pares.csv/revisar.csv do dry-run"
+        elif g is None:
             erro = ("grupo excluido via --excluir" if rev["canonico"] in excluidos
                     else "sem grupo hoje (ja mesclado, lead apagado ou telefone mudou)")
         elif g["sobrevivente"]["id"] != rev["sobrevivente"]:
             erro = f"sobrevivente hoje e {g['sobrevivente']['id']}"
-        elif ("duplicados" in rev
-              and sorted(d["id"] for d in g["duplicados"]) != rev["duplicados"]):
+        elif sorted(d["id"] for d in g["duplicados"]) != rev["duplicados"]:
             erro = "duplicados hoje sao " + "|".join(d["id"] for d in g["duplicados"])
         else:
             aplicar.append(g)
             continue
         recusados.append({"canonico": rev["canonico"], "sobrevivente": rev["sobrevivente"],
-                          "duplicados": rev.get("duplicados", []), "motivo": "",
+                          "duplicados": rev.get("duplicados") or [], "motivo": "",
                           "resultado": "recusado",
                           "erro": f"linha revisada nao bate mais com o grupo atual: {erro}"})
     return aplicar, recusados
@@ -441,6 +446,10 @@ def _json_do_stdout(saida, prefixo):
     return None
 
 
+def _carimbo():
+    return f"{datetime.now():%Y%m%d-%H%M%S}"
+
+
 def executar(db, saida, aplicar=False, limite=None, pares_csv=None, excluir=()):
     excluir = {bling._uuid(i) for i in excluir}
     if aplicar and not pares_csv:
@@ -449,6 +458,18 @@ def executar(db, saida, aplicar=False, limite=None, pares_csv=None, excluir=()):
     revisados = ler_grupos_revisados(pares_csv) if aplicar else []
     saida = Path(saida)
     saida.mkdir(parents=True, exist_ok=True)
+    # O --aplicar nunca sobrescreve um backup: cada rodada grava backup-<carimbo>.json e
+    # aplicados-<carimbo>.csv, e aborta se o arquivo ja existir. O dry-run usa backup.json.
+    if aplicar:
+        carimbo = _carimbo()
+        arq_backup = saida / f"backup-{carimbo}.json"
+        arq_aplicados = saida / f"aplicados-{carimbo}.csv"
+        for arq in (arq_backup, arq_aplicados):
+            if arq.exists():
+                raise SystemExit(f"{arq} ja existe — o --aplicar nao sobrescreve backup;"
+                                 " espere um segundo ou use outra --saida")
+    else:
+        arq_backup = saida / "backup.json"
 
     tabelas = {r["table_name"] for r in db.linhas(bling.Q_TABELAS)}
     bling.verificar_cobertura(tabelas)
@@ -492,8 +513,7 @@ def executar(db, saida, aplicar=False, limite=None, pares_csv=None, excluir=()):
     bling._csv(saida / "excluidos.csv", excluidos, COLUNAS_GRUPO)
     bling._csv(saida / "deals_repetidos.csv", repetidos,
                ["canonico", "sobrevivente", "pipeline_id", "deals"])
-    (saida / "backup.json").write_text(json.dumps(backup, ensure_ascii=False, indent=1),
-                                       encoding="utf-8")
+    arq_backup.write_text(json.dumps(backup, ensure_ascii=False, indent=1), encoding="utf-8")
 
     aplicados = []
     if aplicar:
@@ -515,17 +535,17 @@ def executar(db, saida, aplicar=False, limite=None, pares_csv=None, excluir=()):
                                       _json_do_stdout(saida_psql, "movidos_por_duplicado=")})
             except RuntimeError as exc:
                 aplicados.append({**base, "resultado": "erro", "erro": str(exc)})
-        bling._csv(saida / "aplicados.csv", aplicados,
+        bling._csv(arq_aplicados, aplicados,
                    ["canonico", "sobrevivente", "duplicados", "motivo", "resultado", "erro"])
-        # backup.json ganha, por duplicado aplicado, o que de fato mudou de dono
+        # o backup ganha, por duplicado aplicado, o que de fato mudou de dono
         movidos = {}
         for a in aplicados:
             movidos.update(a.get("movidos_por_duplicado") or {})
         for item in backup:
             if item["lead"]["id"] in movidos:
                 item["movidos"] = movidos[item["lead"]["id"]]
-        (saida / "backup.json").write_text(json.dumps(backup, ensure_ascii=False, indent=1),
-                                           encoding="utf-8")
+        arq_backup.write_text(json.dumps(backup, ensure_ascii=False, indent=1),
+                              encoding="utf-8")
 
     contagens = {
         "leads_lidos": len(leads), "grupos": len(todos),

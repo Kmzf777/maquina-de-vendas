@@ -285,6 +285,12 @@ def _aplicados(db):
     return [sql.split("update public.leads s set phone = '")[1][:13] for sql in db.escritas]
 
 
+def _unico(pasta, padrao):
+    achados = list(Path(pasta).glob(padrao))
+    assert len(achados) == 1, achados
+    return achados[0]
+
+
 def _ler(caminho):
     with open(caminho, newline="", encoding="utf-8") as f:
         return list(csv.DictReader(f))
@@ -359,10 +365,11 @@ def test_aplicar_so_os_grupos_do_csv_inclusive_do_revisar(tmp_path):
     r = m.executar(db, tmp_path / "s", aplicar=True, pares_csv=csv_)
     assert _aplicados(db) == ["5551981162558", "5549999170363"]
     assert r["contagens"]["aplicados_ok"] == 2 and r["contagens"]["modo"] == "aplicar"
-    aplicados = _ler(tmp_path / "s" / "aplicados.csv")
+    aplicados = _ler(_unico(tmp_path / "s", "aplicados-*.csv"))
     assert [a["resultado"] for a in aplicados] == ["ok", "ok"]
-    # backup.json ganha o que mudou de dono, por duplicado
-    backup = json.loads((tmp_path / "s" / "backup.json").read_text(encoding="utf-8"))
+    # o backup do --aplicar tem carimbo de hora e ganha o que mudou de dono, por duplicado
+    assert not (tmp_path / "s" / "backup.json").exists()
+    backup = json.loads(_unico(tmp_path / "s", "backup-*.json").read_text(encoding="utf-8"))
     por_id = {b["lead"]["id"]: b for b in backup}
     assert por_id[B]["movidos"] == {"messages": [f"msg-{B[:4]}"]}
     assert por_id[C]["movidos"] == {"messages": [f"msg-{C[:4]}"]}
@@ -393,16 +400,46 @@ def test_linha_com_sobrevivente_ou_duplicados_diferentes_e_recusada(tmp_path):
     assert "duplicados" in recusados[1]["erro"]
     assert "sem grupo" in recusados[2]["erro"]
     assert r["contagens"]["aplicados_recusados"] == 3
-    assert (tmp_path / "s" / "aplicados.csv").read_text(encoding="utf-8").count("recusado") == 3
+    assert _unico(tmp_path / "s", "aplicados-*.csv").read_text(encoding="utf-8").count("recusado") == 3
 
 
-def test_csv_sem_coluna_duplicados_compara_so_o_sobrevivente(tmp_path):
+def test_csv_sem_coluna_duplicados_e_recusado(tmp_path):
     m = _script()
     db = BancoFalso(m)
-    csv_ = _csv_pares(tmp_path / "p.csv", [DOUGLAS], campos=("canonico", "sobrevivente"))
+    csv_ = _csv_pares(tmp_path / "p.csv", [DOUGLAS, FRANCINE], campos=("canonico", "sobrevivente"))
     r = m.executar(db, tmp_path / "s", aplicar=True, pares_csv=csv_)
-    assert _aplicados(db) == ["5549999170363"]
-    assert r["contagens"]["aplicados_ok"] == 1
+    assert db.escritas == []
+    assert r["contagens"]["aplicados_recusados"] == 2
+    assert all("duplicados" in a["erro"] for a in r["aplicados"])
+
+
+def test_linha_com_duplicados_vazio_e_recusada(tmp_path):
+    m = _script()
+    db = BancoFalso(m)
+    csv_ = _csv_pares(tmp_path / "p.csv", [{**DOUGLAS, "duplicados": ""}])
+    r = m.executar(db, tmp_path / "s", aplicar=True, pares_csv=csv_)
+    assert db.escritas == []
+    assert r["contagens"]["aplicados_recusados"] == 1
+
+
+def test_aplicar_nunca_sobrescreve_backup_anterior(tmp_path, monkeypatch):
+    m = _script()
+    saida = tmp_path / "s"
+    csv_ = _csv_pares(tmp_path / "p.csv", [FRANCINE])
+    monkeypatch.setattr(m, "_carimbo", lambda: "20261014-100000")
+    m.executar(BancoFalso(m), saida, aplicar=True, pares_csv=csv_)
+    primeiro = (saida / "backup-20261014-100000.json").read_text(encoding="utf-8")
+    assert (saida / "aplicados-20261014-100000.csv").exists()
+    # mesmo carimbo: aborta antes de escrever qualquer coisa no banco ou no disco
+    db = BancoFalso(m)
+    with pytest.raises(SystemExit):
+        m.executar(db, saida, aplicar=True, pares_csv=csv_)
+    assert db.escritas == []
+    assert (saida / "backup-20261014-100000.json").read_text(encoding="utf-8") == primeiro
+    # outro carimbo: arquivo novo, o anterior fica
+    monkeypatch.setattr(m, "_carimbo", lambda: "20261014-100500")
+    m.executar(BancoFalso(m), saida, aplicar=True, pares_csv=csv_)
+    assert sorted(p.name for p in saida.glob("backup-*.json")) ==         ["backup-20261014-100000.json", "backup-20261014-100500.json"]
 
 
 def test_csv_sem_as_colunas_obrigatorias_aborta(tmp_path):

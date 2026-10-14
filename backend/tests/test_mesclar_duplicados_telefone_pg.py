@@ -203,7 +203,8 @@ def test_aplicar_funde_o_trio_e_o_par(banco, tmp_path):
     assert movidos_b["follow_up_jobs_cancelados"] == [FUP_B]
     assert len(movidos_b["messages"]) == 2
 
-    backup = json.loads((tmp_path / "backup.json").read_text(encoding="utf-8"))
+    (arq_backup,) = tmp_path.glob("backup-*.json")  # o --aplicar grava com carimbo de hora
+    backup = json.loads(arq_backup.read_text(encoding="utf-8"))
     por_id = {b["lead"]["id"]: b for b in backup}
     assert {B, C, F2} <= set(por_id)
     assert [c["id"] for c in por_id[B]["conversas_duplicados"]] == [CONV_B]
