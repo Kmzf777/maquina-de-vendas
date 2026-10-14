@@ -17,6 +17,7 @@ O e-mail obrigatório do `ContactIn` também é testado aqui (e não em
 `test_bling_router.py`) porque é o mesmo item de trabalho: o formulário já
 exige desde o commit `1d973c30`, mas barreira de navegador não é barreira.
 """
+import asyncio
 import inspect
 import json
 from decimal import Decimal
@@ -80,6 +81,13 @@ def db(monkeypatch):
 
     monkeypatch.setattr(qr, "_load_lead", lambda _id: dict(LEAD))
     monkeypatch.setattr(qr, "_load_lead_para_pdf", lambda _id: dict(LEAD))
+    # O PDF consulta o vínculo do contato e a ficha no Bling. Sem vínculo por
+    # padrão: os testes que exercitam o endereço trocam estes dois dubles.
+    monkeypatch.setattr(qr.contacts, "_contato_do_lead", lambda _lead, _account: None)
+
+    async def _sem_bling(_contato, _account):
+        raise AssertionError("teste não deveria chamar o Bling")
+    monkeypatch.setattr(qr, "_ficha_do_contato", _sem_bling)
     # Os quatro dubles abaixo EXIGEM a conta, sem default. Nao e estilo: antes
     # disso, `_seller_id_for` era substituido por `lambda _email: 12` enquanto a
     # funcao real ja pedia dois argumentos — a suite ficava verde com
@@ -675,6 +683,125 @@ async def test_pdf_recebe_o_que_precisa_e_nada_da_observacao_interna(db, monkeyp
     assert capturado["quote"]["installments"], "as parcelas saem no PDF"
     assert capturado["items"] == ITENS_DA_QUOTE
     assert capturado["seller"] == {"nome": "Vendedor", "email": "v@e.com"}
+
+
+def _captura_pdf(monkeypatch) -> dict:
+    capturado = {}
+
+    def fake_pdf(quote, items, *, seller=None):
+        capturado["quote"] = quote
+        return b"%PDF-fake"
+
+    monkeypatch.setattr(qr, "build_quote_pdf", fake_pdf)
+    return capturado
+
+
+FICHA_BLING = {"data": {"id": 555, "endereco": {"geral": {
+    "endereco": "Rua Júlio de Castilho", "numero": "45", "complemento": "",
+    "bairro": "Centro", "municipio": "Uberlândia", "uf": "MG", "cep": "38400000",
+}}}}
+
+
+async def test_pdf_traz_endereco_da_ficha_do_bling_na_conta_do_orcamento(db, monkeypatch):
+    capturado = _captura_pdf(monkeypatch)
+    chamadas = []
+
+    def vinculo(lead_id, account):
+        chamadas.append(("vinculo", lead_id, account))
+        return 555
+
+    async def ficha(contato_id, account):
+        chamadas.append(("ficha", contato_id, account))
+        return FICHA_BLING
+
+    monkeypatch.setattr(qr.contacts, "_contato_do_lead", vinculo)
+    monkeypatch.setattr(qr, "_ficha_do_contato", ficha)
+    monkeypatch.setattr(qr, "_load_quote",
+                        lambda _id: {**QUOTE_RASCUNHO, "bling_account": "secundaria"})
+
+    resp = await qr.quote_pdf_endpoint("Q1")
+
+    assert resp.status_code == 200
+    assert capturado["quote"]["lead_endereco"] == (
+        "Rua Júlio de Castilho, 45 · Centro · Uberlândia/MG · CEP 38400-000")
+    # A conta do PRÓPRIO orçamento: o mesmo lead pode ter contato nas duas.
+    assert chamadas == [("vinculo", "L1", "secundaria"), ("ficha", 555, "secundaria")]
+
+
+async def test_pdf_cai_no_endereco_do_lead_quando_o_bling_falha(db, monkeypatch):
+    capturado = _captura_pdf(monkeypatch)
+    monkeypatch.setattr(qr, "_load_lead_para_pdf",
+                        lambda _id: {**LEAD, "endereco": "Rua do Lead, 9"})
+    monkeypatch.setattr(qr.contacts, "_contato_do_lead", lambda _l, _a: 555)
+
+    async def bling_fora(_c, _a):
+        raise BlingServerError("bling fora")
+    monkeypatch.setattr(qr, "_ficha_do_contato", bling_fora)
+    monkeypatch.setattr(qr, "_load_quote", lambda _id: dict(QUOTE_RASCUNHO))
+
+    resp = await qr.quote_pdf_endpoint("Q1")
+
+    assert resp.status_code == 200
+    assert capturado["quote"]["lead_endereco"] == "Rua do Lead, 9"
+
+
+async def test_pdf_cai_no_endereco_do_lead_quando_o_bling_demora(db, monkeypatch):
+    capturado = _captura_pdf(monkeypatch)
+    monkeypatch.setattr(qr, "BLING_ENDERECO_TIMEOUT", 0.05)
+    monkeypatch.setattr(qr, "_load_lead_para_pdf",
+                        lambda _id: {**LEAD, "endereco": "Rua do Lead, 9"})
+    monkeypatch.setattr(qr.contacts, "_contato_do_lead", lambda _l, _a: 555)
+
+    async def bling_lento(_c, _a):
+        await asyncio.sleep(5)
+        return FICHA_BLING
+    monkeypatch.setattr(qr, "_ficha_do_contato", bling_lento)
+    monkeypatch.setattr(qr, "_load_quote", lambda _id: dict(QUOTE_RASCUNHO))
+
+    resp = await qr.quote_pdf_endpoint("Q1")
+
+    assert resp.status_code == 200
+    assert capturado["quote"]["lead_endereco"] == "Rua do Lead, 9"
+
+
+async def test_pdf_cai_no_endereco_do_lead_quando_a_ficha_vem_sem_endereco(db, monkeypatch):
+    capturado = _captura_pdf(monkeypatch)
+    monkeypatch.setattr(qr, "_load_lead_para_pdf",
+                        lambda _id: {**LEAD, "endereco": "Rua do Lead, 9"})
+    monkeypatch.setattr(qr.contacts, "_contato_do_lead", lambda _l, _a: 555)
+
+    async def ficha_vazia(_c, _a):
+        return {"data": {"id": 555, "endereco": {"geral": {"endereco": "", "municipio": ""}}}}
+    monkeypatch.setattr(qr, "_ficha_do_contato", ficha_vazia)
+    monkeypatch.setattr(qr, "_load_quote", lambda _id: dict(QUOTE_RASCUNHO))
+
+    await qr.quote_pdf_endpoint("Q1")
+
+    assert capturado["quote"]["lead_endereco"] == "Rua do Lead, 9"
+
+
+async def test_pdf_sem_vinculo_e_sem_endereco_sai_sem_a_linha(db, monkeypatch):
+    capturado = _captura_pdf(monkeypatch)
+    monkeypatch.setattr(qr, "_load_quote", lambda _id: dict(QUOTE_RASCUNHO))
+
+    resp = await qr.quote_pdf_endpoint("Q1")
+
+    assert resp.status_code == 200
+    assert capturado["quote"]["lead_endereco"] is None
+
+
+async def test_pdf_sai_mesmo_com_falha_ao_ler_o_vinculo(db, monkeypatch):
+    capturado = _captura_pdf(monkeypatch)
+
+    def vinculo_quebrado(_l, _a):
+        raise RuntimeError("supabase fora")
+    monkeypatch.setattr(qr.contacts, "_contato_do_lead", vinculo_quebrado)
+    monkeypatch.setattr(qr, "_load_quote", lambda _id: dict(QUOTE_RASCUNHO))
+
+    resp = await qr.quote_pdf_endpoint("Q1")
+
+    assert resp.status_code == 200
+    assert capturado["quote"]["lead_endereco"] is None
 
 
 # ---------------------------------------------------------------------------

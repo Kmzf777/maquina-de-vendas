@@ -77,7 +77,7 @@ from app.bling.orders import (_dec, _money, build_installments, create_order,
 from app.bling.router import _load_lead, _products_by_id, _seller_id_for
 from app.bling import config
 from app.db.supabase import get_supabase
-from app.quotes.pdf import build_quote_pdf
+from app.quotes.pdf import build_quote_pdf, formatar_endereco
 from app.quotes.proposals import (STATUS_SITUACAO, create_proposal,
                                   normalize_discount_input, normalize_freight,
                                   quote_subtotal, quote_total, resolve_discount,
@@ -213,7 +213,7 @@ def _load_lead_para_pdf(lead_id: str) -> dict | None:
     o nome que está na nota, não o apelido pelo qual o vendedor o salvou.
     """
     res = (get_supabase().table("leads")
-           .select("id, name, razao_social, cnpj, email, phone, telefone_comercial")
+           .select("id, name, razao_social, cnpj, email, phone, telefone_comercial, endereco")
            .eq("id", lead_id).limit(1).maybe_single().execute())
     return getattr(res, "data", None)
 
@@ -879,6 +879,45 @@ def _parcelas_para_o_pdf(quote: dict) -> list[dict]:
         return []
 
 
+# Teto para a consulta da ficha no Bling durante o download. O vendedor está
+# esperando o arquivo; endereço atrasado não pode virar PDF atrasado.
+BLING_ENDERECO_TIMEOUT = 5.0
+
+
+async def _ficha_do_contato(contato_id: int, account: str) -> dict:
+    """Ficha completa do contato no Bling. A listagem (e por isso o espelho
+    `bling_contacts`) não traz `endereco`; só o GET por id traz."""
+    async with BlingClient(account=account) as client:
+        return await client.get(f"/contatos/{contato_id}")
+
+
+async def _endereco_do_cliente(lead: dict, account: str) -> str | None:
+    """Endereço impresso no PDF: ficha do Bling na conta do orçamento, com
+    `leads.endereco` como reserva.
+
+    Qualquer falha (sem vínculo, Bling fora, timeout, ficha sem endereço) cai
+    na reserva — e na falta dela a linha some. Nunca levanta: o download do
+    PDF não pode depender do Bling estar de pé.
+    """
+    reserva = (lead.get("endereco") or "").strip() or None
+    lead_id = lead.get("id")
+    if not lead_id:
+        return reserva
+    try:
+        contato_id = await asyncio.to_thread(contacts._contato_do_lead, lead_id, account)
+        if contato_id:
+            ficha = await asyncio.wait_for(_ficha_do_contato(contato_id, account),
+                                           BLING_ENDERECO_TIMEOUT)
+            geral = (((ficha or {}).get("data") or {}).get("endereco") or {}).get("geral")
+            formatado = formatar_endereco(geral)
+            if formatado:
+                return formatado
+    except Exception:
+        logger.warning("[QUOTES] endereco do lead %s nao veio do Bling (conta %s); "
+                       "PDF usa o do CRM, se houver", lead_id, account, exc_info=True)
+    return reserva
+
+
 @router.get("/{quote_id}/pdf")
 async def quote_pdf_endpoint(quote_id: str):
     quote = await asyncio.to_thread(_load_quote, quote_id)
@@ -895,8 +934,9 @@ async def quote_pdf_endpoint(quote_id: str):
     items = await asyncio.to_thread(_load_quote_items, quote_id)
     lead = await asyncio.to_thread(_load_lead_para_pdf, quote.get("lead_id")) or {}
     seller = await asyncio.to_thread(_seller_for, quote.get("created_by"), conta_do_pdf)
+    endereco = await _endereco_do_cliente(lead, conta_do_pdf)
 
-    razao = lead.get("razao_social") or lead.get("name")
+    razao =lead.get("razao_social") or lead.get("name")
     # "A/C" só quando o nome da pessoa difere do nome que encabeça o documento —
     # repetir a razão social no A/C seria ruído.
     aos_cuidados = lead.get("name") if lead.get("name") != razao else ""
@@ -920,6 +960,7 @@ async def quote_pdf_endpoint(quote_id: str):
         "installments": _parcelas_para_o_pdf(quote),
         "lead_nome": razao,
         "lead_documento": lead.get("cnpj"),
+        "lead_endereco": endereco,
         "lead_email": lead.get("email"),
         "lead_telefone": lead.get("phone") or lead.get("telefone_comercial"),
         "aos_cuidados_de": aos_cuidados,
