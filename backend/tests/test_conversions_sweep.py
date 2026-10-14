@@ -421,3 +421,93 @@ def test_um_lead_quebrado_nao_derruba_a_varredura(monkeypatch):
     sweep_mod.run_sweep(now=NOW)
     keys = [r["dedupe_key"] for rows, _ in upserts for r in rows]
     assert keys == ["meta:qualified:C1"]
+
+
+# ── janela retroativa e simulação (spec de 14/10) ───────────────────────────
+
+def _lead_com_repasse(dias_atras):
+    at = NOW - timedelta(days=dias_atras)
+    return _lead(ctwa_clid=None, created_at=(at - timedelta(hours=1)).isoformat(),
+                 metadata={"handoff": {"at": at.isoformat(), "motivo": "lead qualificado"}})
+
+
+def _gentrada(dias_atras):
+    return [{"occurred_at": (NOW - timedelta(days=dias_atras, hours=1)).isoformat(), "metadata": {"gclid": "G1"}}]
+
+
+def test_janela_retroativa_corta_evento_mais_velho():
+    rows = build_candidates(lead=_lead_com_repasse(40), entradas=_gentrada(40), sales=[], opportunity_at=None,
+                            values={}, now=NOW, backfill=timedelta(days=30))
+    assert rows == []
+    rows = build_candidates(lead=_lead_com_repasse(20), entradas=_gentrada(20), sales=[], opportunity_at=None,
+                            values={}, now=NOW, backfill=timedelta(days=30))
+    assert _keys(rows) == ["google:qualified:G1"]
+
+
+def test_sem_janela_explicita_usa_90(monkeypatch):
+    monkeypatch.delenv("CONVERSIONS_BACKFILL_DAYS", raising=False)
+    rows = build_candidates(lead=_lead_com_repasse(40), entradas=_gentrada(40), sales=[], opportunity_at=None,
+                            values={}, now=NOW)
+    assert _keys(rows) == ["google:qualified:G1"]
+
+
+def test_venda_recente_de_clique_velho_respeita_a_janela_do_evento():
+    # clique há 60 dias, venda há 10: com janela 30, a venda entra (a janela é da idade do EVENTO)
+    entradas = [{"occurred_at": (NOW - timedelta(days=60)).isoformat(), "metadata": {"gclid": "G1"}}]
+    sale = {"id": "S1", "sold_at": (NOW - timedelta(days=10)).isoformat(), "value": 500, "status": "ok"}
+    rows = build_candidates(lead=_lead(ctwa_clid=None), entradas=entradas, sales=[sale], opportunity_at=None,
+                            values={}, now=NOW, backfill=timedelta(days=30))
+    assert _keys(rows) == ["google:purchase:S1"]
+
+
+def _tables_dry():
+    return {
+        "ad_conversion_values": [],
+        "lead_events": [{"lead_id": "L1", "event_type": "entrada",
+                         "occurred_at": (NOW - timedelta(days=40, hours=1)).isoformat(), "metadata": {"gclid": "G1"}},
+                        {"lead_id": "L2", "event_type": "entrada",
+                         "occurred_at": (NOW - timedelta(days=3, hours=1)).isoformat(), "metadata": {"gclid": "G2"}}],
+        "leads": [{**_lead_com_repasse(40), "id": "L1"}, {**_lead_com_repasse(3), "id": "L2"}],
+        "sales": [], "quotes": [],
+    }
+
+
+def _fake_sb_dry(tables, upserts, log, existentes=()):
+    sb = _fake_sb(tables, upserts, log)
+    base = sb.table.side_effect
+
+    def _table(name):
+        if name == "ad_conversions":
+            q = base(name)
+            q.select.return_value = _Q("ad_conversions", [{"dedupe_key": k} for k in existentes], log)
+            return q
+        return base(name)
+    sb.table.side_effect = _table
+    return sb
+
+
+def test_dry_run_nao_faz_upsert_e_conta_por_plataforma_etapa_e_idade(monkeypatch):
+    upserts, log = [], []
+    monkeypatch.setattr(sweep_mod, "get_supabase", lambda: _fake_sb_dry(_tables_dry(), upserts, log))
+    res = sweep_mod.simulate_sweep(now=NOW, backfill_days=90)
+    assert upserts == []
+    assert res["novos"] == {("google", "qualified", "0-7d"): 1, ("google", "qualified", "31-90d"): 1}
+    assert res["ja_na_fila"] == 0
+
+
+def test_dry_run_desconta_o_que_ja_esta_na_fila(monkeypatch):
+    upserts, log = [], []
+    monkeypatch.setattr(sweep_mod, "get_supabase",
+                        lambda: _fake_sb_dry(_tables_dry(), upserts, log, existentes=["google:qualified:G2"]))
+    res = sweep_mod.simulate_sweep(now=NOW, backfill_days=30)
+    assert upserts == []
+    assert res["novos"] == {}  # L1 fora da janela de 30; L2 já na fila
+    assert res["ja_na_fila"] == 1
+
+
+def test_run_sweep_dry_run_nao_grava(monkeypatch):
+    monkeypatch.delenv("CONVERSIONS_BACKFILL_DAYS", raising=False)
+    upserts, log = [], []
+    monkeypatch.setattr(sweep_mod, "get_supabase", lambda: _fake_sb_dry(_tables_dry(), upserts, log))
+    n = sweep_mod.run_sweep(now=NOW, dry_run=True)
+    assert upserts == [] and n == 2

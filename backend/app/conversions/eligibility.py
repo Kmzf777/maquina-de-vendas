@@ -6,6 +6,7 @@ aconteceu ANTES do evento e dentro da janela. `leads.ctwa_clid` é sobrescrito a
 novo, então a fonte do histórico é a linha do tempo (`lead_events` tipo `entrada`).
 """
 import hashlib
+import os
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any
@@ -15,6 +16,34 @@ from typing import Any
 WINDOW = {"meta": timedelta(days=7), "google": timedelta(days=90)}
 CLICK_TYPES = {"meta": ("ctwa_clid",), "google": ("gclid", "gbraid", "wbraid")}
 _PLATFORM_OF = {t: p for p, ts in CLICK_TYPES.items() for t in ts}
+
+# Janela retroativa: idade máxima do EVENTO para entrar na fila e ser enviado. Padrão 90 (= a janela
+# de clique do Google, decisão do Rafael em 14/10: é o que está configurado nas ações do Google Ads).
+# As janelas das plataformas (WINDOW) continuam valendo por cima.
+MAX_BACKFILL_DAYS = 90
+
+
+def backfill_window(days: int | None = None) -> timedelta:
+    """`days` explícito (CLI) ou `CONVERSIONS_BACKFILL_DAYS`; ausente/inválido → 90; limitado a 1..90."""
+    if days is None:
+        try:
+            days = int((os.getenv("CONVERSIONS_BACKFILL_DAYS") or "").strip())
+        except ValueError:
+            days = MAX_BACKFILL_DAYS
+    return timedelta(days=max(1, min(days, MAX_BACKFILL_DAYS)))
+
+
+def dry_run_enabled() -> bool:
+    return (os.getenv("CONVERSIONS_DRY_RUN") or "").strip().lower() in ("1", "true", "yes", "on")
+
+
+def age_bucket(age: timedelta) -> str:
+    """Faixa de idade do evento no relatório de simulação."""
+    if age <= timedelta(days=7):
+        return "0-7d"
+    if age <= timedelta(days=30):
+        return "8-30d"
+    return "31-90d"
 
 # Repasses que NÃO são qualificação: o fallback de LLM fora do ar repassa todo mundo, o bot de
 # Recuperação trabalha a base própria (não é tráfego pago) e escalonamento é reclamação.

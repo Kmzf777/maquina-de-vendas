@@ -3,7 +3,8 @@ from datetime import datetime, timedelta, timezone
 
 from app.conversions.eligibility import (
     Click, attributed_click, build_dedupe_key, build_event_id, clicks_from_entradas,
-    clicks_from_lead_fallback, qualified_handoff_ok, segment_for, stage_allowed,
+    age_bucket, backfill_window, clicks_from_lead_fallback, dry_run_enabled, qualified_handoff_ok,
+    segment_for, stage_allowed,
 )
 
 T0 = datetime(2026, 10, 1, 12, 0, tzinfo=timezone.utc)
@@ -88,3 +89,34 @@ def test_chaves_deterministicas():
     assert e1 == build_event_id("qualified", "lead-1", "C1", None)
     assert e1.startswith("qualified:lead-1:") and len(e1) <= 64
     assert build_event_id("purchase", "lead-1", "C1", "sale-1") == "purchase:sale-1"
+
+
+def test_backfill_padrao_90(monkeypatch):
+    monkeypatch.delenv("CONVERSIONS_BACKFILL_DAYS", raising=False)
+    assert backfill_window() == timedelta(days=90)
+
+
+def test_backfill_lido_do_env_e_limitado(monkeypatch):
+    for raw, dias in (("30", 30), ("7", 7), ("200", 90), ("0", 1), ("-5", 1), ("abc", 90), ("", 90)):
+        monkeypatch.setenv("CONVERSIONS_BACKFILL_DAYS", raw)
+        assert backfill_window() == timedelta(days=dias), raw
+
+
+def test_backfill_explicito_vence_o_env(monkeypatch):
+    monkeypatch.setenv("CONVERSIONS_BACKFILL_DAYS", "30")
+    assert backfill_window(10) == timedelta(days=10)
+    assert backfill_window(500) == timedelta(days=90)
+
+
+def test_dry_run_enabled(monkeypatch):
+    monkeypatch.delenv("CONVERSIONS_DRY_RUN", raising=False)
+    assert dry_run_enabled() is False
+    monkeypatch.setenv("CONVERSIONS_DRY_RUN", "true")
+    assert dry_run_enabled() is True
+
+
+def test_age_bucket():
+    assert age_bucket(timedelta(days=7)) == "0-7d"
+    assert age_bucket(timedelta(days=7, hours=1)) == "8-30d"
+    assert age_bucket(timedelta(days=30)) == "8-30d"
+    assert age_bucket(timedelta(days=31)) == "31-90d"

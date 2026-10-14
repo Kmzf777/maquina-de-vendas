@@ -8,20 +8,23 @@ da `dedupe_key` UNIQUE + upsert com ignore_duplicates: rodar de novo nunca dupli
 """
 import dataclasses
 import logging
-from collections import defaultdict
+from collections import Counter, defaultdict
 from datetime import date, datetime, timedelta, timezone
 from typing import Any
 
 from app.conversions.eligibility import (
-    WINDOW, Click, attributed_click, build_dedupe_key, build_event_id, clicks_from_entradas,
-    clicks_from_lead_fallback, parse_ts, qualified_handoff_ok, segment_for, stage_allowed,
+    WINDOW, Click, age_bucket, attributed_click, backfill_window, build_dedupe_key, build_event_id,
+    clicks_from_entradas, clicks_from_lead_fallback, parse_ts, qualified_handoff_ok, segment_for,
+    stage_allowed,
 )
 from app.db.paginacao import paginar
 from app.db.supabase import get_supabase
 
 logger = logging.getLogger(__name__)
 
-# A maior janela (Google, 90 dias): nada mais velho que isso ainda pode ser enviado.
+# A maior janela (Google, 90 dias): nada mais velho que isso ainda pode ser enviado. Define a
+# seleção de leads (cliques de 90 dias) mesmo com janela retroativa menor: a janela retroativa
+# filtra a idade do EVENTO no build_candidates (venda recente de clique velho continua valendo).
 LOOKBACK = WINDOW["google"]
 PLATFORMS = ("meta", "google")
 _CHUNK = 200   # ids por `.in_()`: 200 uuids ≈ 8 KB de URL, o limite seguro do repo
@@ -116,7 +119,7 @@ def _row(*, lead: dict, platform: str, stage: str, click: Click, event_at: datet
 
 def build_candidates(*, lead: dict[str, Any], entradas: list[dict[str, Any]], sales: list[dict[str, Any]],
                      opportunity_at: datetime | None, values: dict[tuple[str, str], float],
-                     now: datetime) -> list[dict[str, Any]]:
+                     now: datetime, backfill: timedelta | None = None) -> list[dict[str, Any]]:
     """Linhas candidatas de UM lead (puro). Regras da §5 da spec de 08/10, com a mudança de 13/10:
 
     - o clique (`lead`) NÃO vira evento: no Google já é contado pelas conversões do site e por
@@ -125,8 +128,11 @@ def build_candidates(*, lead: dict[str, Any], entradas: list[dict[str, Any]], sa
       antes do evento, dentro da janela clique→evento);
     - já era cliente → só venda; venda cancelada não entra;
     - evento fora da janela de envio (ou ainda no futuro) não é enfileirado;
+    - evento mais velho que a janela retroativa (`backfill`; ausente → `backfill_window()`, padrão
+      90 dias) não é enfileirado — a janela é da idade do EVENTO, não do clique;
     - uma linha por `dedupe_key`.
     """
+    backfill = backfill or backfill_window()
     clicks = clicks_from_entradas(entradas)
     clicks += clicks_from_lead_fallback(lead, clicks)
     # Ordem cronológica: o mesmo ID repetido em duas entradas fica com a hora do 1º clique.
@@ -161,6 +167,8 @@ def build_candidates(*, lead: dict[str, Any], entradas: list[dict[str, Any]], sa
     for stage, event_at, value, sale_id in eventos:
         if not stage_allowed(stage, ja_cliente) or event_at > now:
             continue  # futuro (orçamento datado para amanhã): entra numa rodada seguinte
+        if now - event_at > backfill:
+            continue  # janela retroativa (spec de 14/10): evento velho demais não entra na fila
         for platform in PLATFORMS:
             click = attributed_click(clicks, platform, event_at)
             if click is None or not _sendable(platform, click, event_at, now):
@@ -198,16 +206,18 @@ def _by_lead(rows: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
     return out
 
 
-def run_sweep(now: datetime | None = None) -> int:
-    """Enfileira o que for elegível. Retorna quantas linhas foram oferecidas ao upsert (as que já
-    existiam são ignoradas pelo banco)."""
-    now = now or datetime.now(timezone.utc)
+def _blocos(sb, now: datetime, backfill: timedelta, stats: dict[str, int] | None = None):
+    """Lê o banco em blocos de `_CHUNK` leads e devolve, por bloco, `(rows, falhas)`: os candidatos
+    montados pelo `build_candidates` e quantos leads do bloco falharam. A seleção de leads e as
+    consultas usam `LOOKBACK` (cliques de 90 dias) para não perder clique velho com evento recente;
+    a janela retroativa é aplicada à idade do evento pelo `build_candidates`. `stats["leads"]`
+    recebe o total de leads candidatos (para o log)."""
     since = (now - LOOKBACK).isoformat()
-    sb = get_supabase()
     values = {(v["segment"], v["stage"]): float(v["value"])
               for v in (sb.table("ad_conversion_values").select("segment,stage,value").execute().data or [])}
     lead_ids = _candidate_lead_ids(sb, since)
-    total = novos = falhas = blocos_falhos = 0
+    if stats is not None:
+        stats["leads"] = len(lead_ids)
     for bloco in _chunks(lead_ids):
         leads = paginar(lambda: sb.table("leads").select(
             "id,stage,ja_era_cliente,metadata,created_at,ctwa_clid,gclid,gbraid,wbraid"
@@ -225,6 +235,7 @@ def run_sweep(now: datetime | None = None) -> int:
                                     .in_("lead_id", bloco).order("id")))
 
         rows: list[dict[str, Any]] = []
+        falhas = 0
         for lead in leads:
             lid = lead["id"]
             try:
@@ -235,11 +246,54 @@ def run_sweep(now: datetime | None = None) -> int:
                     opportunity_at=opportunity_from(quotes.get(lid, []), propostas.get(lid, [])),
                     values=values,
                     now=now,
+                    backfill=backfill,
                 )
             except Exception:
                 # Um registro com dado inesperado não pode travar a fila de todos os outros.
                 falhas += 1
                 logger.exception("[CONVERSOES] varredura: falha ao montar candidatos do lead %s", lid)
+        yield rows, falhas
+
+
+def simulate_sweep(now: datetime | None = None, backfill_days: int | None = None) -> dict[str, Any]:
+    """Dry-run: o que a varredura enfileiraria agora, sem gravar. Conta só as `dedupe_key` que
+    ainda não estão em `ad_conversions`, por (plataforma, etapa, faixa de idade do evento)."""
+    now = now or datetime.now(timezone.utc)
+    backfill = backfill_window(backfill_days)
+    sb = get_supabase()
+    novos: Counter = Counter()
+    ja = 0
+    for rows, _falhas in _blocos(sb, now, backfill):
+        if not rows:
+            continue
+        keys = [r["dedupe_key"] for r in rows]
+        existentes: set[str] = set()
+        for i in range(0, len(keys), _CHUNK):
+            existentes |= {e["dedupe_key"] for e in (sb.table("ad_conversions").select("dedupe_key")
+                           .in_("dedupe_key", keys[i:i + _CHUNK]).execute().data or [])}
+        for r in rows:
+            if r["dedupe_key"] in existentes:
+                ja += 1
+            else:
+                novos[(r["platform"], r["stage"], age_bucket(now - _ts(r["event_at"])))] += 1
+    return {"novos": dict(novos), "ja_na_fila": ja, "backfill_days": backfill.days}
+
+
+def run_sweep(now: datetime | None = None, dry_run: bool = False) -> int:
+    """Enfileira o que for elegível. Retorna quantas linhas foram oferecidas ao upsert (as que já
+    existiam são ignoradas pelo banco). Com `dry_run`, só simula (`simulate_sweep`), não grava nada
+    e retorna quantas linhas novas entrariam."""
+    now = now or datetime.now(timezone.utc)
+    if dry_run:
+        res = simulate_sweep(now)
+        logger.info("[CONVERSOES][SIMULACAO] varredura: %d novos (%s), %d já na fila",
+                    sum(res["novos"].values()), res["novos"], res["ja_na_fila"])
+        return sum(res["novos"].values())
+    sb = get_supabase()
+    stats: dict[str, int] = {}
+    total = novos = falhas = blocos_falhos = 0
+    for rows, falhas_bloco in _blocos(sb, now, backfill_window(), stats):
+        falhas += falhas_bloco
         if rows:
             try:
                 res = sb.table("ad_conversions").upsert(rows, on_conflict="dedupe_key", ignore_duplicates=True).execute()
@@ -254,5 +308,5 @@ def run_sweep(now: datetime | None = None) -> int:
             if isinstance(getattr(res, "data", None), list):
                 novos += len(res.data)
     logger.info("[CONVERSOES] varredura: %d leads, %d candidatos, %d novos na fila, %d leads com falha, "
-                "%d blocos com falha no upsert", len(lead_ids), total, novos, falhas, blocos_falhos)
+                "%d blocos com falha no upsert", stats.get("leads", 0), total, novos, falhas, blocos_falhos)
     return total
