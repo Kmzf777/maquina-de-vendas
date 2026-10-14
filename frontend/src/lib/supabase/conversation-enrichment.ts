@@ -5,8 +5,9 @@ type ServiceSupabase = Awaited<ReturnType<typeof getServiceSupabase>>;
 // `opt_out` entra aqui porque é o que diz à UI que o lead está BLOQUEADO: sem
 // ele o /conversas não teria como travar o composer nem oferecer "Desbloquear
 // lead" — renderizaria um chat aparentemente normal para quem pediu para sair.
+// O endereço estruturado (cep..uf, migração 20261014) alimenta a aba Perfil.
 const LEAD_FIELDS =
-  "id, phone, name, company, stage, status, last_customer_message_at, ai_enabled, created_at, channel, on_hold, cnpj, razao_social, nome_fantasia, inscricao_estadual, endereco, telefone_comercial, email, instagram, traffic_type, utm_source, opt_out";
+  "id, phone, name, company, stage, status, last_customer_message_at, ai_enabled, created_at, channel, on_hold, cnpj, razao_social, nome_fantasia, inscricao_estadual, endereco, cep, logradouro, numero, complemento, bairro, municipio, uf, telefone_comercial, email, instagram, traffic_type, utm_source, opt_out";
 
 const CHANNEL_FIELDS =
   "id, name, phone, provider, agent_profile_id, mode, agent_profiles(id, name, prompt_key)";
