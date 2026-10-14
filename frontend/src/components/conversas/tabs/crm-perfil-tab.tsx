@@ -17,6 +17,16 @@ import {
 import { LeadOriginBlock } from "@/components/leads/lead-origin-block";
 import { docDigits, formatDocument } from "@/lib/documento";
 
+const ENDERECO_CAMPOS = [
+  { field: "cep", label: "CEP" },
+  { field: "logradouro", label: "Rua" },
+  { field: "numero", label: "Número" },
+  { field: "complemento", label: "Complemento" },
+  { field: "bairro", label: "Bairro" },
+  { field: "municipio", label: "Cidade" },
+  { field: "uf", label: "UF" },
+] as const;
+
 interface CrmPerfilTabProps {
   lead: Lead;
   onSaveField: (field: string, value: string | null) => Promise<void>;
@@ -258,7 +268,20 @@ export function CrmPerfilTab({
         <EditableField label="Razao Social" value={lead.razao_social} onSave={(v) => onSaveField("razao_social", v)} />
         <EditableField label="Nome Fantasia" value={lead.nome_fantasia} onSave={(v) => onSaveField("nome_fantasia", v)} />
         <EditableField label="Inscricao Estadual" value={lead.inscricao_estadual} onSave={(v) => onSaveField("inscricao_estadual", v)} />
-        <EditableField label="Endereco" value={lead.endereco} onSave={(v) => onSaveField("endereco", v)} />
+        {/* Endereço estruturado (cartão b3788533): cada campo grava a sua
+            coluna; quando o endereço fica completo, o PATCH atualiza o
+            contato no Bling. Apagado grava null. */}
+        {ENDERECO_CAMPOS.map(({ field, label }) => (
+          <EditableField
+            key={field}
+            label={label}
+            value={lead[field] ?? null}
+            onSave={(v) => onSaveField(field, v || null)}
+          />
+        ))}
+        {!ENDERECO_CAMPOS.some(({ field }) => (lead[field] ?? "").trim()) && lead.endereco?.trim() && (
+          <p className="text-[12px] text-[#7b7b78]">Endereço antigo: {lead.endereco}</p>
+        )}
         <EditableField label="Tel. Comercial" value={lead.telefone_comercial} onSave={(v) => onSaveField("telefone_comercial", v)} />
       </div>
 

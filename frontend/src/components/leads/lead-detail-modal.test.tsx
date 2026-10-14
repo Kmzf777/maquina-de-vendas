@@ -5,7 +5,7 @@
  * DOM/`screen`, mesmo padrão de lead-timeline.test.tsx.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import type { Lead } from "@/lib/types";
 
 // Filhos com fetch/Supabase próprios não interessam aqui.
@@ -38,10 +38,13 @@ const LEAD = {
   first_response_at: null,
 } as unknown as Lead;
 
-function renderModal(onSave = vi.fn(() => Promise.resolve())) {
+function renderModal(
+  onSave: (id: string, data: Partial<Lead>) => Promise<unknown> = vi.fn(() => Promise.resolve()),
+  lead: Lead = LEAD,
+) {
   render(
     <LeadDetailModal
-      lead={LEAD}
+      lead={lead}
       tags={[]}
       pipelines={[]}
       leadTagIds={[]}
@@ -101,5 +104,77 @@ describe("LeadDetailModal — Salvar alterações no cabeçalho", () => {
     await act(async () => { terminar(); });
     expect(botaoSalvar()).toBeNull();
     expect(screen.queryByRole("button", { name: "Salvando..." })).toBeNull();
+  });
+});
+
+describe("LeadDetailModal — endereço estruturado", () => {
+  const campo = (rotulo: string) => screen.getByLabelText(rotulo) as HTMLInputElement;
+  const bloco = () => screen.getByTestId("lead-address-block");
+
+  it("mostra CEP, Rua, Número, Complemento, Bairro, Cidade e UF no lugar do campo único", () => {
+    renderModal(undefined, { ...LEAD, endereco: "Rua Velha, 1", logradouro: "Rua Nova" } as Lead);
+    for (const rotulo of ["CEP", "Rua", "Número", "Complemento", "Bairro", "Cidade", "UF"]) {
+      expect(bloco().contains(campo(rotulo))).toBe(true);
+    }
+    expect(campo("Rua").value).toBe("Rua Nova");
+    expect(screen.queryByDisplayValue("Rua Velha, 1")).toBeNull();
+    expect(screen.queryByText(/Endereço antigo:/)).toBeNull();
+  });
+
+  it("só com o texto legado, mostra 'Endereço antigo:' abaixo dos campos", () => {
+    renderModal(undefined, { ...LEAD, endereco: "Rua Velha, 1 - Frutal" } as Lead);
+    expect(bloco().textContent).toContain("Endereço antigo: Rua Velha, 1 - Frutal");
+  });
+
+  it("CEP com 8 dígitos busca no ViaCEP e preenche só os campos vazios", async () => {
+    global.fetch = vi.fn(async (url: RequestInfo | URL) =>
+      String(url).startsWith("https://viacep.com.br/ws/38200000/")
+        ? ({
+            ok: true,
+            status: 200,
+            json: async () => ({ logradouro: "Avenida Brasil", bairro: "Centro", localidade: "Frutal", uf: "MG" }),
+          } as Response)
+        : ({ ok: true, status: 200, json: async () => [] } as Response),
+    ) as unknown as typeof fetch;
+    renderModal(undefined, { ...LEAD, logradouro: "Rua Digitada" } as Lead);
+
+    fireEvent.change(campo("CEP"), { target: { value: "38200-000" } });
+
+    await waitFor(() => expect(campo("Cidade").value).toBe("Frutal"));
+    expect(campo("UF").value).toBe("MG");
+    expect(campo("Bairro").value).toBe("Centro");
+    expect(campo("Rua").value).toBe("Rua Digitada");
+  });
+
+  it("salvar envia os campos de endereço alterados", async () => {
+    const onSave = vi.fn(() => Promise.resolve({}));
+    renderModal(onSave);
+    fireEvent.change(campo("Número"), { target: { value: "123" } });
+    fireEvent.change(campo("Complemento"), { target: { value: "Sala 2" } });
+    await act(async () => { fireEvent.click(botaoSalvar()!); });
+    expect(onSave).toHaveBeenCalledWith("lead-1", { numero: "123", complemento: "Sala 2" });
+  });
+
+  it("depois de salvar mostra o resultado do Bling", async () => {
+    renderModal(() => Promise.resolve({ id: "lead-1", bling_endereco: { status: "updated", contas: [] } }));
+    fireEvent.change(campo("Número"), { target: { value: "123" } });
+    await act(async () => { fireEvent.click(botaoSalvar()!); });
+    expect(screen.getByText("Endereço atualizado no Bling")).toBeTruthy();
+  });
+
+  it("falha no Bling aparece com a mensagem", async () => {
+    renderModal(() =>
+      Promise.resolve({ bling_endereco: { status: "error", message: "Bling indisponível — tente salvar de novo" } }),
+    );
+    fireEvent.change(campo("Número"), { target: { value: "123" } });
+    await act(async () => { fireEvent.click(botaoSalvar()!); });
+    expect(screen.getByText("Falha ao atualizar no Bling: Bling indisponível — tente salvar de novo")).toBeTruthy();
+  });
+
+  it("salvar campo que não é de endereço não mostra mensagem do Bling", async () => {
+    renderModal(() => Promise.resolve({ id: "lead-1" }));
+    fireEvent.change(screen.getByDisplayValue("teste"), { target: { value: "teste agente" } });
+    await act(async () => { fireEvent.click(botaoSalvar()!); });
+    expect(screen.queryByText(/Bling/)).toBeNull();
   });
 });

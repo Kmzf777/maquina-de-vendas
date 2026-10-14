@@ -16,6 +16,14 @@ export interface Lead {
   razao_social: string | null;
   nome_fantasia: string | null;
   endereco: string | null;
+  /** Endereço estruturado (cartão b3788533); `endereco` vira o texto formatado dele. */
+  cep?: string | null;
+  logradouro?: string | null;
+  numero?: string | null;
+  complemento?: string | null;
+  bairro?: string | null;
+  municipio?: string | null;
+  uf?: string | null;
   telefone_comercial: string | null;
   email: string | null;
   instagram: string | null;

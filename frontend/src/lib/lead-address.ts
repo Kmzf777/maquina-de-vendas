@@ -47,3 +47,38 @@ export function mergeViaCep(atual: LeadAddress, via: LeadAddress): LeadAddress {
   for (const [k, v] of Object.entries(via) as [AddressField, string][]) if (!t(out[k]) && v) out[k] = v;
   return out;
 }
+
+/** `bling_endereco` devolvido pelo PATCH /api/leads/[id]. */
+export interface BlingEnderecoResultado {
+  status: string;
+  message?: string;
+  contas?: { account: string; contact_id?: number; status: string; message?: string }[];
+}
+
+/** Contas que falharam, como "conta: motivo; conta2: motivo2". */
+function falhas(r: BlingEnderecoResultado): string {
+  return (r.contas ?? [])
+    .filter((c) => c.status === "error")
+    .map((c) => (c.message ? `${c.account}: ${c.message}` : c.account))
+    .join("; ");
+}
+
+/** Linha mostrada na ficha depois de salvar o endereço; `null` = nada a mostrar. */
+export function mensagemBlingEndereco(
+  r: BlingEnderecoResultado | null | undefined,
+): { texto: string; erro: boolean } | null {
+  switch (r?.status) {
+    case "updated":
+      return { texto: "Endereço atualizado no Bling", erro: false };
+    case "partial":
+      return { texto: `Endereço atualizado em parte do Bling: ${falhas(r)}`, erro: true };
+    case "error":
+      return { texto: `Falha ao atualizar no Bling: ${r.message || falhas(r) || "erro desconhecido"}`, erro: true };
+    case "incomplete":
+      return { texto: "Endereço incompleto — não enviado ao Bling", erro: false };
+    case "not_linked":
+      return { texto: "Lead sem contato no Bling — endereço salvo só no CRM", erro: false };
+    default:
+      return null;
+  }
+}

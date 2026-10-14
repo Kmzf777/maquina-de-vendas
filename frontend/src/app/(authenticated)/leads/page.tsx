@@ -142,11 +142,13 @@ function LeadsPageInner() {
   }
 
   async function handleSaveLead(leadId: string, data: Partial<Lead>) {
-    await fetch(`/api/leads/${leadId}`, {
+    const r = await fetch(`/api/leads/${leadId}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(data),
     });
+    // O modal lê `bling_endereco` daqui para mostrar o resultado no Bling.
+    return r.json().catch(() => null);
   }
 
   async function handleDeleteLead(leadId: string) {

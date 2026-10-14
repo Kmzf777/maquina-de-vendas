@@ -4,6 +4,7 @@ import {
   fromViaCep,
   hasAddressChange,
   isAddressComplete,
+  mensagemBlingEndereco,
   mergeViaCep,
   type LeadAddress,
 } from "@/lib/lead-address";
@@ -114,5 +115,55 @@ describe("mergeViaCep", () => {
 
   it("não troca valor existente por vazio do ViaCEP", () => {
     expect(mergeViaCep({ bairro: "Meu bairro" }, { bairro: "" })).toEqual({ bairro: "Meu bairro" });
+  });
+});
+
+describe("mensagemBlingEndereco", () => {
+  it("updated", () => {
+    expect(mensagemBlingEndereco({ status: "updated", contas: [] })).toEqual({
+      texto: "Endereço atualizado no Bling",
+      erro: false,
+    });
+  });
+
+  it("partial lista as contas que falharam", () => {
+    expect(
+      mensagemBlingEndereco({
+        status: "partial",
+        contas: [
+          { account: "default", contact_id: 1, status: "error", message: "CEP inválido" },
+          { account: "secundaria", contact_id: 2, status: "updated" },
+        ],
+      }),
+    ).toEqual({ texto: "Endereço atualizado em parte do Bling: default: CEP inválido", erro: true });
+  });
+
+  it("error usa a message ou as mensagens das contas", () => {
+    expect(
+      mensagemBlingEndereco({ status: "error", message: "Bling indisponível — tente salvar de novo" })?.texto,
+    ).toBe("Falha ao atualizar no Bling: Bling indisponível — tente salvar de novo");
+    expect(
+      mensagemBlingEndereco({
+        status: "error",
+        contas: [{ account: "default", contact_id: 1, status: "error", message: "Timeout" }],
+      }),
+    ).toEqual({ texto: "Falha ao atualizar no Bling: default: Timeout", erro: true });
+  });
+
+  it("incomplete e not_linked", () => {
+    expect(mensagemBlingEndereco({ status: "incomplete" })).toEqual({
+      texto: "Endereço incompleto — não enviado ao Bling",
+      erro: false,
+    });
+    expect(mensagemBlingEndereco({ status: "not_linked" })).toEqual({
+      texto: "Lead sem contato no Bling — endereço salvo só no CRM",
+      erro: false,
+    });
+  });
+
+  it("sem resultado ou status desconhecido não mostra nada", () => {
+    expect(mensagemBlingEndereco(undefined)).toBeNull();
+    expect(mensagemBlingEndereco(null)).toBeNull();
+    expect(mensagemBlingEndereco({ status: "???" })).toBeNull();
   });
 });

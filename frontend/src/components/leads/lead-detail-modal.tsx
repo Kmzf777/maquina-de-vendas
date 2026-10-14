@@ -11,6 +11,8 @@ import type { Lead, Pipeline, Tag, LeadNote, LeadEvent } from "@/lib/types";
 import { getTemperature, TEMPERATURE_CONFIG } from "@/lib/temperature";
 import { AGENT_STAGES, LEAD_CHANNELS } from "@/lib/constants";
 import { LeadOriginBlock } from "@/components/leads/lead-origin-block";
+import { LeadAddressFields } from "@/components/leads/lead-address-fields";
+import { mensagemBlingEndereco, type BlingEnderecoResultado } from "@/lib/lead-address";
 
 interface LeadDetailModalProps {
   lead: Lead;
@@ -19,7 +21,11 @@ interface LeadDetailModalProps {
   pipelines: Pipeline[];
   leadTagIds: string[];
   onClose: () => void;
-  onSave: (leadId: string, data: Partial<Lead>) => Promise<void>;
+  /**
+   * Resolve com o JSON do PATCH (ou nada). Se trouxer `bling_endereco`, a ficha
+   * mostra o resultado da atualização do endereço no Bling.
+   */
+  onSave: (leadId: string, data: Partial<Lead>) => Promise<unknown>;
   onTagsChange: (leadId: string, tagIds: string[]) => Promise<void>;
   onDelete?: (leadId: string) => Promise<void>;
 }
@@ -49,6 +55,7 @@ export function LeadDetailModal({
   const [form, setForm] = useState({ ...lead });
   const [dirty, setDirty] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [statusBling, setStatusBling] = useState<{ texto: string; erro: boolean } | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [notes, setNotes] = useState<LeadNote[]>([]);
@@ -137,6 +144,7 @@ export function LeadDetailModal({
   function updateField(field: string, value: string | number) {
     setForm((prev) => ({ ...prev, [field]: value }));
     setDirty(true);
+    setStatusBling(null);
   }
 
   async function handleSave() {
@@ -147,7 +155,11 @@ export function LeadDetailModal({
         changes[key] = form[key];
       }
     }
-    await onSave(lead.id, changes as Partial<Lead>);
+    const res = (await onSave(lead.id, changes as Partial<Lead>)) as
+      | { bling_endereco?: BlingEnderecoResultado }
+      | null
+      | undefined;
+    setStatusBling(mensagemBlingEndereco(res?.bling_endereco));
     setSaving(false);
     setDirty(false);
   }
@@ -235,6 +247,14 @@ export function LeadDetailModal({
             </div>
           </div>
           <div className="flex items-center gap-2.5">
+            {statusBling && !dirty && (
+              <span
+                data-testid="lead-bling-endereco-status"
+                className={`text-[12px] max-w-[260px] ${statusBling.erro ? "text-[#c41c1c]" : "text-[#7b7b78]"}`}
+              >
+                {statusBling.texto}
+              </span>
+            )}
             {dirty && (
               <button
                 onClick={handleSave}
@@ -364,7 +384,6 @@ export function LeadDetailModal({
                       { label: "Nome Fantasia", field: "nome_fantasia" },
                       { label: "CNPJ", field: "cnpj" },
                       { label: "Telefone Comercial", field: "telefone_comercial" },
-                      { label: "Endereco", field: "endereco" },
                     ] as const).map(({ label, field }) => (
                       <div key={field}>
                         <label className="block text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] mb-1">{label}</label>
@@ -377,6 +396,17 @@ export function LeadDetailModal({
                     ))}
                   </div>
                 </div>
+              </div>
+
+              {/* Endereço estruturado — vai para o contato no Bling ao salvar */}
+              <div className="mt-5 pt-4 border-t border-[#dedbd6]">
+                <LeadAddressFields
+                  value={form}
+                  legado={form.endereco}
+                  onChange={(patch) => {
+                    for (const [campo, valor] of Object.entries(patch)) updateField(campo, valor ?? "");
+                  }}
+                />
               </div>
 
               {/* Bling */}
