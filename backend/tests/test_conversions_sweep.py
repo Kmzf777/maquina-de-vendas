@@ -34,15 +34,23 @@ def _by_key(rows):
 GENTRADAS = [{"occurred_at": CLICK.isoformat(), "metadata": {"gclid": "G1", "campanha_nome": "Search"}}]
 
 
-def test_lead_com_clique_google_gera_evento_lead_com_valor():
+def test_clique_google_sozinho_nao_gera_evento():
+    # Spec 13/10: o clique (lead) já é contado no Google pelas conversões do site e por "Leads de
+    # mensagens"; mandar de novo contaria a mesma pessoa duas vezes. Só qualificado/oportunidade/venda.
     rows = build_candidates(lead=_lead(ctwa_clid=None), entradas=GENTRADAS, sales=[], opportunity_at=None,
                             values=VALUES, now=NOW)
-    assert _keys(rows) == ["google:lead:G1"]
+    assert rows == []
+
+
+def test_clique_google_com_repasse_gera_so_qualified():
+    lead = _lead(ctwa_clid=None,
+                 metadata={"handoff": {"at": (CLICK + timedelta(hours=3)).isoformat(), "motivo": "lead qualificado"}})
+    rows = build_candidates(lead=lead, entradas=GENTRADAS, sales=[], opportunity_at=None, values=VALUES, now=NOW)
+    assert _keys(rows) == ["google:qualified:G1"]
     r = rows[0]
-    assert r["platform"] == "google" and r["stage"] == "lead" and r["value"] == 5.0
     assert r["segment"] == "atacado" and r["campaign_name"] == "Search"
-    assert r["event_at"] == CLICK.isoformat() and r["click_id_type"] == "gclid"
-    assert r["click_at"] == CLICK.isoformat() and r["lead_id"] == "L1" and r["sale_id"] is None
+    assert r["click_id_type"] == "gclid" and r["click_at"] == CLICK.isoformat()
+    assert r["lead_id"] == "L1" and r["sale_id"] is None
     assert r["status"] == "pendente" and r["currency"] == "BRL"
 
 
@@ -115,13 +123,17 @@ def test_venda_sem_created_at_usa_o_sold_at():
     assert rows[0]["event_at"] == (CLICK + timedelta(days=1)).isoformat()
 
 
+_HANDOFF = {"handoff": {"at": (CLICK + timedelta(hours=6)).isoformat(), "motivo": "lead qualificado"}}
+
+
 def test_campanha_cai_no_utm_campaign_da_entrada():
     for meta in ({"gclid": "G1", "utm_campaign": "search-atacado"},
                  {"gclid": "G1", "campanha_nome": "", "utm_campaign": "search-atacado"}):
-        rows = build_candidates(lead=_lead(ctwa_clid=None), entradas=[{"occurred_at": CLICK.isoformat(), "metadata": meta}],
+        rows = build_candidates(lead=_lead(ctwa_clid=None, metadata=_HANDOFF),
+                                entradas=[{"occurred_at": CLICK.isoformat(), "metadata": meta}],
                                 sales=[], opportunity_at=None, values=VALUES, now=NOW)
         assert rows[0]["campaign_name"] == "search-atacado"
-    rows = build_candidates(lead=_lead(ctwa_clid=None), entradas=[{"occurred_at": CLICK.isoformat(), "metadata": {
+    rows = build_candidates(lead=_lead(ctwa_clid=None, metadata=_HANDOFF), entradas=[{"occurred_at": CLICK.isoformat(), "metadata": {
         "gclid": "G1", "campanha_nome": "Search | Atacado", "utm_campaign": "search-atacado"}}],
         sales=[], opportunity_at=None, values=VALUES, now=NOW)
     assert rows[0]["campaign_name"] == "Search | Atacado"
@@ -151,7 +163,8 @@ def test_ja_era_cliente_so_venda():
 
 
 def test_segmento_geral_sem_valor_configurado_vai_none():
-    rows = build_candidates(lead=_lead(stage="pending", ctwa_clid=None), entradas=GENTRADAS, sales=[], opportunity_at=None, values=VALUES, now=NOW)
+    rows = build_candidates(lead=_lead(stage="pending", ctwa_clid=None, metadata=_HANDOFF), entradas=GENTRADAS,
+                            sales=[], opportunity_at=None, values=VALUES, now=NOW)
     assert rows[0]["segment"] == "geral" and rows[0]["value"] is None
 
 
@@ -179,7 +192,7 @@ def test_lead_sem_entrada_usa_fallback():
     assert rows == []
 
 
-def test_evento_lead_so_para_clique_google_meta_nao_recebe():
+def test_cliques_sem_etapa_nao_geram_evento_em_nenhuma_plataforma():
     c2 = CLICK + timedelta(days=1)
     entradas = ENTRADAS + [
         {"occurred_at": CLICK.isoformat(), "metadata": {"gclid": "G1", "campanha_nome": "Search"}},
@@ -187,26 +200,23 @@ def test_evento_lead_so_para_clique_google_meta_nao_recebe():
     ]
     rows = build_candidates(lead=_lead(ctwa_clid="C2"), entradas=entradas, sales=[], opportunity_at=None,
                             values=VALUES, now=NOW)
-    assert _keys(rows) == ["google:lead:G1"]
-    r = _by_key(rows)
-    assert r["google:lead:G1"]["click_id_type"] == "gclid" and r["google:lead:G1"]["campaign_name"] == "Search"
+    assert rows == []
 
 
-def test_dois_cliques_da_mesma_plataforma_no_mesmo_instante_geram_dois_leads():
+def test_dois_cliques_da_mesma_plataforma_no_mesmo_instante_geram_um_qualified():
     entradas = [{"occurred_at": CLICK.isoformat(), "metadata": {"gclid": "G1", "gbraid": "B1"}}]
-    rows = build_candidates(lead=_lead(ctwa_clid=None), entradas=entradas, sales=[], opportunity_at=None,
-                            values=VALUES, now=NOW)
-    assert _keys(rows) == ["google:lead:B1", "google:lead:G1"]
+    rows = build_candidates(lead=_lead(ctwa_clid=None, metadata=_HANDOFF), entradas=entradas, sales=[],
+                            opportunity_at=None, values=VALUES, now=NOW)
+    assert len(rows) == 1 and rows[0]["platform"] == "google" and rows[0]["stage"] == "qualified"
 
 
-def test_mesmo_clique_repetido_vira_uma_linha_com_a_hora_mais_antiga():
+def test_mesmo_clique_repetido_vira_uma_linha():
     depois = CLICK + timedelta(hours=5)
     entradas = [{"occurred_at": depois.isoformat(), "metadata": {"gclid": "G1"}},
                 {"occurred_at": CLICK.isoformat(), "metadata": {"gclid": "G1"}}]
-    rows = build_candidates(lead=_lead(ctwa_clid=None), entradas=entradas, sales=[], opportunity_at=None,
-                            values=VALUES, now=NOW)
-    assert _keys(rows) == ["google:lead:G1"]
-    assert rows[0]["event_at"] == CLICK.isoformat()
+    rows = build_candidates(lead=_lead(ctwa_clid=None, metadata=_HANDOFF), entradas=entradas, sales=[],
+                            opportunity_at=None, values=VALUES, now=NOW)
+    assert _keys(rows) == ["google:qualified:G1"]
 
 
 def test_etapas_usam_o_clique_mais_recente_antes_do_evento():

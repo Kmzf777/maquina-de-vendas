@@ -117,10 +117,10 @@ def _row(*, lead: dict, platform: str, stage: str, click: Click, event_at: datet
 def build_candidates(*, lead: dict[str, Any], entradas: list[dict[str, Any]], sales: list[dict[str, Any]],
                      opportunity_at: datetime | None, values: dict[tuple[str, str], float],
                      now: datetime) -> list[dict[str, Any]]:
-    """Linhas candidatas de UM lead (puro). Regras da §5 da spec:
+    """Linhas candidatas de UM lead (puro). Regras da §5 da spec de 08/10, com a mudança de 13/10:
 
-    - `lead` é o próprio clique: um evento por clique, só na plataforma dele — e só no Google (a Meta
-      não recebe `lead`: o sinal de lead dela é o repasse, `qualified`);
+    - o clique (`lead`) NÃO vira evento: no Google já é contado pelas conversões do site e por
+      "Leads de mensagens", e a Meta conta a conversa sozinha;
     - qualificado/oportunidade/venda vão para o clique atribuído (o mais recente da plataforma
       antes do evento, dentro da janela clique→evento);
     - já era cliente → só venda; venda cancelada não entra;
@@ -134,18 +134,16 @@ def build_candidates(*, lead: dict[str, Any], entradas: list[dict[str, Any]], sa
     segment = segment_for(lead.get("stage"))
     ja_cliente = lead.get("ja_era_cliente")
 
-    # (stage, event_at, value, sale_id, clique próprio — só no `lead`)
-    eventos: list[tuple[str, datetime, float | None, str | None, Click | None]] = []
-    for c in clicks:
-        eventos.append(("lead", c.click_at, values.get((segment, "lead")), None, c))
+    # (stage, event_at, value, sale_id)
+    eventos: list[tuple[str, datetime, float | None, str | None]] = []
     handoff = (lead.get("metadata") or {}).get("handoff")
     if qualified_handoff_ok(handoff):
         at = _ts(handoff["at"])
         if at:
-            eventos.append(("qualified", at, values.get((segment, "qualified")), None, None))
+            eventos.append(("qualified", at, values.get((segment, "qualified")), None))
     opp = _ts(opportunity_at)
     if opp:
-        eventos.append(("opportunity", opp, values.get((segment, "opportunity")), None, None))
+        eventos.append(("opportunity", opp, values.get((segment, "opportunity")), None))
     for s in sales:
         if (s.get("status") or "").strip().lower() == "cancelada":
             continue
@@ -157,19 +155,14 @@ def build_candidates(*, lead: dict[str, Any], entradas: list[dict[str, Any]], sa
                 logger.warning("[CONVERSOES] venda %s do lead %s sem valor: não enfileirada",
                                s["id"], lead.get("id"))
                 continue
-            eventos.append(("purchase", at, float(s["value"]), s["id"], None))
+            eventos.append(("purchase", at, float(s["value"]), s["id"]))
 
     out: dict[str, dict[str, Any]] = {}
-    for stage, event_at, value, sale_id, own_click in eventos:
+    for stage, event_at, value, sale_id in eventos:
         if not stage_allowed(stage, ja_cliente) or event_at > now:
             continue  # futuro (orçamento datado para amanhã): entra numa rodada seguinte
         for platform in PLATFORMS:
-            if stage == "lead" and platform == "meta":
-                continue  # a Meta já conta a conversa; LeadSubmitted só no repasse (ver meta.py)
-            if own_click is not None:
-                click = own_click if own_click.platform == platform else None
-            else:
-                click = attributed_click(clicks, platform, event_at)
+            click = attributed_click(clicks, platform, event_at)
             if click is None or not _sendable(platform, click, event_at, now):
                 continue
             r = _row(lead=lead, platform=platform, stage=stage, click=click, event_at=event_at,
