@@ -1,7 +1,26 @@
 import asyncio
 from datetime import date, timedelta
 
+import pytest
+
 import app.bling.backfill as bf
+
+
+@pytest.fixture(autouse=True)
+def _sem_redis(monkeypatch):
+    """A trava por conta (Fase 0) usa Redis; aqui o foco e a logica das janelas."""
+    from contextlib import asynccontextmanager
+
+    @asynccontextmanager
+    async def livre(account, ttl_segundos=3600):
+        class T:
+            async def estender(self):
+                return None
+        yield T()
+
+    monkeypatch.setattr(bf, "trava_pedidos", livre)
+    monkeypatch.setattr(bf, "alertar", lambda *a, **k: True)
+    monkeypatch.setenv("BLING_ACCOUNTS", "default,secundaria")
 
 
 def test_janelas_de_30_dias_cobrem_o_periodo_sem_buraco():
@@ -77,9 +96,8 @@ def test_run_projeta_cada_pedido_e_salva_progresso(monkeypatch):
 
 def test_run_encaminha_a_conta_explicita_para_client_e_upsert(monkeypatch):
     """`account` so e util se realmente chega em quem fala com o Bling e em
-    quem grava a venda — sem isso o parametro seria decorativo. NAO e chamado
-    hoje para a conta 2 (decisao 4), mas a funcao precisa se comportar direito
-    se algum dia for."""
+    quem grava a venda — sem isso o parametro seria decorativo (Fase 0 da
+    avaliacao 2026-10-13: o backfill passa a rodar para a conta 2 tambem)."""
     contas_client = []
     contas_upsert = []
     contas_lead = []

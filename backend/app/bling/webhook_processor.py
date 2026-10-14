@@ -18,7 +18,7 @@ com o cliente da conta errada.
 """
 import asyncio
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from app.bling import config
 from app.bling.orders import (
@@ -187,6 +187,37 @@ async def process_pending() -> int:
             concluidos += 1
 
     return concluidos
+
+
+def reabrir_falhas(account: str, *, parados_ha: timedelta | None = None,
+                   recebidos_desde: timedelta | None = None,
+                   agora: datetime | None = None) -> int:
+    """Devolve para a fila (`pending`, tentativas zeradas) os eventos `failed`
+    DA CONTA. Devolve quantos reabriu.
+
+    Antes nenhum processo olhava os `failed` de novo (G2): 31 eventos ficaram
+    parados para sempre, 4 pedidos nunca entraram. Idempotente — so toca em
+    `failed`, entao rodar duas vezes seguidas reabre zero na segunda. O
+    `last_error` fica (historico do porque falhou).
+
+    `parados_ha`: so os que desistiram ha pelo menos esse tempo (`processed_at`
+    guarda o momento da desistencia). `recebidos_desde`: so os recebidos nessa
+    janela — evento muito antigo e assunto da reconciliacao, nao do webhook.
+    """
+    conta = config.account(account).key
+    agora = agora or datetime.now(timezone.utc)
+    consulta = (get_supabase().table("bling_webhook_events")
+                .update({"status": "pending", "attempts": 0})
+                .eq("account", conta).eq("status", "failed"))
+    if parados_ha is not None:
+        consulta = consulta.lt("processed_at", (agora - parados_ha).isoformat())
+    if recebidos_desde is not None:
+        consulta = consulta.gte("received_at", (agora - recebidos_desde).isoformat())
+    res = consulta.execute()
+    n = len(getattr(res, "data", None) or [])
+    if n:
+        logger.info("[BLING WEBHOOK] conta %s: %d evento(s) failed reabertos", conta, n)
+    return n
 
 
 async def bling_webhook_tick() -> None:

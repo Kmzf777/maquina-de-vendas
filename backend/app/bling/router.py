@@ -27,6 +27,7 @@ Contrato de PUT /api/bling/orders/{order_id}:
 import asyncio
 import logging
 import re
+from datetime import date
 
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import JSONResponse, RedirectResponse
@@ -663,7 +664,31 @@ async def sync_endpoint(full: bool = False):
 
 
 @router.post("/backfill")
-async def backfill_endpoint(months: int = 12):
-    """Importacao historica sob demanda (nao roda automatico)."""
+async def backfill_endpoint(months: int = 12, account: str = config.DEFAULT_ACCOUNT,
+                            data_inicial: date | None = None,
+                            data_final: date | None = None,
+                            reiniciar: bool = False, estimar: bool = False):
+    """Importacao historica sob demanda (nao roda automatico), POR CONTA.
+
+    Sem parametros novos o comportamento e o de antes (12 meses da `default`),
+    que e o que a tela de configuracao chama. Para janelas longas prefira o
+    comando `python -m app.bling.ops` dentro do container: este request fica
+    aberto enquanto o backfill roda e pode estourar o timeout do proxy (o job
+    continua retomavel pelo cursor da conta, mas a resposta se perde).
+    """
     from app.bling.backfill import run
-    return await run(months=months)
+    conta = _conta_valida(account)
+    try:
+        return await run(months=months, account=conta.key, data_inicial=data_inicial,
+                         data_final=data_final, reiniciar=reiniciar, estimar=estimar)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@router.post("/webhook-events/reprocessar")
+async def reprocessar_webhooks_endpoint(account: str = config.DEFAULT_ACCOUNT):
+    """Devolve para a fila os eventos `failed` da conta (idempotente)."""
+    from app.bling.webhook_processor import reabrir_falhas
+    conta = _conta_valida(account)
+    reabertos = await asyncio.to_thread(reabrir_falhas, conta.key)
+    return {"conta": conta.key, "reabertos": reabertos}
