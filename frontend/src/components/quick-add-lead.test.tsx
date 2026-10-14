@@ -25,23 +25,27 @@ function abrirEPreencher(telefone: string, nome = "") {
   fireEvent.click(screen.getByText("Criar"));
 }
 
+const fetchMock = vi.fn();
+
 beforeEach(() => {
-  global.fetch = vi.fn();
+  fetchMock.mockReset();
+  vi.stubGlobal("fetch", fetchMock);
 });
 afterEach(() => {
   cleanup();
+  vi.unstubAllGlobals();
   vi.restoreAllMocks();
 });
 
 describe("QuickAddLead", () => {
   it("cria pelo POST /api/leads com etapa e controle humano", async () => {
-    vi.mocked(global.fetch).mockResolvedValue(resposta({ id: "novo" }, 201));
+    fetchMock.mockResolvedValue(resposta({ id: "novo" }, 201));
     render(<QuickAddLead stage="secretaria" humanControl />);
 
     abrirEPreencher("(49) 9917-0363", "Douglas");
 
-    await waitFor(() => expect(global.fetch).toHaveBeenCalledTimes(1));
-    const [url, init] = vi.mocked(global.fetch).mock.calls[0];
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    const [url, init] = fetchMock.mock.calls[0];
     expect(url).toBe("/api/leads");
     expect(init?.method).toBe("POST");
     expect(JSON.parse(String(init?.body))).toEqual({
@@ -58,7 +62,7 @@ describe("QuickAddLead", () => {
   });
 
   it("número já cadastrado mostra o erro da API e mantém o formulário aberto", async () => {
-    vi.mocked(global.fetch).mockResolvedValue(
+    fetchMock.mockResolvedValue(
       resposta({ error: "Lead com este telefone já existe: Douglas Schutz", lead: { id: "l1" } }, 409),
     );
     render(<QuickAddLead stage="secretaria" />);
@@ -71,7 +75,7 @@ describe("QuickAddLead", () => {
   });
 
   it("cancelar limpa o erro", async () => {
-    vi.mocked(global.fetch).mockResolvedValue(resposta({ error: "Telefone inválido: 3 dígito(s)" }, 422));
+    fetchMock.mockResolvedValue(resposta({ error: "Telefone inválido: 3 dígito(s)" }, 422));
     render(<QuickAddLead stage="secretaria" />);
 
     abrirEPreencher("123");
@@ -80,5 +84,17 @@ describe("QuickAddLead", () => {
     fireEvent.click(screen.getByText("Cancelar"));
     fireEvent.click(screen.getByText("+ Adicionar lead"));
     expect(screen.queryByRole("alert")).toBeNull();
+  });
+
+  it("erro de rede mostra a mensagem genérica e destrava o botão", async () => {
+    fetchMock.mockRejectedValue(new TypeError("Failed to fetch"));
+    render(<QuickAddLead stage="secretaria" />);
+
+    abrirEPreencher("4999170363");
+
+    const alerta = await screen.findByRole("alert");
+    expect(alerta.textContent).toBe("Erro ao criar lead");
+    const botao = screen.getByText("Criar") as HTMLButtonElement;
+    expect(botao.disabled).toBe(false);
   });
 });

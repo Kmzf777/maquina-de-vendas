@@ -21,32 +21,37 @@ export function QuickAddLead({ stage, humanControl = false }: QuickAddLeadProps)
     if (!phone.trim()) return;
     setSaving(true);
 
-    // Pela API (não direto no Supabase): ela normaliza o telefone e acha o lead
-    // já cadastrado em qualquer formato antigo do número (cartão b747da43).
-    const res = await fetch("/api/leads", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        name: name.trim() || null,
-        phone: phone.trim(),
-        company: company.trim() || null,
-        stage,
-        human_control: humanControl,
-        channel: "manual",
-      }),
-    });
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
-      setErro(err.error || "Erro ao criar lead");
-      setSaving(false);
-      return;
-    }
+    try {
+      // Pela API (não direto no Supabase): ela normaliza o telefone e acha o lead
+      // já cadastrado em qualquer formato antigo do número (cartão b747da43).
+      const res = await fetch("/api/leads", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: name.trim() || null,
+          phone: phone.trim(),
+          company: company.trim() || null,
+          stage,
+          human_control: humanControl,
+          channel: "manual",
+        }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        setErro(err.error || "Erro ao criar lead");
+        return;
+      }
 
-    setName("");
-    setPhone("");
-    setCompany("");
-    setOpen(false);
-    setSaving(false);
+      setName("");
+      setPhone("");
+      setCompany("");
+      setOpen(false);
+    } catch {
+      // Rede caiu: sem isto o botão ficava travado em "..." para sempre.
+      setErro("Erro ao criar lead");
+    } finally {
+      setSaving(false);
+    }
   }
 
   if (!open) {
