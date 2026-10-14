@@ -19,7 +19,19 @@ ninguem soube. Agora:
   - um pedido que falha nao derruba a janela — os outros entram —, mas o
     cursor NAO avanca e o job para ali, com alerta (`system_alerts`) e log em
     ERROR listando os pedidos. Rodar de novo refaz so aquela janela;
+  - EXCETO falha PERMANENTE do pedido (`pedido_import.PERMANENTES`: sem lead,
+    4xx/404 do Bling): repetir nao conserta, entao o pedido vai para
+    `ignorados`, fica registrado no alerta `bling_pedido_ignorado` (com os ids)
+    e o backfill SEGUE para as proximas janelas (revisao 2026-10-13);
   - erro sistemico (token, teto diario, Bling fora) para na hora, com alerta.
+
+CURSOR (revisao 2026-10-13):
+  - intervalo pedido todo ANTES (ou ate) o cursor salvo devolve
+    `status="nada_a_fazer"` com `aviso` (e WARNING no log), em vez de um
+    "concluido" com zero janelas que parecia ter refeito o trecho;
+  - cursor no meio do intervalo retoma no dia seguinte ao cursor;
+  - `reiniciar=True` refaz o intervalo mas NUNCA recua o cursor (so avanca se
+    passar dele). Recuar so com `recuar_cursor=True` explicito (`--recuar-cursor`).
 Idempotente: `sales` faz upsert por (bling_account, bling_order_id), entao
 refazer uma janela nao duplica nada.
 """
@@ -27,10 +39,11 @@ import asyncio
 import logging
 from datetime import date, datetime, timedelta, timezone
 
-from app.bling import config
+from app.bling import config, pedido_import
 from app.bling.alertas import alertar
 from app.bling.errors import (
     BlingAuthError, BlingNotConfigured, BlingRateLimitError, BlingServerError,
+    BlingValidationError,
 )
 from app.bling.trava import TravaOcupada, trava_pedidos
 from app.db.supabase import get_supabase
@@ -120,38 +133,59 @@ def _interromper(conta: str, resultado: dict, motivo: str) -> dict:
 async def run(months: int = 12, hoje: date | None = None,
               account: str = config.DEFAULT_ACCOUNT, *,
               data_inicial: date | None = None, data_final: date | None = None,
-              reiniciar: bool = False, estimar: bool = False) -> dict:
+              reiniciar: bool = False, estimar: bool = False,
+              recuar_cursor: bool = False) -> dict:
     """Importa os pedidos de [data_inicial, data_final] (ou dos ultimos `months`
     meses) da conta `account`. Retomavel pelo cursor DA CONTA.
 
-    `reiniciar=True` ignora o cursor (para reimportar um trecho ja concluido).
+    `reiniciar=True` ignora o cursor ao escolher as janelas (para reimportar um
+    trecho ja concluido), mas so grava cursor que AVANCE o salvo: refazer julho
+    nao pode fazer o proximo backfill normal recomecar de julho.
+    `recuar_cursor=True` (junto com `reiniciar`) permite gravar o cursor para tras.
     `estimar=True` so LISTA: devolve quantos pedidos ha e quantas chamadas o
     backfill de verdade custaria — nada e gravado, nem o cursor.
     """
     conta = config.account(account).key  # valida antes de qualquer chamada
     inicio, fim = _intervalo(months, hoje, data_inicial, data_final)
 
-    concluido_ate = None if reiniciar else await asyncio.to_thread(_load_progress, conta)
-    janelas = build_windows(inicio, fim)
+    cursor_salvo = await asyncio.to_thread(_load_progress, conta)
+    concluido_ate = None if reiniciar else cursor_salvo
+    inicio_efetivo = inicio
     if concluido_ate:
-        janelas = [j for j in janelas if j[0] > concluido_ate]
+        try:
+            inicio_efetivo = max(inicio, date.fromisoformat(concluido_ate) + timedelta(days=1))
+        except ValueError:
+            logger.warning("[BLING BACKFILL] conta %s: cursor ilegivel %r, ignorado",
+                           conta, concluido_ate)
+    janelas = build_windows(inicio_efetivo, fim) if inicio_efetivo <= fim else []
+    if concluido_ate and janelas:
         logger.info("[BLING BACKFILL] conta %s retomando apos %s (%d janelas restantes)",
                     conta, concluido_ate, len(janelas))
 
     resultado: dict = {
         "conta": conta, "inicio": inicio.isoformat(), "fim": fim.isoformat(),
         "janelas": len(janelas), "janelas_concluidas": 0, "pedidos": 0,
-        "concluido_ate": concluido_ate, "falhas": [], "status": "concluido",
+        "concluido_ate": concluido_ate, "falhas": [], "ignorados": [],
+        "status": "concluido",
     }
     if not janelas:
+        resultado["status"] = "nada_a_fazer"
+        resultado["aviso"] = (
+            f"o intervalo {inicio}..{fim} ja esta todo antes do cursor salvo da conta "
+            f"({concluido_ate}); nada foi importado. Para refazer esse trecho use "
+            "--reiniciar (o cursor nao recua).")
+        logger.warning("[BLING BACKFILL] conta %s: %s", conta, resultado["aviso"])
         return resultado
+
+    # So grava cursor que avanca o salvo, a menos que o recuo seja pedido.
+    piso = None if (reiniciar and recuar_cursor) else cursor_salvo
 
     try:
         async with trava_pedidos(conta, _TRAVA_TTL) as trava:
             async with _new_client(conta) as client:
                 if estimar:
                     return await _estimar(client, janelas, resultado)
-                return await _executar(client, conta, janelas, resultado, trava)
+                return await _executar(client, conta, janelas, resultado, trava, piso)
     except TravaOcupada as exc:
         logger.warning("[BLING BACKFILL] conta %s: %s", conta, exc)
         resultado["status"] = "ocupado"
@@ -175,7 +209,18 @@ async def _estimar(client, janelas, resultado: dict) -> dict:
     return resultado
 
 
-async def _executar(client, conta: str, janelas, resultado: dict, trava) -> dict:
+async def _executar(client, conta: str, janelas, resultado: dict, trava,
+                    piso: str | None = None) -> dict:
+    try:
+        return await _executar_janelas(client, conta, janelas, resultado, trava, piso)
+    finally:
+        # Registro duravel dos pulados, tambem quando o job para no meio.
+        if resultado["ignorados"]:
+            pedido_import.registrar_ignorados(alertar, conta, "backfill", resultado["ignorados"])
+
+
+async def _executar_janelas(client, conta: str, janelas, resultado: dict, trava,
+                            piso: str | None) -> dict:
     for win_inicio, win_fim in janelas:
         try:
             params = {"dataInicial": win_inicio, "dataFinal": win_fim}
@@ -194,6 +239,13 @@ async def _executar(client, conta: str, janelas, resultado: dict, trava) -> dict
                 return _interromper(conta, resultado,
                                     f"erro sistemico no pedido {order_id} "
                                     f"(janela {win_inicio}..{win_fim}): {exc}")
+            except pedido_import.PERMANENTES as exc:
+                # Repetir nao conserta (sem lead, 4xx, apagado no Bling): registra e segue.
+                apagado = isinstance(exc, BlingValidationError) and exc.status == 404
+                logger.log(logging.INFO if apagado else logging.WARNING,
+                           "[BLING BACKFILL] conta %s pedido %s ignorado (permanente): %s",
+                           conta, order_id, exc)
+                resultado["ignorados"].append({"pedido": order_id, "erro": str(exc)})
             except Exception as exc:  # noqa: BLE001 — falha DO PEDIDO: segue a janela
                 logger.error("[BLING BACKFILL] conta %s pedido %s falhou: %s",
                              conta, order_id, exc)
@@ -205,7 +257,8 @@ async def _executar(client, conta: str, janelas, resultado: dict, trava) -> dict
                                 f"{len(falhas)} pedido(s) falharam na janela "
                                 f"{win_inicio}..{win_fim}")
 
-        await asyncio.to_thread(_save_progress, conta, win_fim)
+        if piso is None or win_fim > piso:
+            await asyncio.to_thread(_save_progress, conta, win_fim)
         await trava.estender()
         resultado["janelas_concluidas"] += 1
         resultado["concluido_ate"] = win_fim

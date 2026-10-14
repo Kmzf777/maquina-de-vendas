@@ -42,6 +42,30 @@ class TravaOcupada(Exception):
     """Outro job de pedidos ja esta rodando nesta conta (ou o Redis caiu)."""
 
 
+class RedisIndisponivel(TravaOcupada):
+    """O Redis nao respondeu ao pegar a trava. Subclasse de TravaOcupada para quem
+    so quer "nao rodou" continuar igual; quem distingue (varredura e
+    reconciliacao) loga em WARNING e alerta depois de `PULOS_PARA_ALERTAR`."""
+
+
+# Pulos SEGUIDOS por Redis fora, por (job, conta), em memoria do worker. Nao da
+# para guardar no Redis (e ele que caiu) e um contador perdido no restart so
+# atrasa o alerta em algumas rodadas.
+PULOS_PARA_ALERTAR = 3
+pulos_sem_redis: dict[tuple[str, str], int] = {}
+
+
+def registrar_pulo_sem_redis(job: str, account: str) -> int:
+    """Conta mais um pulo seguido por Redis fora. Devolve o total."""
+    chave_pulo = (job, account)
+    pulos_sem_redis[chave_pulo] = pulos_sem_redis.get(chave_pulo, 0) + 1
+    return pulos_sem_redis[chave_pulo]
+
+
+def zerar_pulos_sem_redis(job: str, account: str) -> None:
+    pulos_sem_redis.pop((job, account), None)
+
+
 def _get_redis() -> aioredis.Redis:
     global _redis
     if _redis is None:
@@ -64,7 +88,8 @@ class Trava:
         try:
             ok = await _get_redis().set(self.chave, self.token, nx=True, px=self.ttl_ms)
         except Exception as exc:  # noqa: BLE001 — fail-closed
-            raise TravaOcupada(f"Redis indisponivel para a trava {self.chave}: {exc}") from exc
+            raise RedisIndisponivel(
+                f"Redis indisponivel para a trava {self.chave}: {exc}") from exc
         if not ok:
             raise TravaOcupada(f"{self.chave} ja esta em uso por outro job")
 

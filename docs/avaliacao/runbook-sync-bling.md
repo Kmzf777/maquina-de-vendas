@@ -13,14 +13,64 @@ Regras que valem para tudo aqui:
 
 ---
 
-## 0. Antes do deploy: aplicar as migrations
+## 0. Antes do deploy: gates, migrations e configuração
 
-As migrations **não** rodam no deploy. Aplique à mão, nesta ordem, **antes** do push. O código novo grava colunas que só existem depois delas. Sem a primeira, todo `upsert` de venda do Bling falha e o webhook para.
+As migrations **não** rodam no deploy. Tudo desta seção acontece **antes** do push, nesta ordem. As consultas marcadas "só leitura" podem rodar pelo `consulta_ro`; as migrations precisam do OK do dono.
+
+### 0.1 Gate: situações de cada conta (obrigatório, só leitura)
+
+O status da venda passa a depender do **nome** da situação no Bling. Regra:
+- nome com "cancelad" → `cancelada`;
+- nome com "devolv"/"devoluc" **sem** "parcial" (devolução total) → `cancelada`;
+- nome com "devolv"/"devoluc" **e** "parcial" (ex.: "Devolvido parcialmente") → continua venda (`registrada`), com `sales.devolucao_parcial = true` e o alerta `bling_devolucao_parcial` para revisão (decisão do dono);
+- situação padrão 12 ("Cancelado") cancela mesmo sem o espelho;
+- nome desconhecido (fora do espelho) não muda nada: venda cancelada continua cancelada.
+
+```sql
+-- só leitura: liste e confira, conta por conta, o que cada situação vai virar
+select account, id, nome,
+       case
+         when unaccent(lower(nome)) like '%cancelad%' then 'cancelada'
+         when unaccent(lower(nome)) ~ '(devolv|devoluc)' and unaccent(lower(nome)) like '%parcial%'
+           then 'venda + devolucao_parcial'
+         when unaccent(lower(nome)) ~ '(devolv|devoluc)' then 'cancelada'
+         else 'registrada'
+       end efeito
+  from bling_situacoes order by 1, 2;
+-- (sem a extensão unaccent, troque unaccent(lower(nome)) por lower(nome) e confira os acentos à mão)
+```
+
+**Não fazer o push** enquanto o dono não confirmar a lista das duas contas, inclusive as devoluções parciais. Situação de cancelamento ou devolução com outro nome → ajustar `_TRECHOS_CANCELAMENTO`/`_TRECHO_PARCIAL` em `backend/app/bling/orders.py` antes.
+
+### 0.2 Gate: formato da data do webhook (só leitura)
+
+A ordem dos eventos agora compara **instantes** (aceita `Z`, offset e fração de segundo; data sem fuso é tratada como UTC). Confira o formato real que o Bling manda em cada conta:
+
+```sql
+select account, payload->>'date' exemplo, count(*)
+  from bling_webhook_events
+ where received_at > now() - interval '7 days'
+ group by 1, 2 order by 1, 3 desc limit 20;
+```
+
+Esperado: ISO 8601 com `Z` ou offset (ex.: `2026-10-13T19:49:00Z`). Se vier **sem fuso** (`2026-10-13 16:49:00`), ele é hora de Brasília e a comparação o trata como UTC: avise antes do deploy para ajustar `_instante` em `webhook_processor.py`.
+
+### 0.3 Migrations, nesta ordem
 
 | Ordem | Arquivo | O que faz |
 |---|---|---|
-| 1 | `supabase/migrations/20261014_bling_sync_webhook_vendedor.sql` | `sales.vendedor_fonte` e `sales.discount`, mais `bling_webhook_events.next_attempt_at` e o índice da fila (Fase 1). Só aditiva. |
-| 2 | `supabase/migrations/20261014b_bling_reconciliacao.sql` | Tabela `bling_reconciliacao` (Fase 3). Só aditiva. |
+| 1 | `supabase/migrations/20261013_sales_freight.sql` | `sales.freight` e `sales.freight_mode`. Já está em `origin/master`, mas **confirme se foi aplicada em produção** (consulta abaixo): `upsert_from_bling` grava `freight`. Só aditiva. |
+| 2 | `supabase/migrations/20261014_bling_sync_webhook_vendedor.sql` | `sales.vendedor_fonte` (check `NOT VALID` + `VALIDATE` separado), `sales.discount`, `sales.devolucao_parcial`, `bling_webhook_events.next_attempt_at` e o índice dos `failed` (Fase 1). Só aditiva. |
+| 3 | `supabase/migrations/20261014b_bling_reconciliacao.sql` | Tabela `bling_reconciliacao`, RLS, `GRANT` e policy de leitura para `consulta_ro` se o role existir (Fase 3). Só aditiva. |
+
+Antes de aplicar (só leitura), veja se a 1 já está em produção:
+
+```sql
+select column_name from information_schema.columns
+ where table_name = 'sales' and column_name in ('freight', 'freight_mode');   -- 2 linhas = já aplicada
+```
+
+Sem a 1 ou a 2, todo `upsert` de venda do Bling falha (`PGRST204`/`42703`) e o webhook para.
 
 ```bash
 # na pasta backend/, com SUPABASE_PROJECT_REF e SUPABASE_ACCESS_TOKEN do ambiente-alvo
@@ -33,11 +83,30 @@ Conferência depois de aplicar:
 
 ```sql
 select column_name from information_schema.columns
- where table_name = 'sales' and column_name in ('vendedor_fonte','discount');          -- 2 linhas
+ where table_name = 'sales'
+   and column_name in ('freight','freight_mode','vendedor_fonte','discount','devolucao_parcial'); -- 5 linhas
 select column_name from information_schema.columns
  where table_name = 'bling_webhook_events' and column_name = 'next_attempt_at';        -- 1 linha
+select conname, convalidated from pg_constraint
+ where conname = 'sales_vendedor_fonte_check';                                          -- convalidated = true
 select to_regclass('public.bling_reconciliacao');                                       -- não nulo
+select policyname, roles from pg_policies where tablename = 'bling_reconciliacao';      -- _select e _consulta_ro
 ```
+
+### 0.4 Deploy com a varredura DESLIGADA
+
+O filtro `dataAlteracaoInicial` de `GET /pedidos/vendas` ainda não foi confirmado (seção 6). Faça o deploy com `BLING_VARREDURA_ATIVA=false` no worker. A reconciliação diária roda no mesmo tick, então também fica desligada até lá. Só ligue (`BLING_VARREDURA_ATIVA=true` + restart do worker) depois de confirmar o filtro.
+
+### 0.5 Logo depois do deploy: reprocessar os `failed` (obrigatório)
+
+Por conta, assim que o worker novo subir (`$OPS` da seção 1; detalhes na seção 5):
+
+```bash
+sg docker -c "$OPS reprocessar-falhas --conta default"
+sg docker -c "$OPS reprocessar-falhas --conta secundaria"
+```
+
+Os eventos `failed` antigos não têm o contato sob demanda da Fase 1 e só voltam para a fila por este comando (a varredura, desligada no 0.4, não os reabre).
 
 ---
 
@@ -53,7 +122,7 @@ sg docker -c "$OPS backfill --conta default --desde 2026-07-23 --estimar"
 ```
 
 - A saída é um JSON com contagens, datas e ids de pedido. Não sai segredo nenhum.
-- Código de saída `1` = `interrompido` ou `ocupado`. Nesse caso o comando também gravou um alerta em `system_alerts` (`bling_backfill_interrompido`) e logou em ERROR.
+- Código de saída `1` = `interrompido`, `ocupado`, `sem_redis`, `parcial`, `divergente` ou `nada_a_fazer`. Em `interrompido` o comando também gravou um alerta em `system_alerts` (`bling_backfill_interrompido`) e logou em ERROR. Em `nada_a_fazer` leia o `aviso`: o intervalo pedido já estava todo antes do cursor salvo da conta e nada foi importado.
 - Para jobs longos, use `| tee ~/bling_<passo>.log` e rode dentro de `tmux`. Se o container reiniciar no meio (deploy), o `exec` morre. Rodar o mesmo comando de novo retoma do cursor da conta.
 
 ---
@@ -170,7 +239,9 @@ Se parar no meio (`"status": "interrompido"`):
 2. Corrija a causa.
 3. Rode o **mesmo** comando. Ele retoma da janela que falhou.
 
-Para refazer um trecho já concluído, use `--reiniciar` com `--desde` e `--ate`.
+Pedido com falha **permanente** (sem lead, 4xx ou 404 do Bling) não para mais o backfill: vai para `ignorados` no JSON, fica registrado no alerta `bling_pedido_ignorado` (com a conta e os ids em `metadata.pedidos`) e o backfill segue. Só erro transitório (429, 5xx, timeout, token, teto diário) ou desconhecido para e segura o cursor.
+
+Para refazer um trecho já concluído, use `--reiniciar` com `--desde` e `--ate`. O `--reiniciar` **não recua o cursor** da conta: ele só grava cursor que passe do salvo. Recuar só com `--recuar-cursor` junto, de propósito.
 
 ---
 
@@ -207,7 +278,9 @@ select e.account, count(distinct (e.payload->'data'->>'id')) pedidos_sem_venda
 O worker roda `bling-pedidos` a cada `BLING_VARREDURA_HORAS` horas. O padrão é 2 h, e o valor fica limitado entre 1 e 3 h. A primeira rodada sai no start do worker, e o tick fica ancorado nele, como os outros. Para cada conta, em sequência:
 1. Lista os pedidos alterados desde o cursor `bling_sync_state(account, 'orders_sweep')`, menos 6 h de margem.
 2. Importa cada pedido listado, com o detalhe e o contato sob demanda.
-3. Avança o cursor **só** se todos entraram. Se algum falhar, o cursor fica onde estava e sai o alerta `bling_varredura_falhou`.
+3. Avança o cursor se não houve erro transitório nem desconhecido. Se houver, o cursor fica onde estava e sai o alerta `bling_varredura_falhou`. Pedido com falha **permanente** (sem lead, 4xx) não segura o cursor: fica no alerta `bling_pedido_ignorado` (ids em `metadata.pedidos`, dedup pelo conjunto de pedidos) e a reconciliação continua apontando o dia.
+   - Pedido **novo e recente** (até 7 dias) recuperado pela varredura abre o card de Reposição, como o webhook abriria.
+   - Redis fora: a rodada é pulada com WARNING; depois de 3 pulos seguidos sai o alerta `bling_redis_indisponivel`.
 4. Reabre os eventos de webhook `failed` da conta parados há mais de 6 h e recebidos nos últimos 7 dias.
 
 > **VERIFICAR ANTES DO DEPLOY: o filtro da API.** A varredura usa `GET /pedidos/vendas?dataAlteracaoInicial=AAAA-MM-DD HH:MM:SS`, o mesmo formato que já funciona em `/produtos` e `/contatos`. Não deu para confirmar na documentação oficial da API v3 (developer.bling.com.br/referencia) que o endpoint de pedidos aceita esse filtro. Confira lá antes do push, sem chamar a API com token de produção.
@@ -253,7 +326,9 @@ Ela roda no mesmo tick da varredura, uma vez por dia por conta, a partir das 03:
 4. Grava todos os dias em `bling_reconciliacao`, com status `ok`, `reimportado` ou `divergente`.
 5. Se sobrar dia divergente, grava o alerta `bling_reconciliacao_divergente`, com dedup de 12 h por conta.
 
-Pedido que sobra no banco e não existe mais no Bling (apagado, G10) **não** é cancelado automaticamente. Ele fica em `divergentes.apagados_no_bling` e o dia continua `divergente` até o dono decidir.
+Pedido que sobra no banco e não existe mais no Bling (apagado, G10) **não** é cancelado automaticamente. Ele fica em `divergentes.apagados_no_bling` e o dia continua `divergente` até o dono decidir. Exceção: se a venda **já está `cancelada`** no banco, o dia fica `ok` com `divergentes.observacao = 'apagado'`, e nas noites seguintes o pedido não é reimportado nem alerta.
+
+Erro transitório na reimportação (429, 5xx, timeout, token) não grava o dia nem marca a conta como reconciliada: o próximo tick tenta de novo. Redis fora: mesmo tratamento da varredura (WARNING e alerta depois de 3 pulos).
 
 Custo por conta e por dia: 1 a 3 listagens (35 dias × ~5 pedidos = ~175 pedidos, menos de 2 páginas), mais 1–2 chamadas por pedido divergente. Com tudo em dia, são **2–3 chamadas por conta por noite**.
 
@@ -296,7 +371,8 @@ Critério de aceite da avaliação: 35 dias × 2 contas sem `divergente`, exceto
 | Variável | Padrão | Efeito |
 |---|---|---|
 | `BLING_VARREDURA_HORAS` | `2` | Intervalo da varredura, limitado a 1–3 h. Lido no start do worker. |
-| `BLING_VARREDURA_ATIVA` | ligada | `false` desliga a varredura e a reconciliação, sem deploy (basta reiniciar o worker). |
+| `BLING_VARREDURA_ATIVA` | ligada | `false` desliga a varredura e a reconciliação, sem deploy (basta reiniciar o worker). **Subir com `false`** até confirmar o filtro (seção 0.4). |
+| `BLING_VENDEDOR_LEAD_DIAS` | `60` | Decisão do dono: o 3º degrau do vendedor (`leads.assigned_to`, responsável atual do lead) só vale para venda com `sold_at` nesses últimos dias. Venda mais antiga sem vendedor no pedido nem no contato fica sem vendedor (`sold_by`/`vendedor_fonte` nulos). Vale para webhook, varredura, backfill e reconciliação. |
 
 Nenhuma credencial nova. Varredura e reconciliação usam o `BlingClient` de cada conta: o mesmo token, o mesmo refresh com lock por conta (`auth.get_access_token`) e o mesmo rate limit.
 
@@ -305,11 +381,7 @@ Nenhuma credencial nova. Varredura e reconciliação usam o `BlingClient` de cad
 ## 9. Antes do push: checklist
 
 1. **Filtro da API.** Conferir que `GET /pedidos/vendas` aceita `dataAlteracaoInicial` (seção 6).
-2. **Nomes das situações por conta.** Venda em situação cujo nome contém "cancelad", "devolv" ou "devoluc" vira `cancelada`. A situação padrão 12, "Cancelado", também vira, mesmo sem espelho. Conferir a lista:
-   ```sql
-   select account, id, nome from bling_situacoes order by 1, 2;
-   ```
-   Se houver uma situação de cancelamento ou devolução com outro nome, ajustar `_TRECHOS_CANCELAMENTO` em `backend/app/bling/orders.py`.
+2. **Nomes das situações por conta (gate 0.1).** "cancelad" e devolução total viram `cancelada`; devolução **parcial** continua venda com `devolucao_parcial = true`. A situação padrão 12, "Cancelado", também cancela, mesmo sem espelho. Confirmar a lista com o dono (consulta da seção 0.1).
 3. **Efeito em cancelados.** Medir antes quanto vai mudar quando os pedidos forem relidos pelo backfill ou pela varredura. Na avaliação eram 57 pedidos, R$ 59.842.
    ```sql
    select bling_account, count(*), round(sum(value)::numeric, 2)
@@ -318,8 +390,11 @@ Nenhuma credencial nova. Varredura e reconciliação usam o `BlingClient` de cad
     group by 1;
    ```
    Os pedidos antigos só mudam quando forem relidos. O backfill dos passos A e B relê a janela dele. O resto da base precisa de `--reiniciar` com o intervalo inteiro, que é uma decisão do dono.
-4. **Mapa de vendedores.** Só há 1 linha por conta em `bling_seller_map`. Sem mapear os ids do Bling para os e-mails, o 1º e o 2º degraus da cascata D8 não acham ninguém e a venda cai em `leads.assigned_to` ou fica sem vendedor.
+4. **Mapa de vendedores.** Só há 1 linha por conta em `bling_seller_map`. Sem mapear os ids do Bling para os e-mails, o 1º e o 2º degraus da cascata D8 não acham ninguém e a venda cai em `leads.assigned_to` (só venda dos últimos 60 dias) ou fica sem vendedor.
    ```sql
    select account, count(*) from bling_seller_map group by 1;
    ```
-5. **Aplicar as duas migrations** (seção 0).
+5. **Formato da data do webhook** (gate 0.2).
+6. **Aplicar as três migrations**, na ordem (seção 0.3), e conferir.
+7. **Deploy com `BLING_VARREDURA_ATIVA=false`** (seção 0.4).
+8. **Depois do deploy: `reprocessar-falhas` nas duas contas** (seção 0.5).

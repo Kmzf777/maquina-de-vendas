@@ -667,7 +667,8 @@ async def sync_endpoint(full: bool = False):
 async def backfill_endpoint(months: int = 12, account: str = config.DEFAULT_ACCOUNT,
                             data_inicial: date | None = None,
                             data_final: date | None = None,
-                            reiniciar: bool = False, estimar: bool = False):
+                            reiniciar: bool = False, estimar: bool = False,
+                            recuar_cursor: bool = False):
     """Importacao historica sob demanda (nao roda automatico), POR CONTA.
 
     Sem parametros novos o comportamento e o de antes (12 meses da `default`),
@@ -680,7 +681,8 @@ async def backfill_endpoint(months: int = 12, account: str = config.DEFAULT_ACCO
     conta = _conta_valida(account)
     try:
         return await run(months=months, account=conta.key, data_inicial=data_inicial,
-                         data_final=data_final, reiniciar=reiniciar, estimar=estimar)
+                         data_final=data_final, reiniciar=reiniciar, estimar=estimar,
+                         recuar_cursor=recuar_cursor)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 

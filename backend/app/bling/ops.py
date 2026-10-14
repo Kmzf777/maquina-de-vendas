@@ -39,7 +39,10 @@ def _parser() -> argparse.ArgumentParser:
     b.add_argument("--meses", type=int, default=12,
                    help="usado so sem --desde (janela de 30*meses dias ate --ate)")
     b.add_argument("--reiniciar", action="store_true",
-                   help="ignora o cursor salvo da conta e refaz o intervalo inteiro")
+                   help="ignora o cursor salvo da conta e refaz o intervalo inteiro "
+                        "(o cursor salvo NAO recua; ver --recuar-cursor)")
+    b.add_argument("--recuar-cursor", action="store_true",
+                   help="com --reiniciar: permite gravar o cursor para tras do salvo")
     b.add_argument("--estimar", action="store_true",
                    help="so lista e conta (custo de API sem gravar nada)")
 
@@ -61,7 +64,7 @@ async def _executar(args) -> dict:
         from app.bling.backfill import run
         return await run(months=args.meses, account=args.conta, data_inicial=args.desde,
                          data_final=args.ate, reiniciar=args.reiniciar,
-                         estimar=args.estimar)
+                         estimar=args.estimar, recuar_cursor=args.recuar_cursor)
     if args.comando == "reprocessar-falhas":
         from app.bling.webhook_processor import reabrir_falhas
         return {"conta": args.conta,
@@ -80,7 +83,10 @@ def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     resultado = asyncio.run(_executar(args))
     print(json.dumps(resultado, ensure_ascii=False, indent=2, default=str))
-    return 1 if resultado.get("status") in ("interrompido", "ocupado", "erro", "parcial", "divergente") else 0
+    # `nada_a_fazer` tambem sai 1: o intervalo pedido nao foi importado (cursor
+    # salvo ja passou dele) e quem rodou precisa ler o `aviso`.
+    return 1 if resultado.get("status") in ("interrompido", "ocupado", "sem_redis", "erro",
+                                            "parcial", "divergente", "nada_a_fazer") else 0
 
 
 if __name__ == "__main__":

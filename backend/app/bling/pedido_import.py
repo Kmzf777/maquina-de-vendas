@@ -19,11 +19,55 @@ import logging
 from app.bling import config
 from app.bling.contacts import ensure_lead
 from app.bling.errors import BlingValidationError
-from app.bling.orders import upsert_from_bling
+from app.bling.orders import (
+    PedidoSemLead,
+    _sold_at_iso,
+    garantir_reposicao_apos_venda,
+    upsert_from_bling,
+    venda_recente,
+)
 from app.bling.sync import map_contact
 from app.db.supabase import get_supabase
 
 logger = logging.getLogger(__name__)
+
+# Falhas PERMANENTES de um pedido: repetir nao conserta (pedido sem lead porque o
+# contato nao existe/nao tem id; 4xx de validacao do Bling). Varredura e backfill
+# registram e SEGUEM, sem segurar o cursor — um pedido envenenado nao pode
+# congelar a conta. Transitorio (429, 5xx, timeout, token, teto diario) continua
+# parando, e erro desconhecido continua segurando o cursor (pode ser o banco fora).
+PERMANENTES = (PedidoSemLead, BlingValidationError)
+
+
+def registrar_ignorados(alertar, account: str, origem: str, ignorados: list[dict]) -> None:
+    """Registro duravel dos pedidos pulados por falha permanente: um alerta
+    `bling_pedido_ignorado` em `system_alerts` com conta, origem e os ids em
+    `metadata.pedidos`. O dedup e pelo CONJUNTO de pedidos (`chave`), entao o
+    mesmo lote nao vira banner novo a cada rodada, mas um pedido novo envenenado
+    gera o seu. `alertar` vem do chamador (cada modulo tem o seu, para os testes)."""
+    ids = sorted({int(i["pedido"]) for i in ignorados})
+    alertar("bling_pedido_ignorado", account,
+            f"Pedidos Bling ignorados por falha permanente ({config.account(account).label})",
+            f"{len(ids)} pedido(s) nao entraram ({origem}) e nao seguram mais o cursor: "
+            f"{', '.join(str(i) for i in ids[:20])}. Corrigir a causa (contato/lead, "
+            "dado do pedido) e reimportar; a reconciliacao diaria continua apontando.",
+            metadata={"origem": origem, "pedidos": ignorados[:50]},
+            chave=f"{origem}:{','.join(str(i) for i in ids[:50])}",
+            dedup_horas=24 * 7)
+
+
+def _venda_ja_existia(account: str, order_id: int) -> bool:
+    """Ja ha linha em `sales` para este pedido? Erro de leitura -> True (nao cria
+    card), a mesma regra fail-closed do webhook."""
+    try:
+        res = (get_supabase().table("sales").select("id")
+               .eq("bling_account", account).eq("bling_order_id", order_id)
+               .limit(1).execute())
+        return bool(getattr(res, "data", None))
+    except Exception:  # noqa: BLE001
+        logger.warning("[BLING] nao consegui checar se o pedido %s ja existia — "
+                       "Reposicao nao sera criada", order_id, exc_info=True)
+        return True
 
 
 def _contato_do_espelho(account: str, contact_id: int) -> dict | None:
@@ -78,20 +122,34 @@ async def lead_do_pedido(client, account: str, pedido: dict) -> str | None:
 
 
 async def importar_pedido(client, account: str, order_id: int,
-                          event_date: str | None = None) -> dict | None:
+                          event_date: str | None = None, *,
+                          pos_venda: bool = False) -> dict | None:
     """Detalhe (a listagem nao traz itens) + lead + upsert. Devolve o pedido.
 
     `event_date` padrao = a data do pedido a meia-noite, o que o backfill
     sempre usou: um webhook mais novo do mesmo pedido continua vencendo.
+
+    `pos_venda=True` (so a varredura): venda NOVA e RECENTE (7 dias, a mesma
+    guarda do webhook) abre a Reposicao como o webhook abriria — a varredura
+    existe justamente para o pedido cujo webhook se perdeu. Backfill e
+    reconciliacao nao passam isso: nunca abrem cards em massa.
     """
     conta = config.account(account).key
     pedido = (await client.get(f"/pedidos/vendas/{int(order_id)}")).get("data") or {}
     if not pedido:
         return None
     lead_id = await lead_do_pedido(client, conta, pedido)
-    await upsert_from_bling(
-        pedido, lead_id=lead_id,
-        event_date=event_date or f"{pedido.get('data')}T00:00:00+00:00",
-        account=conta,
-    )
+    event_date = event_date or f"{pedido.get('data')}T00:00:00+00:00"
+
+    nova_e_recente = False
+    if pos_venda and lead_id and venda_recente(_sold_at_iso(pedido, event_date)):
+        nova_e_recente = not await asyncio.to_thread(_venda_ja_existia, conta, int(order_id))
+
+    await upsert_from_bling(pedido, lead_id=lead_id, event_date=event_date, account=conta)
+
+    if nova_e_recente:
+        try:
+            await asyncio.to_thread(garantir_reposicao_apos_venda, lead_id, None)
+        except Exception:  # noqa: BLE001 — a venda ja esta gravada
+            logger.exception("[BLING] Reposicao do lead %s falhou (venda mantida)", lead_id)
     return pedido

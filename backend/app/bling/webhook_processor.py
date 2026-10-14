@@ -108,6 +108,36 @@ async def _last_event_date(account: str, order_id: int) -> str | None:
     return await asyncio.to_thread(_sale_event_date, account, order_id)
 
 
+def _instante(valor) -> datetime | None:
+    """ISO 8601 -> datetime UTC-aware. Aceita `Z`, offset (`-03:00`) e fracao de
+    segundo. Sem fuso = UTC: e a mesma assuncao de `venda_recente`, e o `date` do
+    webhook do Bling v3 vem em UTC (`...Z`); `bling_event_date` volta do Postgres
+    como timestamptz com offset. Ilegivel -> None."""
+    if not valor:
+        return None
+    try:
+        quando = datetime.fromisoformat(str(valor).strip().replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if quando.tzinfo is None:
+        quando = quando.replace(tzinfo=timezone.utc)
+    return quando
+
+
+def _evento_atrasado(event_date, anterior) -> bool:
+    """O evento e MAIS VELHO que o ultimo ja aplicado na venda?
+
+    Compara instantes, nao strings: "...T12:00:00+00:00" x "...T12:00:00Z" (mesmo
+    instante) ou "13:00-03:00" x "15:00+00:00" (16:00Z e mais NOVO) davam a
+    resposta errada na comparacao de texto. Data ilegivel de qualquer lado ->
+    False: processar de novo e idempotente (upsert); descartar um evento novo nao.
+    """
+    novo, ultimo = _instante(event_date), _instante(anterior)
+    if novo is None or ultimo is None:
+        return False
+    return novo < ultimo
+
+
 async def _resolve_lead(account: str, contato: dict) -> str | None:
     from app.bling.contacts import ensure_lead
     return await ensure_lead(contato, account)
@@ -120,7 +150,7 @@ async def _handle_order(evento: dict, corpo: dict) -> str:
     event_date = corpo.get("date") or evento.get("event_date")
 
     anterior = await _last_event_date(account, order_id)
-    if anterior and event_date and event_date < anterior:
+    if _evento_atrasado(event_date, anterior):
         logger.info("[BLING WEBHOOK] evento %s fora de ordem (%s < %s) — descartado",
                     evento["event_id"], event_date, anterior)
         return "skipped"
@@ -247,7 +277,11 @@ def reabrir_falhas(account: str, *, parados_ha: timedelta | None = None,
                 .update({"status": "pending", "attempts": 0, "next_attempt_at": None})
                 .eq("account", conta).eq("status", "failed"))
     if parados_ha is not None:
-        consulta = consulta.lt("processed_at", (agora - parados_ha).isoformat())
+        # `processed_at` NULL tambem conta como parado: `failed` gravado antes da
+        # Fase 1 (ou por update manual) pode nao ter o momento da desistencia, e
+        # `lt` sozinho nunca casa com NULL — esses ficariam presos para sempre.
+        corte = (agora - parados_ha).isoformat()
+        consulta = consulta.or_(f"processed_at.is.null,processed_at.lt.{corte}")
     if recebidos_desde is not None:
         consulta = consulta.gte("received_at", (agora - recebidos_desde).isoformat())
     res = consulta.execute()

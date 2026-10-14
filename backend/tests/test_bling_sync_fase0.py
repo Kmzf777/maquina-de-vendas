@@ -172,7 +172,8 @@ def test_rodar_de_novo_depois_de_concluir_nao_refaz_nada(monkeypatch):
 
     assert client.params == []
     assert out["janelas"] == 0
-    assert out["status"] == "concluido"
+    # revisao 2026-10-13: status proprio (e aviso), nao um "concluido" vazio
+    assert out["status"] == "nada_a_fazer"
 
 
 def test_pedido_que_falha_nao_derruba_a_janela_mas_segura_o_cursor_e_alerta(monkeypatch):
@@ -215,7 +216,9 @@ def test_erro_sistemico_para_na_hora_e_alerta(monkeypatch):
     assert alertados and alertados[0][1] == "secundaria"
 
 
-def test_pedido_404_no_bling_e_falha_do_pedido_nao_do_job(monkeypatch):
+def test_pedido_404_no_bling_e_ignorado_sem_parar_o_job(monkeypatch):
+    """Revisao 2026-10-13: 404 (apagado entre a listagem e o detalhe) e falha
+    PERMANENTE: registra em `ignorados` e segue, sem travar o backfill."""
     client = FakeClient(por_janela={"2026-07-01": [{"id": 1}, {"id": 2}]})
     feitos = []
 
@@ -224,11 +227,13 @@ def test_pedido_404_no_bling_e_falha_do_pedido_nao_do_job(monkeypatch):
             raise BlingValidationError("nao encontrado", status=404)
         feitos.append(order_id)
 
-    _prepara(monkeypatch, client, importar=importar)
+    progresso, _, _, _ = _prepara(monkeypatch, client, importar=importar)
     out = asyncio.run(bf.run(account="default", data_inicial=date(2026, 7, 1),
                              data_final=date(2026, 7, 30)))
     assert feitos == [2]
-    assert out["status"] == "interrompido"
+    assert out["status"] == "concluido"
+    assert out["ignorados"][0]["pedido"] == 1
+    assert progresso == [("default", "2026-07-30")]
 
 
 def test_trava_ocupada_nao_chama_o_bling(monkeypatch):

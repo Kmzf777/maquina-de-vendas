@@ -11,8 +11,13 @@ Aqui, a cada 1-3 h (`BLING_VARREDURA_HORAS`), para cada conta, em sequencia:
      contatos;
   2. importa cada pedido listado (detalhe + lead com contato sob demanda +
      upsert), com `event_date` = hora da leitura;
-  3. so entao avanca o cursor para o INICIO desta rodada. Qualquer falha de
-     pedido segura o cursor (a proxima rodada relista a mesma janela) e alerta;
+  3. so entao avanca o cursor para o INICIO desta rodada. Falha TRANSITORIA ou
+     desconhecida de pedido segura o cursor (a proxima rodada relista a mesma
+     janela) e alerta. Falha PERMANENTE (`pedido_import.PERMANENTES`: pedido sem
+     lead, 4xx do Bling) NAO segura: o pedido fica registrado no alerta
+     `bling_pedido_ignorado` (dedup pelo conjunto de pedidos) e o cursor anda —
+     senao um unico pedido envenenado congelaria a varredura da conta para
+     sempre. A reconciliacao diaria continua apontando esses pedidos;
   4. reabre os eventos de webhook `failed` da conta parados ha mais de 6 h
      (recebidos nos ultimos 7 dias).
 
@@ -40,7 +45,10 @@ from app.bling.errors import (
     BlingValidationError,
 )
 from app.bling.sync import _load_sync_state, _save_sync_state
-from app.bling.trava import TravaOcupada, trava_pedidos
+from app.bling.trava import (
+    PULOS_PARA_ALERTAR, RedisIndisponivel, TravaOcupada, registrar_pulo_sem_redis,
+    trava_pedidos, zerar_pulos_sem_redis,
+)
 from app.bling.webhook_processor import reabrir_falhas
 
 logger = logging.getLogger(__name__)
@@ -76,11 +84,31 @@ async def varrer_conta(account: str, *, agora: datetime | None = None) -> dict:
     """Uma rodada da varredura numa conta. Nunca levanta (o tick isola contas)."""
     conta = config.account(account).key
     inicio = agora or datetime.now(timezone.utc)
-    resultado: dict = {"conta": conta, "status": "ok", "pedidos": 0, "falhas": []}
+    resultado: dict = {"conta": conta, "status": "ok", "pedidos": 0, "falhas": [],
+                       "ignorados": []}
 
     try:
         async with trava_pedidos(conta, _TRAVA_TTL):
-            await _rodada(conta, inicio, resultado)
+            zerar_pulos_sem_redis(RESOURCE, conta)
+            try:
+                await _rodada(conta, inicio, resultado)
+            finally:
+                # Registro duravel dos pulados, tambem quando a rodada para no meio.
+                if resultado["ignorados"]:
+                    pedido_import.registrar_ignorados(alertar, conta, "varredura",
+                                                      resultado["ignorados"])
+    except RedisIndisponivel as exc:
+        pulos = registrar_pulo_sem_redis(RESOURCE, conta)
+        logger.warning("[BLING VARREDURA] conta %s pulada: Redis indisponivel (%d seguida(s)): %s",
+                       conta, pulos, exc)
+        if pulos >= PULOS_PARA_ALERTAR:
+            alertar("bling_redis_indisponivel", conta,
+                    "Varredura Bling parada: Redis indisponivel",
+                    f"{pulos} rodadas seguidas sem a trava bling:pedidos (Redis fora). "
+                    "Pedidos alterados nao estao sendo recuperados.",
+                    metadata={"job": RESOURCE, "pulos": pulos})
+        resultado["status"] = "sem_redis"
+        return resultado
     except TravaOcupada as exc:
         logger.info("[BLING VARREDURA] conta %s pulada: %s", conta, exc)
         resultado["status"] = "ocupado"
@@ -128,15 +156,20 @@ async def _rodada(conta: str, inicio: datetime, resultado: dict) -> None:
         lido_em = inicio.isoformat()
         for order_id in dict.fromkeys(ids):
             try:
-                await pedido_import.importar_pedido(client, conta, order_id, event_date=lido_em)
+                # pos_venda: pedido NOVO e recente recuperado aqui (webhook perdido)
+                # abre a Reposicao como o webhook abriria (mesma guarda de 7 dias).
+                await pedido_import.importar_pedido(client, conta, order_id, event_date=lido_em,
+                                                    pos_venda=True)
                 resultado["pedidos"] += 1
-            except BlingValidationError as exc:
-                if exc.status == 404:
+            except pedido_import.PERMANENTES as exc:
+                if isinstance(exc, BlingValidationError) and exc.status == 404:
                     # sumiu entre a listagem e o detalhe (apagado): nao e falha da rodada
                     logger.info("[BLING VARREDURA] conta %s pedido %s nao existe mais",
                                 conta, order_id)
                     continue
-                resultado["falhas"].append({"pedido": order_id, "erro": str(exc)})
+                logger.warning("[BLING VARREDURA] conta %s pedido %s ignorado (permanente): %s",
+                               conta, order_id, exc)
+                resultado["ignorados"].append({"pedido": order_id, "erro": str(exc)})
             except _SISTEMICOS as exc:
                 resultado["falhas"].append({"pedido": order_id, "erro": str(exc)})
                 resultado.update(status="interrompido", erro=str(exc))

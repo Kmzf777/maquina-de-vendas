@@ -21,6 +21,20 @@ cancelado aqui: fica em `divergentes.apagados_no_bling` e o dia continua
 divergente ate o dono decidir. Mudar status de venda sozinho por ausencia na
 listagem e decisao de negocio, nao de sincronia.
 
+EXCECAO (revisao 2026-10-13): se a venda JA esta `cancelada` no banco (o
+`order.deleted` chegou, ou alguem cancelou), nao ha nada a decidir: o dia fica
+`ok` com `divergentes.observacao = "apagado"` e o id em `apagados_no_bling`.
+Esse registro e a memoria: nas noites seguintes o mesmo id (ainda cancelado) nao
+e reimportado de novo nem alerta.
+
+Erro SISTEMICO na reimportacao (429, 5xx, timeout, token, teto diario) para a
+reimportacao e NAO grava nada nem marca a conta como reconciliada hoje: o
+proximo tick tenta de novo. Gravar "divergente" ali seria culpar o dado por uma
+falha da API.
+
+Redis fora (sem a trava): WARNING a cada pulo e alerta
+`bling_redis_indisponivel` depois de `trava.PULOS_PARA_ALERTAR` pulos seguidos.
+
 A comparacao conta TODAS as vendas com o pedido (inclusive canceladas), porque
 a listagem do Bling tambem traz todas as situacoes. `value` x `total` do Bling.
 """
@@ -33,9 +47,15 @@ from zoneinfo import ZoneInfo
 
 from app.bling import config, pedido_import
 from app.bling.alertas import alertar
-from app.bling.errors import BlingValidationError
+from app.bling.errors import (
+    BlingAuthError, BlingNotConfigured, BlingRateLimitError, BlingServerError,
+    BlingValidationError,
+)
 from app.bling.sync import _load_sync_state, _save_sync_state
-from app.bling.trava import TravaOcupada, trava_pedidos
+from app.bling.trava import (
+    PULOS_PARA_ALERTAR, RedisIndisponivel, TravaOcupada, registrar_pulo_sem_redis,
+    trava_pedidos, zerar_pulos_sem_redis,
+)
 from app.db.supabase import get_supabase
 
 logger = logging.getLogger(__name__)
@@ -48,6 +68,11 @@ HORA_BRT = 3
 _TZ = ZoneInfo("America/Sao_Paulo")
 _TOLERANCIA = Decimal("0.01")
 _TRAVA_TTL = 3600
+# Pagina da leitura de `sales`: o PostgREST corta em `max_rows` (1000 no
+# Supabase) SEM erro, e um `.limit(10000)` devolveria 1000 linhas em silencio.
+_PAGINA = 1000
+_SISTEMICOS = (BlingAuthError, BlingNotConfigured, BlingRateLimitError, BlingServerError)
+OBS_APAGADO = "apagado"
 
 
 def _new_client(account: str):
@@ -68,15 +93,39 @@ def _vendas_do_banco(conta: str, inicio: date, fim: date) -> list[dict]:
 
     `sold_at` de venda Bling e sempre `<data do pedido>T12:00:00+00:00`
     (`_sold_at_iso` e `create_order`), entao o dia UTC e o dia do pedido.
+
+    Paginada por `range` com ordem estavel (`bling_order_id`): ver `_PAGINA`.
     """
-    res = (get_supabase().table("sales")
-           .select("bling_order_id, sold_at, value")
-           .eq("bling_account", conta)
-           .not_.is_("bling_order_id", "null")
-           .gte("sold_at", f"{inicio.isoformat()}T00:00:00+00:00")
-           .lt("sold_at", f"{(fim + timedelta(days=1)).isoformat()}T00:00:00+00:00")
-           .limit(10000).execute())
-    return getattr(res, "data", None) or []
+    vendas: list[dict] = []
+    while True:
+        res = (get_supabase().table("sales")
+               .select("bling_order_id, sold_at, value, status")
+               .eq("bling_account", conta)
+               .not_.is_("bling_order_id", "null")
+               .gte("sold_at", f"{inicio.isoformat()}T00:00:00+00:00")
+               .lt("sold_at", f"{(fim + timedelta(days=1)).isoformat()}T00:00:00+00:00")
+               .order("bling_order_id")
+               .range(len(vendas), len(vendas) + _PAGINA - 1).execute())
+        pagina = getattr(res, "data", None) or []
+        vendas.extend(pagina)
+        if len(pagina) < _PAGINA:
+            return vendas
+
+
+def _apagados_conhecidos(conta: str, inicio: date, fim: date) -> set[int]:
+    """Ids que uma reconciliacao anterior ja confirmou como apagados no Bling
+    (404) e cancelados no banco (`observacao = "apagado"`)."""
+    res = (get_supabase().table("bling_reconciliacao")
+           .select("dia, divergentes")
+           .eq("account", conta)
+           .gte("dia", inicio.isoformat()).lte("dia", fim.isoformat())
+           .execute())
+    ids: set[int] = set()
+    for linha in getattr(res, "data", None) or []:
+        detalhe = linha.get("divergentes") or {}
+        if detalhe.get("observacao") == OBS_APAGADO:
+            ids.update(int(i) for i in detalhe.get("apagados_no_bling") or [])
+    return ids
 
 
 def _gravar(linhas: list[dict]) -> None:
@@ -132,8 +181,21 @@ async def reconciliar_conta(account: str, *, hoje: date | None = None,
 
     try:
         async with trava_pedidos(conta, _TRAVA_TTL):
+            zerar_pulos_sem_redis(RESOURCE, conta)
             async with _new_client(conta) as client:
                 return await _reconciliar(client, conta, inicio, fim, resultado)
+    except RedisIndisponivel as exc:
+        pulos = registrar_pulo_sem_redis(RESOURCE, conta)
+        logger.warning("[BLING RECONCILIACAO] conta %s pulada: Redis indisponivel "
+                       "(%d seguida(s)): %s", conta, pulos, exc)
+        if pulos >= PULOS_PARA_ALERTAR:
+            alertar("bling_redis_indisponivel", conta,
+                    "Reconciliacao Bling parada: Redis indisponivel",
+                    f"{pulos} tentativas seguidas sem a trava bling:pedidos (Redis fora). "
+                    "A conferencia Bling x CRM nao esta rodando.",
+                    metadata={"job": RESOURCE, "pulos": pulos})
+        resultado["status"] = "sem_redis"
+        return resultado
     except TravaOcupada as exc:
         logger.info("[BLING RECONCILIACAO] conta %s pulada: %s", conta, exc)
         resultado["status"] = "ocupado"
@@ -150,7 +212,8 @@ async def _reconciliar(client, conta: str, inicio: date, fim: date, resultado: d
         return resultado
 
     bling = _por_dia_bling(pedidos)
-    banco = _por_dia_banco(await asyncio.to_thread(_vendas_do_banco, conta, inicio, fim))
+    vendas = await asyncio.to_thread(_vendas_do_banco, conta, inicio, fim)
+    banco = _por_dia_banco(vendas)
     todos_os_dias = [(inicio + timedelta(days=i)).isoformat()
                      for i in range((fim - inicio).days + 1)]
 
@@ -159,37 +222,67 @@ async def _reconciliar(client, conta: str, inicio: date, fim: date, resultado: d
 
     erros: dict[int, str] = {}
     apagados: set[int] = set()
+    cancelados = {int(v["bling_order_id"]) for v in vendas if v.get("status") == "cancelada"}
     if divergentes:
         alvo = []
         for d in divergentes:
             c = primeira[d]
             alvo.extend(c["faltando"] + c["valor_diferente"] + c["sobrando"])
+        sobrando_cancelados = {i for d in divergentes for i in primeira[d]["sobrando"]
+                               if i in cancelados}
+        if sobrando_cancelados:
+            # Apagado ja confirmado numa noite anterior e ainda cancelado: nao rele de novo.
+            conhecidos = await asyncio.to_thread(_apagados_conhecidos, conta, inicio, fim)
+            apagados |= conhecidos & sobrando_cancelados
         lido_em = datetime.now(timezone.utc).isoformat()
         for order_id in dict.fromkeys(alvo):  # sem repetir (pedido que mudou de dia)
+            if order_id in apagados:
+                continue
             try:
                 await pedido_import.importar_pedido(client, conta, order_id, event_date=lido_em)
             except BlingValidationError as exc:
                 if exc.status == 404:
                     apagados.add(order_id)
                 erros[order_id] = str(exc)
+            except _SISTEMICOS as exc:
+                # Falha da API, nao do dado: nao grava nada nem marca o dia; o
+                # proximo tick (estado nao salvo) refaz a reconciliacao.
+                logger.warning("[BLING RECONCILIACAO] conta %s: reimportacao parou no pedido "
+                               "%s por erro sistemico, tenta no proximo tick: %s",
+                               conta, order_id, exc)
+                resultado.update(status="interrompido", erro=str(exc))
+                return resultado
             except Exception as exc:  # noqa: BLE001
                 logger.error("[BLING RECONCILIACAO] conta %s pedido %s: %s", conta, order_id, exc)
                 erros[order_id] = str(exc)
-        banco = _por_dia_banco(await asyncio.to_thread(_vendas_do_banco, conta, inicio, fim))
+        vendas = await asyncio.to_thread(_vendas_do_banco, conta, inicio, fim)
+        banco = _por_dia_banco(vendas)
+        cancelados = {int(v["bling_order_id"]) for v in vendas
+                      if v.get("status") == "cancelada"}
+
+    # Apagado no Bling (404) E cancelado no banco: nada a decidir, nao diverge.
+    tolerados = apagados & cancelados
+
+    def _sem_tolerados(c: dict) -> dict:
+        return {**c, "sobrando": [i for i in c["sobrando"] if i not in tolerados]}
 
     agora = datetime.now(timezone.utc).isoformat()
     linhas, ainda_divergentes = [], []
     for d in todos_os_dias:
         depois = _comparar(bling.get(d, {}), banco.get(d, {}))
-        if not _diverge(primeira[d]):
-            status, detalhe = "ok", {}
-        elif not _diverge(depois):
-            status, detalhe = "reimportado", {**primeira[d], "reimportados": True}
+        apagados_do_dia = sorted(tolerados & (set(primeira[d]["sobrando"]) | set(depois["sobrando"])))
+        nota = ({"apagados_no_bling": apagados_do_dia, "observacao": OBS_APAGADO}
+                if apagados_do_dia else {})
+        antes_aj, depois_aj = _sem_tolerados(primeira[d]), _sem_tolerados(depois)
+        if not _diverge(antes_aj):
+            status, detalhe = "ok", nota
+        elif not _diverge(depois_aj):
+            status, detalhe = "reimportado", {**antes_aj, "reimportados": True, **nota}
         else:
             status = "divergente"
-            ids = set(depois["faltando"] + depois["sobrando"] + depois["valor_diferente"])
-            detalhe = {**depois,
-                       "apagados_no_bling": sorted(apagados & set(depois["sobrando"])),
+            ids = set(depois_aj["faltando"] + depois_aj["sobrando"] + depois_aj["valor_diferente"])
+            detalhe = {**depois_aj,
+                       "apagados_no_bling": sorted(apagados & set(depois_aj["sobrando"])),
                        "erros": [{"pedido": i, "erro": erros[i]} for i in sorted(ids)
                                  if i in erros]}
             ainda_divergentes.append(d)

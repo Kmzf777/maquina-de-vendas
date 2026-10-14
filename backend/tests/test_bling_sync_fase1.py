@@ -166,7 +166,8 @@ def test_situacao_cancelado_vira_venda_cancelada(monkeypatch, conta):
     assert linha["bling_situacao_nome"] == "Cancelado"
 
 
-@pytest.mark.parametrize("nome", ["Devolvido", "Em devolução", "DEVOLUCAO PARCIAL", "Cancelada"])
+# Devolucao PARCIAL nao cancela (decisao do dono): ver test_bling_sync_revisao.py.
+@pytest.mark.parametrize("nome", ["Devolvido", "Em devolução", "Cancelada"])
 def test_situacoes_de_devolucao_e_cancelamento_por_nome(monkeypatch, nome):
     db = DB(sales=[], bling_situacoes=[{"account": "secundaria", "id": 31, "nome": nome}])
     _usa(monkeypatch, db, orders)
@@ -329,7 +330,9 @@ def test_sem_pedido_nem_contato_cai_para_o_responsavel_do_lead(monkeypatch):
     _usa(monkeypatch, db, orders)
     monkeypatch.setattr(orders, "_email_do_usuario",
                         lambda uid: "ana@cafe.com" if uid == "uuid-ana" else None)
-    linha = _upsert(db, _pedido())
+    # venda recente: o degrau `lead_assigned` so vale nos ultimos 60 dias
+    recente = (datetime.now(timezone.utc).date() - timedelta(days=3)).isoformat()
+    linha = _upsert(db, _pedido(data=recente))
     assert linha["sold_by"] == "ana@cafe.com"
     assert linha["vendedor_fonte"] == "lead_assigned"
 

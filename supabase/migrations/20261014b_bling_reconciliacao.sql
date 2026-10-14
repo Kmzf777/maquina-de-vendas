@@ -22,7 +22,10 @@ CREATE TABLE IF NOT EXISTS bling_reconciliacao (
   soma_bling    numeric(14,2) NOT NULL DEFAULT 0,
   soma_banco    numeric(14,2) NOT NULL DEFAULT 0,
   -- {faltando:[ids], sobrando:[ids], valor_diferente:[ids],
-  --  apagados_no_bling:[ids], erros:[{pedido, erro}], reimportados:bool}
+  --  apagados_no_bling:[ids], erros:[{pedido, erro}], reimportados:bool,
+  --  observacao:'apagado'}. `observacao = 'apagado'` (revisao 2026-10-13): dia ok
+  --  porque os ids de apagados_no_bling deram 404 no Bling e ja estao cancelados
+  --  no banco; e a memoria que evita reimporta-los toda noite.
   divergentes   jsonb         NOT NULL DEFAULT '{}'::jsonb,
   -- ok: bateu de primeira; reimportado: divergia e bateu depois de reimportar;
   -- divergente: continua divergente (alerta bling_reconciliacao_divergente).
@@ -48,10 +51,16 @@ CREATE POLICY bling_reconciliacao_select ON bling_reconciliacao
 -- Leitura para o agente de consulta, se o role existir neste ambiente (ele e
 -- criado fora deste repositorio). A view no schema `analytics` fica para o
 -- trabalho do agente analista.
+-- Em producao o `consulta_ro` foi criado com BYPASSRLS, entao o GRANT bastaria;
+-- a policy fica mesmo assim para o dia em que o role perder o BYPASSRLS (ou for
+-- recriado sem ele) — com RLS ligada e sem policy, o SELECT voltaria VAZIO, sem
+-- erro. EXECUTE porque o nome do role so pode ser resolvido se ele existir.
 DO $$
 BEGIN
   IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'consulta_ro') THEN
     GRANT SELECT ON bling_reconciliacao TO consulta_ro;
+    EXECUTE 'DROP POLICY IF EXISTS bling_reconciliacao_consulta_ro ON bling_reconciliacao';
+    EXECUTE 'CREATE POLICY bling_reconciliacao_consulta_ro ON bling_reconciliacao FOR SELECT TO consulta_ro USING (true)';
   END IF;
 END $$;
 

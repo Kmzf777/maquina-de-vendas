@@ -58,7 +58,7 @@ def _prepara(monkeypatch, cliente, *, estado=None, importar=None):
         reg["contas_cliente"].append(account)
         return cliente
 
-    async def importar_padrao(cli, account, order_id, event_date=None):
+    async def importar_padrao(cli, account, order_id, event_date=None, **_k):
         reg["importados"].append((account, order_id, event_date))
 
     monkeypatch.setattr(vr, "_new_client", novo)
@@ -104,7 +104,7 @@ def test_pedido_que_falha_segura_o_cursor_e_alerta(monkeypatch):
     cli = Cliente(listados=[{"id": 1}, {"id": 2}])
     feitos = []
 
-    async def importar(cli_, conta, order_id, event_date=None):
+    async def importar(cli_, conta, order_id, event_date=None, **_k):
         if order_id == 1:
             raise RuntimeError("pedido sem lead")
         feitos.append(order_id)
@@ -124,7 +124,7 @@ def test_pedido_apagado_no_bling_nao_trava_o_cursor(monkeypatch):
     """404 no detalhe: o pedido sumiu entre a listagem e o GET. Nao e falha."""
     cli = Cliente(listados=[{"id": 1}])
 
-    async def importar(cli_, conta, order_id, event_date=None):
+    async def importar(cli_, conta, order_id, event_date=None, **_k):
         raise BlingValidationError("nao encontrado", status=404)
 
     reg = _prepara(monkeypatch, cli, estado=None, importar=importar)
@@ -274,6 +274,7 @@ def test_cada_chamada_da_varredura_consome_o_orcamento_da_propria_conta(monkeypa
 
     monkeypatch.setattr(vr.pedido_import, "lead_do_pedido", lead)
     monkeypatch.setattr(vr.pedido_import, "upsert_from_bling", upsert)
+    monkeypatch.setattr(vr.pedido_import, "_venda_ja_existia", lambda conta, order_id: True)
 
     asyncio.run(vr.varrer_conta("secundaria", agora=AGORA))
     # 1 listagem + 1 detalhe, as duas no orcamento da secundaria

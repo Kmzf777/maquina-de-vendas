@@ -214,3 +214,20 @@ def varredura_ativa() -> bool:
     (`BLING_VARREDURA_ATIVA=false` + restart do worker). Padrao: ligada."""
     bruto = _env("BLING_VARREDURA_ATIVA").lower()
     return bruto not in ("0", "false", "no", "off")
+
+
+# Decisao do dono (revisao 2026-10-13): o 3o degrau da cascata de vendedor
+# (`leads.assigned_to`, o responsavel ATUAL do lead) so vale para venda recente.
+# Venda mais antiga que isso, sem vendedor no pedido nem no contato, fica sem
+# vendedor: o responsavel de hoje nao e quem vendeu ha meses.
+VENDEDOR_LEAD_DIAS_PADRAO = 60
+
+
+def vendedor_lead_dias() -> int:
+    bruto = _env("BLING_VENDEDOR_LEAD_DIAS")
+    try:
+        dias = int(bruto) if bruto else VENDEDOR_LEAD_DIAS_PADRAO
+    except ValueError:
+        logger.warning("Valor invalido para BLING_VENDEDOR_LEAD_DIAS: %r (esperava dias)", bruto)
+        dias = VENDEDOR_LEAD_DIAS_PADRAO
+    return max(dias, 0)

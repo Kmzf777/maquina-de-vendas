@@ -12,6 +12,7 @@ from datetime import datetime, timedelta, timezone
 from decimal import ROUND_HALF_UP, Decimal
 
 from app.bling import config
+from app.bling.alertas import alertar
 from app.bling.errors import BlingValidationError
 
 logger = logging.getLogger(__name__)
@@ -614,7 +615,8 @@ def _existing_sale(order_id: int, account: str) -> dict | None:
     # duas. Sem o filtro por conta, a conta 2 acharia a venda da conta 1.
     res = (get_supabase().table("sales")
            .select("id, origin, deal_id, lead_id, status, bling_situacao_id, "
-                   "bling_situacao_nome, sold_by, payment_method_id, payment_terms")
+                   "bling_situacao_nome, sold_by, payment_method_id, payment_terms, "
+                   "devolucao_parcial")
            .eq("bling_order_id", order_id).eq("bling_account", account)
            .limit(1).execute())
     linhas = getattr(res, "data", None) or []
@@ -666,9 +668,19 @@ def _replace_items(sale_id: str, itens: list[dict]) -> None:
 # quando o espelho `bling_situacoes` ainda nao tem a linha.
 SITUACAO_CANCELADO_PADRAO = 12
 # Trechos do nome (sem acento, minusculo) que tornam a situacao "cancelada" no
-# CRM: Cancelado/Cancelada e as de devolucao (Devolvido, Em devolucao, ...).
+# CRM: Cancelado/Cancelada e as de devolucao TOTAL (Devolvido, Em devolucao, ...).
 # Conferir os nomes reais de cada conta antes do deploy (runbook, secao 0).
 _TRECHOS_CANCELAMENTO = ("cancelad", "devolv", "devoluc")
+# Decisao do dono (revisao 2026-10-13): devolucao PARCIAL nao cancela a venda —
+# parte do pedido ficou com o cliente. A venda continua contando e ganha a marca
+# `sales.devolucao_parcial` + o alerta `bling_devolucao_parcial` para revisao.
+_TRECHO_PARCIAL = "parcial"
+
+# Classes de situacao (ver `classificar_situacao`).
+CANCELA = "cancela"
+DEVOLUCAO_PARCIAL = "devolucao_parcial"
+NORMAL = "normal"
+DESCONHECIDA = "desconhecida"
 
 
 def _sem_acento(texto: str) -> str:
@@ -677,38 +689,77 @@ def _sem_acento(texto: str) -> str:
                    if not unicodedata.combining(c)).lower()
 
 
-def situacao_cancela(nome: str | None, situacao_id=None) -> bool:
-    """A situacao do Bling faz a venda contar como cancelada no CRM?"""
+def classificar_situacao(nome: str | None, situacao_id=None) -> str:
+    """CANCELA, DEVOLUCAO_PARCIAL, NORMAL ou DESCONHECIDA.
+
+    DESCONHECIDA = sem nome (lookup falhou ou situacao personalizada fora do
+    espelho) e id diferente do Cancelado padrao. Com ela ninguem decide status
+    nem apaga dado: nao da para saber se a venda foi cancelada ou nao.
+    """
     if nome:
         normal = _sem_acento(str(nome))
-        return any(t in normal for t in _TRECHOS_CANCELAMENTO)
+        if any(t in normal for t in _TRECHOS_CANCELAMENTO):
+            if _TRECHO_PARCIAL in normal and "cancelad" not in normal:
+                return DEVOLUCAO_PARCIAL
+            return CANCELA
+        return NORMAL
     try:
-        return situacao_id is not None and int(situacao_id) == SITUACAO_CANCELADO_PADRAO
+        if situacao_id is not None and int(situacao_id) == SITUACAO_CANCELADO_PADRAO:
+            return CANCELA
     except (TypeError, ValueError):
-        return False
+        pass
+    return DESCONHECIDA
+
+
+def situacao_cancela(nome: str | None, situacao_id=None) -> bool:
+    """A situacao do Bling faz a venda contar como cancelada no CRM?"""
+    return classificar_situacao(nome, situacao_id) == CANCELA
 
 
 def _status_da_venda(existente: dict | None, pedido: dict, nome_situacao: str | None) -> str:
     """Status da venda depois deste pedido.
 
-    - situacao de cancelamento/devolucao -> 'cancelada';
+    - situacao de cancelamento/devolucao TOTAL -> 'cancelada';
+    - devolucao PARCIAL continua venda (decisao do dono, ver `_TRECHO_PARCIAL`);
     - venda que estava cancelada POR CAUSA da situacao e saiu dela -> 'registrada'
       (reabertura no Bling);
     - venda cancelada por outro motivo (`order.deleted`, cancelamento no CRM)
       continua cancelada: um evento em situacao normal nao desfaz isso;
+    - nome da situacao DESCONHECIDO (lookup falhou, situacao fora do espelho)
+      nunca reabre: cancelada continua cancelada;
     - payload sem `situacao` nao decide nada: mantem o que havia.
     """
     atual = (existente or {}).get("status")
     if not pedido.get("situacao"):
         return "cancelada" if atual == "cancelada" else "registrada"
-    if situacao_cancela(nome_situacao, (pedido.get("situacao") or {}).get("id")):
+    classe = classificar_situacao(nome_situacao, (pedido.get("situacao") or {}).get("id"))
+    if classe == CANCELA:
         return "cancelada"
     if atual == "cancelada":
+        if classe == DESCONHECIDA:
+            return "cancelada"
         estava_por_situacao = situacao_cancela(
             (existente or {}).get("bling_situacao_nome"),
             (existente or {}).get("bling_situacao_id"))
         return "registrada" if estava_por_situacao else "cancelada"
     return "registrada"
+
+
+def _mesmo_id(a, b) -> bool:
+    try:
+        return a is not None and b is not None and int(a) == int(b)
+    except (TypeError, ValueError):
+        return False
+
+
+def _avisar_devolucao_parcial(account: str, order_id: int, nome: str | None) -> None:
+    """Alerta de revisao, com dedup POR PEDIDO. Nunca levanta (`alertar` e fail-soft)."""
+    alertar("bling_devolucao_parcial", account,
+            f"Devolucao parcial no Bling ({config.account(account).label})",
+            f"Pedido {order_id} esta em '{nome}'. A venda continua contando no CRM; "
+            "revisar o valor (sales.devolucao_parcial = true).",
+            metadata={"pedido": order_id, "situacao": nome},
+            chave=f"pedido:{order_id}", dedup_horas=24 * 30)
 
 
 # --------------------------------------------------------------------------
@@ -811,23 +862,46 @@ def _responsavel_do_lead(lead_id: str | None) -> str | None:
     return _email_do_usuario(str(uid)) if uid else None
 
 
-def _vendedor_da_venda(pedido: dict, lead_id: str | None,
-                       account: str) -> tuple[str | None, str | None]:
+def _venda_na_janela_do_lead(sold_at_iso: str | None, agora: datetime | None = None) -> bool:
+    """`sold_at` cai nos ultimos `config.vendedor_lead_dias()` dias? Data
+    ausente/ilegivel -> False (na duvida, nao atribui vendedor)."""
+    if not sold_at_iso:
+        return False
+    try:
+        quando = datetime.fromisoformat(str(sold_at_iso).replace("Z", "+00:00"))
+    except ValueError:
+        return False
+    if quando.tzinfo is None:
+        quando = quando.replace(tzinfo=timezone.utc)
+    agora = agora or datetime.now(timezone.utc)
+    return quando >= agora - timedelta(days=config.vendedor_lead_dias())
+
+
+def _vendedor_da_venda(pedido: dict, lead_id: str | None, account: str,
+                       sold_at: str | None = None) -> tuple[str | None, str | None]:
     """(sold_by, vendedor_fonte) pela regra D8, ou (None, None).
 
     1. `pedido.vendedor.id` -> `bling_seller_map` da conta  => 'bling_pedido'
     2. `bling_contacts.vendedor_id` do contato do pedido     => 'bling_contato'
     3. `leads.assigned_to` (uuid -> e-mail em auth.users)    => 'lead_assigned'
     Cada degrau falha sozinho (log) e cai para o proximo.
+
+    Decisao do dono (revisao 2026-10-13): o 3o degrau e o responsavel ATUAL do
+    lead, nao quem vendeu na epoca. So vale para venda com `sold_at` nos ultimos
+    `BLING_VENDEDOR_LEAD_DIAS` dias (padrao 60). Venda mais antiga sem vendedor no
+    pedido nem no contato fica SEM vendedor (`sold_by` e `vendedor_fonte` NULL —
+    o "sem fonte" que ja existia). Vale para todos os caminhos (webhook,
+    varredura, backfill e reconciliacao), porque todos passam por aqui.
     """
     contato_id = (pedido.get("contato") or {}).get("id")
-    degraus = (
+    degraus = [
         ("bling_pedido",
          lambda: _email_do_mapa(account, (pedido.get("vendedor") or {}).get("id"))),
         ("bling_contato",
          lambda: _email_do_mapa(account, _vendedor_do_contato(account, contato_id))),
-        ("lead_assigned", lambda: _responsavel_do_lead(lead_id)),
-    )
+    ]
+    if _venda_na_janela_do_lead(sold_at):
+        degraus.append(("lead_assigned", lambda: _responsavel_do_lead(lead_id)))
     for fonte, resolver in degraus:
         try:
             email = resolver()
@@ -877,6 +951,10 @@ async def upsert_from_bling(pedido: dict, *, lead_id: str | None,
 
     situacao_id = (pedido.get("situacao") or {}).get("id")
     situacao_nome = await asyncio.to_thread(_situacao_nome, situacao_id, account)
+    if situacao_nome is None and _mesmo_id(situacao_id, (existente or {}).get("bling_situacao_id")):
+        # Lookup falhou (transitorio) ou a situacao saiu do espelho, mas o pedido
+        # continua na MESMA situacao: o nome ja gravado continua valendo.
+        situacao_nome = (existente or {}).get("bling_situacao_nome")
 
     linha = {
         "bling_account": account,
@@ -891,9 +969,21 @@ async def upsert_from_bling(pedido: dict, *, lead_id: str | None,
         "status": _status_da_venda(existente, pedido, situacao_nome),
         "bling_order_number": pedido.get("numero"),
         "bling_situacao_id": situacao_id,
-        "bling_situacao_nome": situacao_nome,
         "bling_event_date": event_date,
     }
+    # Nome desconhecido nunca apaga um nome ja gravado (nem decide status, ver
+    # `_status_da_venda`). Venda nova sem nome segue gravando NULL, como antes.
+    if situacao_nome is not None or not (existente or {}).get("bling_situacao_nome"):
+        linha["bling_situacao_nome"] = situacao_nome
+
+    # Devolucao parcial (decisao do dono): continua venda, marcada para revisao.
+    # So decide com a situacao conhecida; ausente/desconhecida nao mexe na marca.
+    classe = (classificar_situacao(situacao_nome, situacao_id)
+              if pedido.get("situacao") else DESCONHECIDA)
+    if classe != DESCONHECIDA:
+        linha["devolucao_parcial"] = classe == DEVOLUCAO_PARCIAL
+        if classe == DEVOLUCAO_PARCIAL and not (existente or {}).get("devolucao_parcial"):
+            _avisar_devolucao_parcial(account, order_id, situacao_nome)
 
     sold_at = _sold_at_iso(pedido, event_date)
     if sold_at:
@@ -915,7 +1005,8 @@ async def upsert_from_bling(pedido: dict, *, lead_id: str | None,
 
     # Vendedor (D8): nunca em venda do CRM/manual, nunca por cima de `sold_by`.
     if origem == "bling" and not (existente or {}).get("sold_by"):
-        email, fonte = await asyncio.to_thread(_vendedor_da_venda, pedido, lead_final, account)
+        email, fonte = await asyncio.to_thread(_vendedor_da_venda, pedido, lead_final,
+                                               account, linha.get("sold_at"))
         if email:
             linha["sold_by"] = email
             linha["vendedor_fonte"] = fonte
