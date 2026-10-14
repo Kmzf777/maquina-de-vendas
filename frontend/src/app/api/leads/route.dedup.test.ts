@@ -23,7 +23,9 @@ function instalar(respostas: unknown[]) {
   vi.mocked(getServiceSupabase).mockResolvedValue({
     from: () => {
       const idx = n++;
-      const resultado = { data: respostas[idx] ?? null, error: null };
+      const r = respostas[idx];
+      const resultado =
+        r instanceof Error ? { data: null, error: { message: r.message } } : { data: r ?? null, error: null };
       const builder: Record<string, unknown> = {};
       for (const metodo of ["select", "in", "neq", "eq", "order", "limit", "insert", "update"]) {
         builder[metodo] = (...args: unknown[]) => {
@@ -101,5 +103,19 @@ describe("POST /api/leads — dedupe por telefone", () => {
       human_control: true,
       stage: "secretaria",
     });
+  });
+
+  it("phone que não é texto devolve 422, não 500", async () => {
+    const chamadas = instalar([]);
+    const res = await postar({ phone: 5549999170363 });
+    expect(res.status).toBe(422);
+    expect(chamadas.some((c) => c.metodo === "insert")).toBe(false);
+  });
+
+  it("erro na busca do existente devolve 500 sem insert", async () => {
+    const chamadas = instalar([new Error("boom")]);
+    const res = await postar({ phone: "49999170363" });
+    expect(res.status).toBe(500);
+    expect(chamadas.some((c) => c.metodo === "insert")).toBe(false);
   });
 });

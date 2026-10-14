@@ -11,18 +11,34 @@ export async function PATCH(
   const supabase = await getServiceSupabase();
   const body = await request.json();
 
+  const { data: currentLead } = await supabase
+    .from("leads")
+    .select("stage, phone")
+    .eq("id", id)
+    .single();
+
   // Telefone: grava o canônico e recusa número que outro lead já usa em
   // qualquer formato antigo (cartão b747da43).
   if (body.phone !== undefined) {
-    const canonical = normalizePhoneBR(body.phone ?? "");
+    const texto = typeof body.phone === "string" ? body.phone : "";
+    const canonical = normalizePhoneBR(texto);
     if (!canonical) {
-      const n = (body.phone ?? "").replace(/\D/g, "").length;
+      const n = texto.replace(/\D/g, "").length;
       return NextResponse.json(
         { error: `Telefone inválido: ${n} dígito(s). Use DDD + número (ex.: 34 99999-9999)` },
         { status: 422 },
       );
     }
-    const outro = await findLeadByPhoneVariants(supabase, canonical, id);
+    // Mesmo número do próprio lead (só mudou o formato): não há conflito a checar.
+    const mesmoNumero = !!currentLead?.phone && normalizePhoneBR(currentLead.phone) === canonical;
+    let outro = null;
+    if (!mesmoNumero) {
+      try {
+        outro = await findLeadByPhoneVariants(supabase, canonical, id);
+      } catch (err) {
+        return NextResponse.json({ error: err instanceof Error ? err.message : String(err) }, { status: 500 });
+      }
+    }
     if (outro) {
       return NextResponse.json(
         { error: `Outro lead já usa este telefone: ${outro.name || outro.phone}`, lead: outro },
@@ -31,12 +47,6 @@ export async function PATCH(
     }
     body.phone = canonical;
   }
-
-  const { data: currentLead } = await supabase
-    .from("leads")
-    .select("stage")
-    .eq("id", id)
-    .single();
 
   const { data, error } = await supabase
     .from("leads")

@@ -11,10 +11,11 @@ const BUSCA_LIMITE_MAX = 30;
 const BUSCA_COLUNAS = "id, name, phone, email, cnpj, razao_social";
 
 /** Telefone canônico (`normalizePhoneBR`) ou erro legível para o 422. */
-function sanitizePhone(raw: string | undefined | null): { digits: string; error?: string } {
-  const canonical = normalizePhoneBR(raw ?? "");
+function sanitizePhone(raw: unknown): { digits: string; error?: string } {
+  const texto = typeof raw === "string" ? raw : "";
+  const canonical = normalizePhoneBR(texto);
   if (!canonical) {
-    const n = (raw ?? "").replace(/\D/g, "").length;
+    const n = texto.replace(/\D/g, "").length;
     return { digits: "", error: `Telefone inválido: ${n} dígito(s). Use DDD + número (ex.: 34 99999-9999)` };
   }
   return { digits: canonical };
@@ -149,7 +150,12 @@ export async function POST(request: NextRequest) {
   }
 
   // Acha o lead mesmo gravado em formato antigo (sem 9 / sem 55).
-  const existing = await findLeadByPhoneVariants(supabase, phoneDigits);
+  let existing;
+  try {
+    existing = await findLeadByPhoneVariants(supabase, phoneDigits);
+  } catch (err) {
+    return NextResponse.json({ error: err instanceof Error ? err.message : String(err) }, { status: 500 });
+  }
   if (existing) {
     return NextResponse.json(
       { error: `Lead com este telefone já existe: ${existing.name || existing.phone}`, lead: existing },
