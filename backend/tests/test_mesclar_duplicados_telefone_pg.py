@@ -12,6 +12,7 @@ import json
 import os
 import shutil
 import subprocess
+import time
 from pathlib import Path
 
 import pytest
@@ -247,3 +248,74 @@ def test_linha_com_sobrevivente_que_nao_bate_e_recusada(banco, tmp_path):
     assert r["contagens"]["aplicados_recusados"] == 1 and r["contagens"]["aplicados_ok"] == 0
     assert "sobrevivente" in r["aplicados"][0]["erro"]
     assert q(f"select count(*) from public.leads where id in ('{A}', '{B}', '{C}')") == "3"
+
+
+def _grupo_douglas(m):
+    leads = m.Psql(f"psql {URL}/{BANCO}").linhas(m.Q_LEADS)
+    return next(g for g in m.agrupar(leads) if g["canonico"] == "5549999170363")
+
+
+def test_lead_travado_por_outra_transacao_cai_por_lock_timeout(banco, tmp_path):
+    # outra sessao segura o lead B por 15s; o grupo Douglas desiste em 5s e a Francine aplica
+    trava = subprocess.Popen(
+        ["psql", f"{URL}/{BANCO}", "-X", "-q", "-v", "ON_ERROR_STOP=1"],
+        stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, text=True)
+    trava.stdin.write(f"begin; select 1 from public.leads where id = '{B}' for update;"
+                      " select pg_sleep(15); commit;\n")
+    trava.stdin.flush()
+    try:
+        for _ in range(50):
+            if q("select count(*) from pg_locks l join pg_stat_activity a using (pid)"
+                 " where a.pid <> pg_backend_pid() and a.query like '%pg_sleep%'"
+                 " and l.locktype = 'transactionid'") != "0":
+                break
+            time.sleep(0.2)
+        m = _script()
+        r = _aplicar_com_douglas(m, banco, tmp_path)
+    finally:
+        trava.stdin.close()
+        trava.wait(timeout=30)
+    erro = {a["canonico"]: a for a in r["aplicados"]}
+    assert erro["5549999170363"]["resultado"] == "erro"
+    assert "lock timeout" in erro["5549999170363"]["erro"]
+    assert erro["5551981162558"]["resultado"] == "ok"
+    assert q(f"select count(*) from public.leads where id in ('{A}', '{B}', '{C}')") == "3"
+
+
+def test_telefone_que_mudou_depois_do_calculo_aborta_o_grupo(banco):
+    m = _script()
+    grupo = _grupo_douglas(m)
+    q(f"update public.leads set phone = '5511900000000' where id = '{C}'")
+    tabelas = {r["table_name"] for r in m.Psql(banco).linhas(m.bling.Q_TABELAS)}
+    with pytest.raises(RuntimeError) as exc:
+        m.Psql(banco).executar(m.sql_mesclar_grupo(grupo, tabelas))
+    assert "telefone de algum lead mudou" in str(exc.value)
+    assert q(f"select count(*) from public.leads where id in ('{A}', '{B}', '{C}')") == "3"
+
+
+def test_fixo_fica_com_o_numero_sem_o_9(banco, tmp_path):
+    fixo1 = "00000000-0000-4000-8000-00000000f101"
+    fixo2 = "00000000-0000-4000-8000-00000000f102"
+    q(f"insert into public.leads (id, phone, name, created_at) values"
+      f" ('{fixo1}', '4934415750', 'Loja', '2026-02-01 10:00+00'),"
+      f" ('{fixo2}', '554934415750', 'Loja', '2026-04-01 10:00+00');")
+    m = _script()
+    m.executar(m.Psql(banco), tmp_path / "dry")
+    fixo = [r for r in _ler(tmp_path / "dry" / "revisar.csv") if r["canonico"] == "5549934415750"]
+    assert fixo and fixo[0]["motivo"] == "telefone fixo (9 injetado)"
+    csv_ = _csv_aprovado(tmp_path / "dry", tmp_path / "fixo.csv")
+    csv_.write_text("canonico,sobrevivente,duplicados\n"
+                    f"5549934415750,{fixo1},{fixo2}\n", encoding="utf-8")
+    r = m.executar(m.Psql(banco), tmp_path, aplicar=True, pares_csv=csv_)
+    assert r["contagens"]["aplicados_ok"] == 1, r["aplicados"]
+    assert q(f"select phone from public.leads where id = '{fixo1}'") == "554934415750"
+    assert q(f"select count(*) from public.leads where id = '{fixo2}'") == "0"
+
+
+def test_fk_desconhecida_para_conversations_aborta(banco, tmp_path):
+    q("alter table public.quotes add constraint quotes_conv_fk_teste"
+      " foreign key (conversation_id) references public.conversations(id);")
+    m = _script()
+    with pytest.raises(m.FKDesconhecida) as exc:
+        m.executar(m.Psql(banco), tmp_path)
+    assert "quotes.conversation_id" in str(exc.value)

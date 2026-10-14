@@ -126,11 +126,36 @@ def test_sql_do_grupo_trava_todos_os_leads_e_confere_que_existem():
     m = _script()
     linhas = m.sql_mesclar_grupo(_trio(), TABELAS, CHAVES).splitlines()
     assert linhas[0] == "begin;"
-    assert linhas[1] == (f"select 1 from public.leads where id in ('{A}', '{B}', '{C}')"
+    # lead preso por outra transacao: o grupo cai como erro em 5s em vez de travar a rodada
+    assert linhas[1] == "set local lock_timeout = '5s';"
+    assert linhas[2] == (f"select 1 from public.leads where id in ('{A}', '{B}', '{C}')"
                          " for update;")
     sql = "\n".join(linhas)
     assert f"where id in ('{A}', '{B}', '{C}')) <> 3 then" in sql
     assert sql.rstrip().endswith("commit;")
+
+
+def test_sql_confere_que_o_telefone_de_cada_membro_ainda_e_do_grupo():
+    m = _script()
+    sql = m.sql_mesclar_grupo(_trio(), TABELAS, CHAVES)
+    trava = sql.index("for update;")
+    confere = sql.index("raise exception 'grupo 5549999170363: telefone de algum lead mudou")
+    assert trava < confere < sql.index("create temp table _dups")
+    # a mesma regra de canonico(), em SQL
+    assert r"regexp_replace(coalesce(l.phone, ''), '\D', '', 'g')" in sql
+    assert "is distinct from '5549999170363'" in sql
+
+
+def test_fixo_fica_sem_o_9_injetado():
+    m = _script()
+    g = {"canonico": "5549934415750",
+         "sobrevivente": _lead(A, "4934415750", "2026-05-08", "Loja"),
+         "duplicados": [_lead(B, "554934415750", "2026-06-15", "Loja")]}
+    sql = m.sql_mesclar_grupo(g, TABELAS, CHAVES)
+    assert "update public.leads s set phone = '554934415750'," in sql
+    assert "is distinct from '5549934415750'" in sql  # a conferencia usa o canonico
+    assert m.telefone_final("5549934415750") == "554934415750"
+    assert m.telefone_final("5549999170363") == "5549999170363"
 
 
 def test_sql_apaga_os_duplicados_so_depois_de_mover_as_mensagens():
@@ -242,11 +267,19 @@ DEALS = [{"id": "de000000-0000-4000-8000-00000000000b", "lead_id": B, "pipeline_
          {"id": "de000000-0000-4000-8000-00000000000c", "lead_id": C, "pipeline_id": PIPE}]
 
 
+FKS_CONHECIDAS = (
+    [{"tabela": t, "coluna": "lead_id", "alvo": "leads"} for t in sorted(TABELAS - {"lead_tags"})]
+    + [{"tabela": "public.lead_tags", "coluna": "lead_id", "alvo": "public.leads"}]
+    + [{"tabela": t, "coluna": "conversation_id", "alvo": "conversations"}
+       for t in ("messages", "follow_up_jobs", "sales")])
+
+
 class BancoFalso:
     """Responde as consultas de `executar` e guarda o SQL de escrita (um por grupo)."""
 
-    def __init__(self, m, leads=LEADS, deals=DEALS, falhar=(), colunas_p0=3):
+    def __init__(self, m, leads=LEADS, deals=DEALS, falhar=(), colunas_p0=3, fks_extras=()):
         self.m, self.leads, self.deals = m, leads, deals
+        self.fks = [*FKS_CONHECIDAS, *fks_extras]
         self.falhar, self.colunas_p0, self.escritas = falhar, colunas_p0, []
 
     def linhas(self, sql):
@@ -260,6 +293,8 @@ class BancoFalso:
             return [{"column_name": c} for c in colunas][:self.colunas_p0]
         if sql is self.m.Q_LEADS:
             return self.leads
+        if sql is self.m.Q_FKS:
+            return self.fks
         if sql.startswith("select to_jsonb(l) as lead"):  # bling.q_backup (cita todas as tabelas)
             return [{"lead": dict(l), "ids_por_tabela": {}} for l in self.leads if l["id"] in sql]
         if "from public.deals" in sql:
@@ -526,3 +561,22 @@ def test_main_repassa_os_argumentos(monkeypatch):
 def test_exporta_o_psql_do_irmao_do_bling():
     m = _script()
     assert m.Psql is m.bling.Psql
+
+
+@pytest.mark.parametrize("fk", [
+    {"tabela": "quotes", "coluna": "conversation_id", "alvo": "conversations"},
+    {"tabela": "deals", "coluna": "contato_id", "alvo": "leads"},
+    {"tabela": "outro.tabela", "coluna": "lead_id", "alvo": "public.leads"},
+])
+def test_fk_desconhecida_para_leads_ou_conversations_aborta(tmp_path, fk):
+    m = _script()
+    db = BancoFalso(m, fks_extras=[fk])
+    with pytest.raises(m.FKDesconhecida) as exc:
+        m.executar(db, tmp_path)
+    assert fk["coluna"] in str(exc.value)
+    assert db.escritas == [] and not (tmp_path / "pares.csv").exists()
+
+
+def test_fks_conhecidas_passam():
+    m = _script()
+    m.verificar_fks(FKS_CONHECIDAS)

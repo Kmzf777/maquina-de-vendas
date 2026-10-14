@@ -143,6 +143,24 @@ CAMPOS_JA_ERA_CLIENTE = ("ja_era_cliente_fonte", "ja_era_cliente_em", "ja_era_cl
 _CANONICO = re.compile(r"^55\d{11}$")
 
 
+def telefone_final(c):
+    """Telefone que o sobrevivente fica: o canonico; em fixo (`55DD9[2-5]...`, o 9 foi
+    injetado pela regra), o numero sem o 9 — `55DD` + 8 digitos."""
+    return c[:4] + c[5:] if c[5] in "2345" else c
+
+
+# A mesma regra de `canonico()`, em SQL, sobre `l.phone` (conferida dentro da transacao).
+_SQL_CANONICO_DE_L = (
+    "public.leads l"
+    r" cross join lateral (select regexp_replace(coalesce(l.phone, ''), '\D', '', 'g') as d0) n0"
+    " cross join lateral (select case when n0.d0 like '0%' then substr(n0.d0, 2)"
+    " else n0.d0 end as d1) n1"
+    " cross join lateral (select case when length(n1.d1) in (10, 11) then '55' || n1.d1"
+    " else n1.d1 end as d2) n2"
+    " cross join lateral (select case when length(n2.d2) = 12"
+    " then substr(n2.d2, 1, 4) || '9' || substr(n2.d2, 5) else n2.d2 end as d3) n3")
+
+
 def _movidos(fonte):
     """{tabela: [chaves]} do que esta em `fonte` (_mesclagem_movidos ou _mesclagem_total)."""
     return ("(select coalesce(jsonb_object_agg(tabela, chaves), '{}'::jsonb) from"
@@ -228,12 +246,21 @@ def sql_mesclar_grupo(grupo, tabelas, chaves=None):
 
     linhas = [
         "begin;",
+        # Lead preso por outra transacao (webhook, vendedor no CRM): o grupo cai como erro
+        # em 5s e a rodada segue, em vez de ficar parada esperando.
+        "set local lock_timeout = '5s';",
         # Trava o grupo inteiro antes de mover: um insert concorrente com lead_id de um
         # duplicado espera o commit em vez de cair no lead que o DELETE apaga em cascata.
         f"select 1 from public.leads where id in ({todos}) for update;",
         "do $$ begin",
         f"  if (select count(*) from public.leads where id in ({todos})) <> {len(dups) + 1} then",
         f"    raise exception 'grupo {c}: algum lead nao existe mais';",
+        "  end if;",
+        # Depois da trava: o telefone de cada membro ainda normaliza para o canonico? (o
+        # grupo foi calculado fora da transacao; alguem pode ter editado o numero)
+        f"  if exists (select 1 from {_SQL_CANONICO_DE_L} where l.id in ({todos})"
+        f" and (n3.d3 is distinct from '{c}' or l.phone like 'bling-%' or l.phone like '%.%')) then",
+        f"    raise exception 'grupo {c}: telefone de algum lead mudou (nao e mais deste grupo)';",
         "  end if;",
         "end $$;",
         "create temp table _mesclagem_movidos (tabela text not null, chave jsonb) on commit drop;",
@@ -277,7 +304,7 @@ def sql_mesclar_grupo(grupo, tabelas, chaves=None):
 
     linhas.append(f"delete from public.leads where id in ({lista_dups});")
 
-    sets = [f"phone = '{c}'"]
+    sets = [f"phone = '{telefone_final(c)}'"]
     sets += [f"{k} = case when coalesce(btrim(s.{k}), '') = '' then coalesce(d.{k}, s.{k})"
              f" else s.{k} end" for k in CAMPOS_TEXTO]
     sets += [f"{k} = coalesce(s.{k}, d.{k})" for k in CAMPOS_COALESCE]
@@ -322,6 +349,46 @@ def sql_mesclar_grupo(grupo, tabelas, chaves=None):
 # ---------------------------------------------------------------------------
 # Leitura
 # ---------------------------------------------------------------------------
+
+# FKs que apontam para leads/conversations. O SQL do grupo so sabe tratar as conhecidas:
+# para leads, toda FK via `lead_id` (as tabelas sao conferidas por bling.verificar_cobertura);
+# para conversations, as tres abaixo (reapontadas na fusao). Qualquer outra ABORTA — apagar
+# o lead ou a conversa fundida poderia levar linhas em cascata ou falhar no meio.
+Q_FKS = """
+select c.conrelid::regclass::text as tabela, a.attname::text as coluna,
+       c.confrelid::regclass::text as alvo
+from pg_constraint c
+join pg_attribute a on a.attrelid = c.conrelid and a.attnum = any(c.conkey)
+where c.contype = 'f'
+  and c.confrelid in ('public.leads'::regclass, 'public.conversations'::regclass)
+"""
+
+FKS_PARA_CONVERSATIONS = frozenset({
+    ("messages", "conversation_id"), ("follow_up_jobs", "conversation_id"),
+    ("sales", "conversation_id"),
+})
+
+
+class FKDesconhecida(RuntimeError):
+    pass
+
+
+def _sem_public(nome):
+    return nome[len("public."):] if nome.startswith("public.") else nome
+
+
+def verificar_fks(fks):
+    estranhas = []
+    for fk in fks:
+        tabela, coluna, alvo = _sem_public(fk["tabela"]), fk["coluna"], _sem_public(fk["alvo"])
+        conhecida = "." not in tabela and (
+            (alvo == "leads" and coluna == "lead_id")
+            or (alvo == "conversations" and (tabela, coluna) in FKS_PARA_CONVERSATIONS))
+        if not conhecida:
+            estranhas.append(f"{fk['tabela']}.{coluna} -> {fk['alvo']}")
+    if estranhas:
+        raise FKDesconhecida("FK(s) para leads/conversations que o script nao sabe mesclar: "
+                             + ", ".join(sorted(estranhas)) + " — trate no SQL antes de rodar")
 
 Q_LEADS = ("select id, phone, name, created_at from public.leads where phone is not null"
            " and phone <> '' and phone not like 'bling-%' order by created_at, id")
@@ -473,6 +540,7 @@ def executar(db, saida, aplicar=False, limite=None, pares_csv=None, excluir=()):
 
     tabelas = {r["table_name"] for r in db.linhas(bling.Q_TABELAS)}
     bling.verificar_cobertura(tabelas)
+    verificar_fks(db.linhas(Q_FKS))
     pks = {r["tabela"]: r["colunas"] for r in db.linhas(bling.Q_CHAVES)}
 
     leads = db.linhas(Q_LEADS)
