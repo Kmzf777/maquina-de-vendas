@@ -218,7 +218,10 @@ def test_sql_funde_conversa_do_duplicado_no_mesmo_canal():
     m = _script()
     sql = m.sql_mesclar_grupo(_trio(), TABELAS, CHAVES, COLUNAS)
     assert "sc.channel_id = dc.channel_id" in sql
-    assert f"set lead_id = '{A}', conversation_id = r.para where x.conversation_id = r.de" in sql
+    assert (f"update public.messages x set lead_id = '{A}', conversation_id = r.para"
+            " from public.messages o where o.id = x.id and x.conversation_id = r.de"
+            " returning jsonb_build_object('id', x.id, 'de', r.de, 'lead_id', o.lead_id)"
+            " as chave)") in sql
     for tabela in ("follow_up_jobs", "sales", "quotes", "messages_archive"):
         assert (f"update public.{tabela} x set conversation_id = r.para"
                 " where x.conversation_id = r.de") in sql
@@ -653,7 +656,8 @@ def test_fusao_so_usa_colunas_que_existem():
 def test_fusao_registra_os_reapontamentos_para_desfazer():
     m = _script()
     fusao = _fusao(m.sql_mesclar_grupo(_trio(), TABELAS, CHAVES, COLUNAS))
-    assert fusao.count("returning jsonb_build_object('id', x.id, 'de', r.de) as chave") == 5
+    assert fusao.count("returning jsonb_build_object('id', x.id, 'de', r.de) as chave") == 4
+    assert "returning jsonb_build_object('id', x.id, 'de', r.de, 'lead_id', o.lead_id)" in fusao
     for nome in ("messages_fundidas", "sales_reapontadas", "follow_up_jobs_reapontados",
                  "messages_archive_reapontadas", "quotes_reapontadas"):
         assert f"select '{nome}', chave from" in fusao
@@ -662,11 +666,14 @@ def test_fusao_registra_os_reapontamentos_para_desfazer():
 def test_follow_up_pendente_do_duplicado_com_mesmo_tipo_do_sobrevivente_e_cancelado():
     m = _script()
     sql = m.sql_mesclar_grupo(_trio(), TABELAS, CHAVES, COLUNAS)
+    abertos = "('pending', 'processing', 'awaiting_reopen')"
     cancela = (f"with cancelados as (update public.follow_up_jobs d set status = 'cancelled',"
                f" cancel_reason = 'mesclagem' where d.lead_id = '{B}'"
-               " and d.status in ('pending', 'processing') and exists (select 1 from"
+               f" and d.status in {abertos} and exists (select 1 from"
                f" public.follow_up_jobs s where s.lead_id = '{A}'"
-               " and s.status in ('pending', 'processing') and s.job_type = d.job_type)"
+               f" and s.status in {abertos} and s.job_type = d.job_type"
+               r" and (d.job_type not like 'joao\_%'"
+               " or coalesce(s.metadata->>'deal_id', '') = coalesce(d.metadata->>'deal_id', '')))"
                " returning to_jsonb(d.id) as chave) insert into _mesclagem_movidos"
                " select 'follow_up_jobs_cancelados', chave from cancelados;")
     assert cancela in sql
@@ -770,3 +777,19 @@ def test_evento_guarda_a_linha_inteira_do_duplicado():
     sql = m.sql_mesclar_grupo(_trio(), TABELAS, CHAVES, COLUNAS)
     assert "jsonb_build_object('duplicado', to_jsonb(d), 'motivo'" in sql
     assert sql.count(f"from _dups d where d.id = '{B}'") == 1
+
+
+
+def test_fusao_persona_primeira_resposta_e_conversa_apagada():
+    m = _script()
+    fusao = _fusao(m.sql_mesclar_grupo(_trio(), TABELAS, CHAVES, COLUNAS))
+    recente = ("coalesce(dc.last_msg_at, '-infinity'::timestamptz)"
+               " > coalesce(sc.last_msg_at, '-infinity'::timestamptz)")
+    # a persona anda junto com o agent_profile_id (da conversa mais recente)
+    assert (f"agent_persona = case when {recente} then dc.agent_persona"
+            " else sc.agent_persona end") in fusao
+    assert ("first_seller_response_at = least(sc.first_seller_response_at,"
+            " dc.first_seller_response_at)") in fusao
+    apaga = ("insert into _mesclagem_movidos select 'conversas_apagadas', to_jsonb(dc)"
+             " from public.conversations dc where dc.id = r.de;")
+    assert fusao.index(apaga) < fusao.index("delete from public.conversations where id = r.de;")

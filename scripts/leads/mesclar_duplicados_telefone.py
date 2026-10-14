@@ -189,7 +189,7 @@ def _primeiro(expr, filtro):
 
 # Fusao de conversas: o que a conversa que fica herda da que some.
 _CONV_GREATEST = ("last_msg_at", "last_customer_message_at", "last_seller_response_at")
-_CONV_DA_MAIS_RECENTE = ("stage", "status", "flow_state", "agent_profile_id")
+_CONV_DA_MAIS_RECENTE = ("stage", "status", "flow_state", "agent_profile_id", "agent_persona")
 # Tabelas com conversation_id reapontadas na fusao (nome do registro em _mesclagem_movidos).
 _REAPONTAR = (
     ("sales", "sales_reapontadas"),
@@ -222,11 +222,17 @@ def _sql_fundir_conversas(d, s, tabelas, colunas):
         "'de', r.de, 'para', r.para, 'para_antes', to_jsonb(sc))"
         " from public.conversations sc where sc.id = r.para;",
     ]
-    reapontar = []
     if "messages" in tabelas and _reaponta("messages", colunas):
-        reapontar.append(("messages", "messages_fundidas", f"lead_id = '{s}', "))
-    reapontar += [(t, nome, "") for t, nome in _REAPONTAR
-                  if t in tabelas and _reaponta(t, colunas)]
+        # `o` (a mesma linha, lida pelo self-join) ainda ve o lead_id anterior ao UPDATE
+        corpo.append(
+            f"    with reapontadas as (update public.messages x set lead_id = '{s}',"
+            " conversation_id = r.para from public.messages o where o.id = x.id"
+            " and x.conversation_id = r.de"
+            " returning jsonb_build_object('id', x.id, 'de', r.de, 'lead_id', o.lead_id)"
+            " as chave) insert into _mesclagem_movidos select 'messages_fundidas', chave"
+            " from reapontadas;")
+    reapontar = [(t, nome, "") for t, nome in _REAPONTAR
+                 if t in tabelas and _reaponta(t, colunas)]
     for tabela, nome, extra in reapontar:
         corpo.append(
             f"    with reapontadas as (update public.{tabela} x set {extra}conversation_id = r.para"
@@ -245,6 +251,9 @@ def _sql_fundir_conversas(d, s, tabelas, colunas):
     sets += [f"{k} = case when coalesce(sc.{k}, false) or coalesce(dc.{k}, false)"
              f" then true else sc.{k} end" for k in CAMPOS_OR if k in conv]
     sets += [f"{k} = greatest(sc.{k}, dc.{k})" for k in _CONV_GREATEST if k in conv]
+    if "first_seller_response_at" in conv:
+        sets.append("first_seller_response_at = least(sc.first_seller_response_at,"
+                    " dc.first_seller_response_at)")
     if "unread_count" in conv:
         sets.append("unread_count = coalesce(sc.unread_count, 0) + coalesce(dc.unread_count, 0)")
     if "last_msg_at" in conv:
@@ -255,6 +264,8 @@ def _sql_fundir_conversas(d, s, tabelas, colunas):
     if sets:
         corpo.append("    update public.conversations sc set " + ", ".join(sets)
                      + " from public.conversations dc where sc.id = r.para and dc.id = r.de;")
+    corpo.append("    insert into _mesclagem_movidos select 'conversas_apagadas', to_jsonb(dc)"
+                 " from public.conversations dc where dc.id = r.de;")
     corpo.append("    delete from public.conversations where id = r.de;")
     return "\n".join([
         "do $$",
@@ -318,15 +329,20 @@ def sql_mesclar_grupo(grupo, tabelas, chaves=None, colunas=None):
     motivo = bling._texto(f"telefone canonico {c}")
     for d in dups:
         if "follow_up_jobs" in tabelas:
-            # Follow-up aberto do duplicado com o mesmo job_type de um aberto do sobrevivente
-            # (no lead, o que inclui a conversa de destino): cancelado, para o cliente nao
-            # receber a mesma cadencia duas vezes. Cobre a colisao do indice unico do Joao.
+            # Follow-up aberto do duplicado (pending, processing ou awaiting_reopen) com o
+            # mesmo job_type de um aberto do sobrevivente (no lead, o que inclui a conversa
+            # de destino): cancelado, para o cliente nao receber a mesma cadencia duas vezes.
+            # No Joao (`joao_*`) a cadencia e por deal: so e repetido se o deal_id bate.
+            # Cobre a colisao do indice unico do Joao.
+            abertos = "('pending', 'processing', 'awaiting_reopen')"
             linhas.append(
                 "with cancelados as (update public.follow_up_jobs d set"
                 f" {_set_cancelado('follow_up_jobs', colunas)} where d.lead_id = '{d}'"
-                " and d.status in ('pending', 'processing') and exists (select 1 from"
+                f" and d.status in {abertos} and exists (select 1 from"
                 f" public.follow_up_jobs s where s.lead_id = '{s}'"
-                " and s.status in ('pending', 'processing') and s.job_type = d.job_type)"
+                f" and s.status in {abertos} and s.job_type = d.job_type"
+                r" and (d.job_type not like 'joao\_%'"
+                " or coalesce(s.metadata->>'deal_id', '') = coalesce(d.metadata->>'deal_id', '')))"
                 f" returning {_chave_como('follow_up_jobs', chaves, 'd')} as chave)"
                 " insert into _mesclagem_movidos select 'follow_up_jobs_cancelados', chave"
                 " from cancelados;")

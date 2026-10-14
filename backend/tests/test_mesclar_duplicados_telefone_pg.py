@@ -41,6 +41,9 @@ CONV_B = "00000000-0000-4000-8000-0000000000fb"
 PIPE = "00000000-0000-4000-8000-0000000000e1"
 FUP_A = "00000000-0000-4000-8000-00000000f0a1"
 FUP_B = "00000000-0000-4000-8000-00000000f0b1"
+FUP_B_DEAL = "00000000-0000-4000-8000-00000000f0b2"  # joao de outro deal: nao e repetido
+FUP_A_STD = "00000000-0000-4000-8000-00000000f0a2"
+FUP_B_REOPEN = "00000000-0000-4000-8000-00000000f0b3"  # awaiting_reopen repetido
 BROAD = "00000000-0000-4000-8000-0000000000b1"
 TAG = "00000000-0000-4000-8000-0000000000d1"
 VENDA_B = "00000000-0000-4000-8000-0000000005b1"
@@ -70,11 +73,13 @@ insert into public.messages (lead_id, conversation_id, role, content)
 -- estado das conversas DEPOIS das mensagens (o gatilho de messages mexe na conversa)
 update public.conversations set stage = 'secretaria', status = 'active',
        last_msg_at = '2026-06-01 10:00+00', unread_count = 2, followup_enabled = true,
-       last_seller_response_at = '2026-06-01 09:00+00'
+       last_seller_response_at = '2026-06-01 09:00+00',
+       first_seller_response_at = '2026-06-01 08:00+00', agent_persona = 'secretaria'
  where id = '{CONV_A}';
 update public.conversations set stage = 'vendedor', status = 'em_atendimento',
        last_msg_at = '2026-07-01 10:00+00', unread_count = 3, followup_enabled = false,
-       last_seller_response_at = '2026-07-01 09:00+00'
+       last_seller_response_at = '2026-07-01 09:00+00',
+       first_seller_response_at = '2026-05-20 08:00+00', agent_persona = 'vendedora'
  where id = '{CONV_B}';
 insert into public.sales (id, lead_id, conversation_id, product, value, sold_at)
   values ('{VENDA_B}', '{B}', '{CONV_B}', 'Kit', 60, '2026-07-01 12:00+00');
@@ -90,7 +95,15 @@ insert into public.follow_up_jobs (id, conversation_id, lead_id, channel_id, seq
   values ('{FUP_A}', '{CONV_A}', '{A}', '{CANAL}', 1, now() + interval '1 day', 'pending',
           'joao_reativacao'),
          ('{FUP_B}', '{CONV_B}', '{B}', '{CANAL}', 2, now() + interval '1 day', 'pending',
-          'joao_reativacao');
+          'joao_reativacao'),
+         ('{FUP_A_STD}', '{CONV_A}', '{A}', '{CANAL}', 1, now() + interval '2 day', 'pending',
+          'standard'),
+         ('{FUP_B_REOPEN}', '{CONV_B}', '{B}', '{CANAL}', 3, now() + interval '2 day',
+          'awaiting_reopen', 'standard');
+insert into public.follow_up_jobs (id, conversation_id, lead_id, channel_id, sequence, fire_at,
+                                   status, job_type, metadata)
+  values ('{FUP_B_DEAL}', '{CONV_B}', '{B}', '{CANAL}', 1, now() + interval '1 day', 'pending',
+          'joao_reativacao', '{{"deal_id": "deal-x"}}');
 
 insert into public.broadcasts (id, name, template_name) values ('{BROAD}', 'Promo', 'promo');
 insert into public.broadcast_leads (broadcast_id, lead_id)
@@ -244,6 +257,16 @@ def test_aplicar_funde_o_trio_e_o_par(banco, tmp_path):
              f" from public.follow_up_jobs where id = '{FUP_B}'") == \
         f"cancelled|mesclagem|{A}|{CONV_A}"
     assert q(f"select status from public.follow_up_jobs where id = '{FUP_A}'") == "pending"
+    # joao de OUTRO deal nao e repetido: continua pendente, agora no A
+    assert q(f"select status || '|' || lead_id from public.follow_up_jobs"
+             f" where id = '{FUP_B_DEAL}'") == f"pending|{A}"
+    # awaiting_reopen repetido (o A tem um standard pendente) tambem e cancelado
+    assert q(f"select status || '|' || cancel_reason from public.follow_up_jobs"
+             f" where id = '{FUP_B_REOPEN}'") == "cancelled|mesclagem"
+    # persona da conversa mais recente (B); primeira resposta = a mais antiga
+    assert q(f"select agent_persona || '|' || to_char(first_seller_response_at at time zone"
+             f" 'UTC', 'YYYY-MM-DD') from public.conversations where id = '{CONV_A}'") == \
+        "vendedora|2026-05-20"
 
     assert q(f"select count(*) from public.broadcast_leads where broadcast_id = '{BROAD}'") == "1"
     assert q(f"select lead_id from public.broadcast_leads where broadcast_id = '{BROAD}'") == A
@@ -257,11 +280,14 @@ def test_aplicar_funde_o_trio_e_o_par(banco, tmp_path):
     (fundida,) = movidos_b["conversas_fundidas"]
     assert (fundida["de"], fundida["para"]) == (CONV_B, CONV_A)
     assert fundida["para_antes"]["unread_count"] == 2  # estado do A antes da fusao
-    assert movidos_b["follow_up_jobs_cancelados"] == [FUP_B]
+    assert sorted(movidos_b["follow_up_jobs_cancelados"]) == sorted([FUP_B, FUP_B_REOPEN])
+    (apagada,) = movidos_b["conversas_apagadas"]
+    assert (apagada["id"], apagada["unread_count"]) == (CONV_B, 3)
     # reapontamentos com a conversa de origem: da para desfazer
     assert len(movidos_b["messages_fundidas"]) == 2
-    assert {x["de"] for x in movidos_b["messages_fundidas"]} == {CONV_B}
-    assert movidos_b["follow_up_jobs_reapontados"] == [{"id": FUP_B, "de": CONV_B}]
+    assert {(x["de"], x["lead_id"]) for x in movidos_b["messages_fundidas"]} == {(CONV_B, B)}
+    assert sorted(x["id"] for x in movidos_b["follow_up_jobs_reapontados"]) == \
+        sorted([FUP_B, FUP_B_DEAL, FUP_B_REOPEN])
     assert movidos_b["sales_reapontadas"] == [{"id": VENDA_B, "de": CONV_B}]
     assert movidos_b["quotes_reapontadas"] == [{"id": ORC_B, "de": CONV_B}]
     # colisoes apagadas vao inteiras para o evento
