@@ -61,7 +61,7 @@ from fastapi import APIRouter
 from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel, Field
 
-from app.bling import contacts
+from app.bling import auth, contacts
 from app.bling.client import BlingClient
 from app.bling.errors import (
     TRANSIENT, BlingError, BlingUnknownAccount, BlingValidationError, corpo_da_recusa,
@@ -887,7 +887,14 @@ BLING_ENDERECO_TIMEOUT = 5.0
 async def _ficha_do_contato(contato_id: int, account: str) -> dict:
     """Ficha completa do contato no Bling. A listagem (e por isso o espelho
     `bling_contacts`) não traz `endereco`; só o GET por id traz."""
-    async with BlingClient(account=account) as client:
+    # O wait_for do chamador pode cancelar no meio de uma renovação de token:
+    # cortada entre o POST /oauth/token e a gravação do novo refresh_token, a
+    # conta perde a autorização. O shield deixa a renovação terminar sozinha.
+    await asyncio.shield(auth.get_access_token(account))
+    # Uma tentativa só: retentar dentro do teto de BLING_ENDERECO_TIMEOUT
+    # apenas gastaria o prazo do download.
+    async with BlingClient(account=account, timeout=BLING_ENDERECO_TIMEOUT,
+                           max_attempts=1) as client:
         return await client.get(f"/contatos/{contato_id}")
 
 
@@ -936,7 +943,7 @@ async def quote_pdf_endpoint(quote_id: str):
     seller = await asyncio.to_thread(_seller_for, quote.get("created_by"), conta_do_pdf)
     endereco = await _endereco_do_cliente(lead, conta_do_pdf)
 
-    razao =lead.get("razao_social") or lead.get("name")
+    razao = lead.get("razao_social") or lead.get("name")
     # "A/C" só quando o nome da pessoa difere do nome que encabeça o documento —
     # repetir a razão social no A/C seria ruído.
     aos_cuidados = lead.get("name") if lead.get("name") != razao else ""

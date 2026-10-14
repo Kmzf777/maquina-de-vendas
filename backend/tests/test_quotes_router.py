@@ -764,6 +764,42 @@ async def test_pdf_cai_no_endereco_do_lead_quando_o_bling_demora(db, monkeypatch
     assert capturado["quote"]["lead_endereco"] == "Rua do Lead, 9"
 
 
+async def test_timeout_do_endereco_nao_corta_a_renovacao_do_token(monkeypatch):
+    """O teto do endereço cancela a busca da ficha, mas NÃO pode cancelar uma
+    renovação de token em curso: cortada entre o POST /oauth/token e a
+    gravação do novo refresh_token, a conta perde a autorização."""
+    monkeypatch.setattr(qr, "BLING_ENDERECO_TIMEOUT", 0.05)
+    monkeypatch.setattr(qr.contacts, "_contato_do_lead", lambda _l, _a: 555)
+    estado = {"terminou": False}
+
+    async def renovacao_lenta(_account):
+        await asyncio.sleep(0.2)
+        estado["terminou"] = True
+        return "token-novo"
+    monkeypatch.setattr(qr.auth, "get_access_token", renovacao_lenta)
+
+    class _ClienteSemHttp:
+        def __init__(self, *, account, **_kw):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_exc):
+            return False
+
+        async def get(self, _path, **_kw):
+            raise AssertionError("o GET da ficha nao deveria rodar")
+    monkeypatch.setattr(qr, "BlingClient", _ClienteSemHttp)
+
+    endereco = await qr._endereco_do_cliente(
+        {"id": "L1", "endereco": "Rua do Lead, 9"}, "default")
+
+    assert endereco == "Rua do Lead, 9"
+    await asyncio.sleep(0.3)
+    assert estado["terminou"] is True
+
+
 async def test_pdf_cai_no_endereco_do_lead_quando_a_ficha_vem_sem_endereco(db, monkeypatch):
     capturado = _captura_pdf(monkeypatch)
     monkeypatch.setattr(qr, "_load_lead_para_pdf",
