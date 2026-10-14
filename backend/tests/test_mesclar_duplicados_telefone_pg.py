@@ -43,6 +43,8 @@ FUP_A = "00000000-0000-4000-8000-00000000f0a1"
 FUP_B = "00000000-0000-4000-8000-00000000f0b1"
 BROAD = "00000000-0000-4000-8000-0000000000b1"
 TAG = "00000000-0000-4000-8000-0000000000d1"
+VENDA_B = "00000000-0000-4000-8000-0000000005b1"
+ORC_B = "00000000-0000-4000-8000-0000000009b1"
 
 SEED = f"""
 insert into public.channels (id, name, phone, provider)
@@ -65,6 +67,19 @@ insert into public.messages (lead_id, conversation_id, role, content)
          ('{A}', '{CONV_A}', 'assistant', 'oi Douglas'),
          ('{B}', '{CONV_B}', 'user', 'quero cafe'),
          ('{B}', '{CONV_B}', 'assistant', 'temos o kit');
+-- estado das conversas DEPOIS das mensagens (o gatilho de messages mexe na conversa)
+update public.conversations set stage = 'secretaria', status = 'active',
+       last_msg_at = '2026-06-01 10:00+00', unread_count = 2, followup_enabled = true,
+       last_seller_response_at = '2026-06-01 09:00+00'
+ where id = '{CONV_A}';
+update public.conversations set stage = 'vendedor', status = 'em_atendimento',
+       last_msg_at = '2026-07-01 10:00+00', unread_count = 3, followup_enabled = false,
+       last_seller_response_at = '2026-07-01 09:00+00'
+ where id = '{CONV_B}';
+insert into public.sales (id, lead_id, conversation_id, product, value, sold_at)
+  values ('{VENDA_B}', '{B}', '{CONV_B}', 'Kit', 60, '2026-07-01 12:00+00');
+insert into public.quotes (id, lead_id, conversation_id, quoted_at)
+  values ('{ORC_B}', '{B}', '{CONV_B}', '2026-06-30');
 
 insert into public.pipelines (id, name) values ('{PIPE}', 'Vendas');
 insert into public.deals (lead_id, title, pipeline_id)
@@ -74,7 +89,7 @@ insert into public.follow_up_jobs (id, conversation_id, lead_id, channel_id, seq
                                    status, job_type)
   values ('{FUP_A}', '{CONV_A}', '{A}', '{CANAL}', 1, now() + interval '1 day', 'pending',
           'joao_reativacao'),
-         ('{FUP_B}', '{CONV_B}', '{B}', '{CANAL}', 1, now() + interval '1 day', 'pending',
+         ('{FUP_B}', '{CONV_B}', '{B}', '{CANAL}', 2, now() + interval '1 day', 'pending',
           'joao_reativacao');
 
 insert into public.broadcasts (id, name, template_name) values ('{BROAD}', 'Promo', 'promo');
@@ -179,6 +194,18 @@ def test_aplicar_funde_o_trio_e_o_par(banco, tmp_path):
     assert q(f"select count(*) from public.conversations where lead_id = '{A}'"
              f" and channel_id = '{CANAL}'") == "1"
     assert q(f"select count(*) from public.conversations where id = '{CONV_B}'") == "0"
+    # a conversa que fica herda: follow-up desligado (o do B era false), nao lidas somadas,
+    # ultimas datas pelo maior, etapa/status da mais recente (a do B)
+    assert q(f"select followup_enabled::text || '|' || unread_count || '|' || stage || '|'"
+             f" || status || '|' || to_char(last_msg_at at time zone 'UTC', 'YYYY-MM-DD')"
+             f" || '|' || to_char(last_seller_response_at at time zone 'UTC', 'YYYY-MM-DD')"
+             f" from public.conversations where id = '{CONV_A}'") == \
+        "false|5|vendedor|em_atendimento|2026-07-01|2026-07-01"
+    # venda e orcamento da conversa do B foram para a do A
+    assert q(f"select lead_id || '|' || conversation_id from public.sales"
+             f" where id = '{VENDA_B}'") == f"{A}|{CONV_A}"
+    assert q(f"select lead_id || '|' || conversation_id from public.quotes"
+             f" where id = '{ORC_B}'") == f"{A}|{CONV_A}"
 
     assert q(f"select count(*) from public.deals where lead_id = '{A}'") == "2"
     assert q(f"select opt_out::text || '|' || opt_out_channel || '|' || email || '|' || bsuid"
@@ -187,8 +214,9 @@ def test_aplicar_funde_o_trio_e_o_par(banco, tmp_path):
     assert q(f"select name from public.leads where id = '{A}'") == "Douglas"
 
     # follow-up: o do B foi cancelado (nao apagado), mudou de dono e de conversa
-    assert q(f"select status || '|' || lead_id || '|' || conversation_id"
-             f" from public.follow_up_jobs where id = '{FUP_B}'") == f"cancelled|{A}|{CONV_A}"
+    assert q(f"select status || '|' || cancel_reason || '|' || lead_id || '|' || conversation_id"
+             f" from public.follow_up_jobs where id = '{FUP_B}'") == \
+        f"cancelled|mesclagem|{A}|{CONV_A}"
     assert q(f"select status from public.follow_up_jobs where id = '{FUP_A}'") == "pending"
 
     assert q(f"select count(*) from public.broadcast_leads where broadcast_id = '{BROAD}'") == "1"
@@ -200,9 +228,19 @@ def test_aplicar_funde_o_trio_e_o_par(banco, tmp_path):
         f"mesclagem:{B},mesclagem:{C}"
     movidos_b = json.loads(q(f"select metadata->'movidos' from public.lead_events"
                              f" where dedupe_key = 'mesclagem:{B}'"))
-    assert movidos_b["conversas_fundidas"] == [{"de": CONV_B, "para": CONV_A}]
+    (fundida,) = movidos_b["conversas_fundidas"]
+    assert (fundida["de"], fundida["para"]) == (CONV_B, CONV_A)
+    assert fundida["para_antes"]["unread_count"] == 2  # estado do A antes da fusao
     assert movidos_b["follow_up_jobs_cancelados"] == [FUP_B]
-    assert len(movidos_b["messages"]) == 2
+    # reapontamentos com a conversa de origem: da para desfazer
+    assert len(movidos_b["messages_fundidas"]) == 2
+    assert {x["de"] for x in movidos_b["messages_fundidas"]} == {CONV_B}
+    assert movidos_b["follow_up_jobs_reapontados"] == [{"id": FUP_B, "de": CONV_B}]
+    assert movidos_b["sales_reapontadas"] == [{"id": VENDA_B, "de": CONV_B}]
+    assert movidos_b["quotes_reapontadas"] == [{"id": ORC_B, "de": CONV_B}]
+    # colisoes apagadas vao inteiras para o evento
+    assert [x["lead_id"] for x in movidos_b["broadcast_leads_apagados"]] == [B]
+    assert [x["tag_id"] for x in movidos_b["lead_tags_apagados"]] == [TAG]
 
     (arq_backup,) = tmp_path.glob("backup-*.json")  # o --aplicar grava com carimbo de hora
     backup = json.loads(arq_backup.read_text(encoding="utf-8"))
@@ -286,9 +324,13 @@ def test_telefone_que_mudou_depois_do_calculo_aborta_o_grupo(banco):
     m = _script()
     grupo = _grupo_douglas(m)
     q(f"update public.leads set phone = '5511900000000' where id = '{C}'")
-    tabelas = {r["table_name"] for r in m.Psql(banco).linhas(m.bling.Q_TABELAS)}
+    db = m.Psql(banco)
+    tabelas = {r["table_name"] for r in db.linhas(m.bling.Q_TABELAS)}
+    colunas = {}
+    for r in db.linhas(m.Q_COLUNAS):
+        colunas.setdefault(r["table_name"], set()).add(r["column_name"])
     with pytest.raises(RuntimeError) as exc:
-        m.Psql(banco).executar(m.sql_mesclar_grupo(grupo, tabelas))
+        db.executar(m.sql_mesclar_grupo(grupo, tabelas, None, colunas))
     assert "telefone de algum lead mudou" in str(exc.value)
     assert q(f"select count(*) from public.leads where id in ('{A}', '{B}', '{C}')") == "3"
 
