@@ -171,6 +171,43 @@ describe("LeadDetailModal — endereço estruturado", () => {
     expect(screen.getByText("Falha ao atualizar no Bling: Bling indisponível — tente salvar de novo")).toBeTruthy();
   });
 
+  it("depois de salvar, a resposta vira a base: 2º salvamento não reenvia o endereço", async () => {
+    const onSave = vi
+      .fn<(id: string, data: Partial<Lead>) => Promise<unknown>>()
+      .mockResolvedValueOnce({
+        ...LEAD,
+        cep: "38200000",
+        numero: "123",
+        endereco: "123 - 38200-000",
+        bling_endereco: { status: "incomplete" },
+      })
+      .mockResolvedValueOnce({ ...LEAD, nome_fantasia: "teste agente" });
+    renderModal(onSave);
+
+    fireEvent.change(campo("CEP"), { target: { value: "38200-000" } });
+    fireEvent.change(campo("Número"), { target: { value: "123" } });
+    await act(async () => { fireEvent.click(botaoSalvar()!); });
+    expect(onSave).toHaveBeenLastCalledWith("lead-1", { cep: "38200-000", numero: "123" });
+    // O CEP passa a aparecer como o banco gravou.
+    expect(campo("CEP").value).toBe("38200000");
+
+    fireEvent.change(screen.getByDisplayValue("teste"), { target: { value: "teste agente" } });
+    await act(async () => { fireEvent.click(botaoSalvar()!); });
+    expect(onSave).toHaveBeenLastCalledWith("lead-1", { nome_fantasia: "teste agente" });
+  });
+
+  it("resposta de erro (sem id) não vira base: o próximo salvamento reenvia", async () => {
+    const onSave = vi
+      .fn<(id: string, data: Partial<Lead>) => Promise<unknown>>()
+      .mockResolvedValue({ error: "boom" });
+    renderModal(onSave);
+    fireEvent.change(campo("Número"), { target: { value: "123" } });
+    await act(async () => { fireEvent.click(botaoSalvar()!); });
+    fireEvent.change(screen.getByDisplayValue("teste"), { target: { value: "teste agente" } });
+    await act(async () => { fireEvent.click(botaoSalvar()!); });
+    expect(onSave).toHaveBeenLastCalledWith("lead-1", { numero: "123", nome_fantasia: "teste agente" });
+  });
+
   it("salvar campo que não é de endereço não mostra mensagem do Bling", async () => {
     renderModal(() => Promise.resolve({ id: "lead-1" }));
     fireEvent.change(screen.getByDisplayValue("teste"), { target: { value: "teste agente" } });

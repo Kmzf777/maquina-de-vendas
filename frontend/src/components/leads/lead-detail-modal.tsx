@@ -53,6 +53,10 @@ export function LeadDetailModal({
 }: LeadDetailModalProps) {
   const [activeTab, setActiveTab] = useState<TabKey>("dados");
   const [form, setForm] = useState({ ...lead });
+  // O que o banco tem, segundo este modal: começa na prop e passa a ser a
+  // resposta de cada salvamento. Sem isso o 2º salvamento comparava com o lead
+  // de quando o modal abriu e reenviava o endereço inalterado ao Bling.
+  const [base, setBase] = useState<Lead>(lead);
   const [dirty, setDirty] = useState(false);
   const [saving, setSaving] = useState(false);
   const [statusBling, setStatusBling] = useState<{ texto: string; erro: boolean } | null>(null);
@@ -149,16 +153,33 @@ export function LeadDetailModal({
 
   async function handleSave() {
     setSaving(true);
+    const enviado = form;
     const changes: Record<string, unknown> = {};
     for (const key of Object.keys(form) as (keyof Lead)[]) {
-      if (form[key] !== lead[key]) {
+      if (form[key] !== base[key]) {
         changes[key] = form[key];
       }
     }
     const res = (await onSave(lead.id, changes as Partial<Lead>)) as
-      | { bling_endereco?: BlingEnderecoResultado }
+      | (Partial<Lead> & { bling_endereco?: BlingEnderecoResultado })
       | null
       | undefined;
+    if (res && res.id === lead.id) {
+      // Resposta é o lead gravado (CEP/UF normalizados, `endereco` formatado):
+      // vira a nova base e aparece no formulário — exceto onde o vendedor já
+      // digitou outra coisa enquanto salvava.
+      const { bling_endereco: _ignorado, ...gravado } = res;
+      void _ignorado;
+      setBase((b) => ({ ...b, ...gravado }));
+      setForm((atual) => {
+        const proximo = { ...atual };
+        for (const [k, v] of Object.entries(gravado)) {
+          const chave = k as keyof Lead;
+          if (atual[chave] === enviado[chave]) (proximo as Record<string, unknown>)[k] = v;
+        }
+        return proximo;
+      });
+    }
     setStatusBling(mensagemBlingEndereco(res?.bling_endereco));
     setSaving(false);
     setDirty(false);
