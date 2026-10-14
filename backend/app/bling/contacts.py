@@ -540,6 +540,133 @@ async def _atualizar_existente(client, contact_id: int, dados: dict,
     return {**corpo, "id": contact_id}
 
 
+# --------------------------------------------------------------------------
+# Endereco da ficha do lead -> contato(s) vinculado(s) no Bling
+# --------------------------------------------------------------------------
+_COLUNAS_ENDERECO = "id, cep, logradouro, numero, complemento, bairro, municipio, uf"
+
+
+def _texto(valor) -> str:
+    return valor.strip() if isinstance(valor, str) else ""
+
+
+def endereco_do_lead(lead: dict) -> dict | None:
+    """`endereco.geral` do Bling montado com os campos estruturados do lead.
+
+    None quando o endereco esta incompleto (sem CEP de 8 digitos, rua, numero,
+    cidade ou UF): endereco pela metade fica so no CRM, nunca vai ao Bling.
+    Bairro e complemento sao opcionais; vazios nao apagam nada no Bling porque
+    `_corpo_do_put` so sobrescreve campo preenchido.
+    """
+    geral = {
+        "endereco": _texto(lead.get("logradouro")),
+        "numero": _texto(lead.get("numero")),
+        "complemento": _texto(lead.get("complemento")),
+        "bairro": _texto(lead.get("bairro")),
+        "cep": "".join(ch for ch in _texto(lead.get("cep")) if ch.isdigit()),
+        "municipio": _texto(lead.get("municipio")),
+        "uf": _texto(lead.get("uf")).upper(),
+    }
+    if len(geral["cep"]) != 8:
+        return None
+    if not all(geral[c] for c in ("endereco", "numero", "municipio", "uf")):
+        return None
+    return geral
+
+
+async def atualizar_endereco(client, contact_id: int, geral: dict) -> dict:
+    """Troca so o `endereco.geral` do contato no Bling (GET + PUT).
+
+    O PUT do Bling v3 substitui o cadastro inteiro, por isso parte do GET e
+    reaproveita `_corpo_do_put`: nome, documento, telefone, cobranca etc. ficam
+    como estao. Sem mudanca, nao faz PUT. Devolve o contato como ficou (para o
+    espelho). Erros do Bling propagam — quem chama decide o que fazer.
+    """
+    atual = (await client.get(f"/contatos/{contact_id}")).get("data") or {}
+    if not isinstance(atual, dict) or not atual:
+        raise BlingValidationError("contato não encontrado no Bling", status=404)
+    corpo = _corpo_do_put(atual, {"endereco": {"geral": geral}})
+    if corpo == _sem_data_vazia({k: v for k, v in atual.items()
+                                 if k not in _SOMENTE_LEITURA}):
+        return {**atual, "id": contact_id}
+    await client.put(f"/contatos/{contact_id}", corpo)
+    logger.info("[BLING] contato %s: endereco atualizado com o da ficha do lead", contact_id)
+    return {**corpo, "id": contact_id}
+
+
+def _load_lead_endereco(lead_id: str) -> dict | None:
+    res = (get_supabase().table("leads").select(_COLUNAS_ENDERECO)
+           .eq("id", lead_id).limit(1).maybe_single().execute())
+    return getattr(res, "data", None) or None
+
+
+def _vinculos_do_lead(lead_id: str) -> list[dict]:
+    res = (get_supabase().table("lead_bling_contacts").select("account, bling_contact_id")
+           .eq("lead_id", lead_id).execute())
+    return getattr(res, "data", None) or []
+
+
+def _motivo_da_falha(exc: Exception) -> str:
+    if isinstance(exc, BlingValidationError) and exc.fields:
+        return "; ".join(f"{f['campo']}: {f['mensagem']}" if f["campo"] else f["mensagem"]
+                         for f in exc.fields)
+    return str(exc) or type(exc).__name__
+
+
+def _cliente_bling(account: str):
+    from app.bling.client import BlingClient
+    return BlingClient(account=account)
+
+
+async def sync_lead_address(lead_id: str, client_factory=None) -> dict:
+    """Leva o endereco da ficha do lead a TODOS os contatos vinculados no Bling.
+
+    status: lead_not_found | incomplete | not_linked | updated | partial | error.
+    Nos tres ultimos, `contas` traz o resultado por conta
+    (`{account, contact_id, status: "updated"}` ou `status: "error"` + `message`).
+    Uma conta falhar nao impede a outra. `client_factory(account)` devolve um
+    cliente async-context-manager (padrao: `BlingClient` da conta).
+    """
+    factory = client_factory or _cliente_bling
+    lead = await asyncio.to_thread(_load_lead_endereco, lead_id)
+    if not lead:
+        return {"status": "lead_not_found"}
+    geral = endereco_do_lead(lead)
+    if geral is None:
+        return {"status": "incomplete"}
+    vinculos = await asyncio.to_thread(_vinculos_do_lead, lead_id)
+    if not vinculos:
+        return {"status": "not_linked"}
+
+    contas: list[dict] = []
+    for vinculo in vinculos:
+        account = vinculo.get("account")
+        contact_id = vinculo.get("bling_contact_id")
+        try:
+            async with factory(account) as client:
+                no_bling = await atualizar_endereco(client, contact_id, geral)
+            await asyncio.to_thread(_upsert_mirror, no_bling, account)
+            contas.append({"account": account, "contact_id": contact_id,
+                           "status": "updated"})
+        except Exception as exc:
+            # So conta, contato e tipo do erro no log: a mensagem do Bling pode
+            # repetir dado do cliente.
+            logger.warning("[BLING] lead %s: endereco nao foi para o contato %s "
+                           "(conta %s): %s", lead_id, contact_id, account,
+                           type(exc).__name__)
+            contas.append({"account": account, "contact_id": contact_id,
+                           "status": "error", "message": _motivo_da_falha(exc)})
+
+    atualizadas = sum(1 for c in contas if c["status"] == "updated")
+    if atualizadas == len(contas):
+        status = "updated"
+    elif atualizadas:
+        status = "partial"
+    else:
+        status = "error"
+    return {"status": status, "contas": contas}
+
+
 async def create_contact(client, lead: dict, dados: dict,
                           account: str = config.DEFAULT_ACCOUNT,
                           avisos: list[str] | None = None) -> int:

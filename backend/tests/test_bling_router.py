@@ -1406,3 +1406,37 @@ def test_atualizar_pedido_modalidade_invalida_devolve_422_sem_chamar_o_bling(mon
 
     assert resp.status_code == 422
     assert capturado == {}
+
+
+# --------------------------------------------------------------------------
+# POST /contacts/address: endereco da ficha do lead vai para o(s) contato(s)
+# vinculado(s) no Bling.
+# --------------------------------------------------------------------------
+def test_endereco_endpoint_devolve_o_resultado_por_conta(monkeypatch):
+    chamadas = []
+    resultado = {"status": "partial", "contas": [
+        {"account": "default", "contact_id": 9, "status": "updated"},
+        {"account": "secundaria", "contact_id": 77, "status": "error", "message": "x"},
+    ]}
+
+    async def fake_sync(lead_id):
+        chamadas.append(lead_id)
+        return resultado
+
+    monkeypatch.setattr(br.contacts, "sync_lead_address", fake_sync)
+
+    resp = asyncio.run(br.sync_contact_address_endpoint(br.AddressSyncIn(lead_id="L1")))
+
+    assert chamadas == ["L1"]
+    assert resp == resultado
+
+
+def test_endereco_endpoint_lead_inexistente_devolve_404(monkeypatch):
+    async def fake_sync(_lead_id):
+        return {"status": "lead_not_found"}
+
+    monkeypatch.setattr(br.contacts, "sync_lead_address", fake_sync)
+
+    resp = asyncio.run(br.sync_contact_address_endpoint(br.AddressSyncIn(lead_id="L1")))
+
+    assert resp.status_code == 404

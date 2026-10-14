@@ -568,6 +568,25 @@ async def create_contact_endpoint(body: ContactIn):
     return resposta
 
 
+class AddressSyncIn(BaseModel):
+    lead_id: str
+
+
+@router.post("/contacts/address")
+async def sync_contact_address_endpoint(body: AddressSyncIn):
+    """Leva o endereco da ficha do lead ao(s) contato(s) vinculado(s) no Bling.
+
+    Chamado pelo PATCH /api/leads/[id] do CRM depois de salvar o endereco.
+    Sempre 200 com `status` (incomplete/not_linked/updated/partial/error) e o
+    resultado por conta em `contas` — falha no Bling nao desfaz nada no CRM,
+    so volta como mensagem para a ficha. Lead inexistente = 404.
+    """
+    resultado = await contacts.sync_lead_address(body.lead_id)
+    if resultado.get("status") == "lead_not_found":
+        return JSONResponse({"error": "lead_not_found"}, status_code=404)
+    return resultado
+
+
 @router.post("/contacts/link")
 async def link_contact_endpoint(lead_id: str, contact_id: int,
                                  account: str = Query(config.DEFAULT_ACCOUNT)):
