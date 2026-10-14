@@ -228,7 +228,9 @@ def run_sender(now: datetime | None = None, limit: int = 100, dry_run: bool = Fa
             platforms.remove("google")
     if dry_run:
         # Simulação: nenhum claim, envio ou gravação — só a contagem do que sairia.
-        sim = simulate_sender(now, platforms=tuple(platforms), google_stages=google_stages)["enviaria"]             if platforms else {}
+        sim = {}
+        if platforms:
+            sim = simulate_sender(now, platforms=tuple(platforms), google_stages=google_stages)["enviaria"]
         logger.info("[CONVERSOES][SIMULACAO] envio: %s", sim)
         return {**counts, "simulacao": sim}
     if not platforms:
