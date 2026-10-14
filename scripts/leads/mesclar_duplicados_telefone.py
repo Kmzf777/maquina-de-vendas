@@ -54,6 +54,7 @@ _BLING = Path(__file__).resolve().parents[1] / "bling" / "mesclar_leads_duplicad
 _spec = importlib.util.spec_from_file_location("_mesclar_bling", _BLING)
 bling = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(bling)
+Psql = bling.Psql
 
 
 # ---------------------------------------------------------------------------
@@ -563,7 +564,7 @@ def main(argv=None):
     if args.aplicar and not args.pares:
         ap.error("--aplicar exige --pares <csv revisado>")
     saida = args.saida or f"mesclagem-tel-{datetime.now():%Y%m%d-%H%M%S}"
-    resultado = executar(bling.Psql(args.psql), saida, aplicar=args.aplicar,
+    resultado = executar(Psql(args.psql), saida, aplicar=args.aplicar,
                          limite=args.limite, pares_csv=args.pares,
                          excluir=[i.strip() for i in args.excluir.split(",") if i.strip()])
     print(json.dumps(resultado["contagens"], ensure_ascii=False))

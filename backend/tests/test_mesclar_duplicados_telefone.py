@@ -484,3 +484,8 @@ def test_main_repassa_os_argumentos(monkeypatch):
     m.main(["--psql", "psql", "--saida", "/tmp/x", "--excluir", f"{A}, {B}", "--limite", "0"])
     assert visto["excluir"] == [A, B] and visto["limite"] == 0 and visto["aplicar"] is False
     assert visto["saida"] == "/tmp/x"
+
+
+def test_exporta_o_psql_do_irmao_do_bling():
+    m = _script()
+    assert m.Psql is m.bling.Psql
