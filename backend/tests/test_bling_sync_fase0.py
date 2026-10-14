@@ -273,8 +273,9 @@ def test_importar_usa_o_detalhe_e_a_conta(monkeypatch):
     async def fake_lead(cli, account, pedido):
         return "LEAD-9"
 
-    monkeypatch.setattr(bf, "upsert_from_bling", fake_upsert)
-    monkeypatch.setattr(bf, "_lead_do_pedido", fake_lead)
+    import app.bling.pedido_import as pi
+    monkeypatch.setattr(pi, "upsert_from_bling", fake_upsert)
+    monkeypatch.setattr(pi, "lead_do_pedido", fake_lead)
     asyncio.run(bf._importar(client, "secundaria", 7))
 
     assert client.gets == ["/pedidos/vendas/7"]

@@ -32,7 +32,6 @@ from app.bling.alertas import alertar
 from app.bling.errors import (
     BlingAuthError, BlingNotConfigured, BlingRateLimitError, BlingServerError,
 )
-from app.bling.orders import upsert_from_bling
 from app.bling.trava import TravaOcupada, trava_pedidos
 from app.db.supabase import get_supabase
 
@@ -78,37 +77,14 @@ def _save_progress(account: str, cursor: str) -> None:
         on_conflict="account,resource").execute())
 
 
-def _contact_row(account: str, contact_id: int) -> dict | None:
-    res = (get_supabase().table("bling_contacts").select("*")
-           .eq("account", account).eq("id", contact_id)
-           .limit(1).maybe_single().execute())
-    return getattr(res, "data", None)
-
-
-async def _lead_for_contact(account: str, contact_id: int | None) -> str | None:
-    if not contact_id:
-        return None
-    from app.bling.contacts import ensure_lead
-    contato = await asyncio.to_thread(_contact_row, account, int(contact_id))
-    return await ensure_lead(contato, account) if contato else None
-
-
-async def _lead_do_pedido(client, account: str, pedido: dict) -> str | None:
-    contact_id = (pedido.get("contato") or {}).get("id")
-    return await _lead_for_contact(account, contact_id)
-
-
 async def _importar(client, account: str, order_id: int) -> None:
-    """Busca o detalhe (a listagem nao traz itens) e projeta em `sales`."""
-    pedido = (await client.get(f"/pedidos/vendas/{order_id}")).get("data") or {}
-    if not pedido:
-        return
-    lead_id = await _lead_do_pedido(client, account, pedido)
-    await upsert_from_bling(
-        pedido, lead_id=lead_id,
-        event_date=f"{pedido.get('data')}T00:00:00+00:00",
-        account=account,
-    )
+    """Detalhe + lead (com contato sob demanda, Fase 1) + upsert. Ver `pedido_import`.
+
+    Le o atributo do modulo na hora da chamada (e nao um `from ... import`) para os
+    testes conseguirem trocar a implementacao.
+    """
+    from app.bling import pedido_import
+    await pedido_import.importar_pedido(client, account, order_id)
 
 
 def _intervalo(months: int, hoje: date | None, data_inicial: date | None,

@@ -4,6 +4,7 @@ from datetime import date, timedelta
 import pytest
 
 import app.bling.backfill as bf
+import app.bling.pedido_import as pi
 
 
 @pytest.fixture(autouse=True)
@@ -75,13 +76,13 @@ def test_run_projeta_cada_pedido_e_salva_progresso(monkeypatch):
         projetados.append((pedido["id"], account))
         return "S"
 
-    async def fake_lead(account, contact_id):
+    async def fake_lead(client, account, pedido):
         return "LEAD-1"
 
     progresso = []
     monkeypatch.setattr(bf, "_new_client", lambda account: FakeClient())
-    monkeypatch.setattr(bf, "upsert_from_bling", fake_upsert)
-    monkeypatch.setattr(bf, "_lead_for_contact", fake_lead)
+    monkeypatch.setattr(pi, "upsert_from_bling", fake_upsert)
+    monkeypatch.setattr(pi, "lead_do_pedido", fake_lead)
     monkeypatch.setattr(bf, "_save_progress", lambda account, cursor: progresso.append(cursor))
     # Sem isso, _load_progress bate no Supabase real (URL fake da suite) e o
     # teste falha com erro de rede em vez de exercitar a logica do backfill.
@@ -123,13 +124,13 @@ def test_run_encaminha_a_conta_explicita_para_client_e_upsert(monkeypatch):
         contas_upsert.append(account)
         return "S"
 
-    async def fake_lead(account, contact_id):
+    async def fake_lead(client, account, pedido):
         contas_lead.append(account)
         return None
 
     monkeypatch.setattr(bf, "_new_client", fake_new_client)
-    monkeypatch.setattr(bf, "upsert_from_bling", fake_upsert)
-    monkeypatch.setattr(bf, "_lead_for_contact", fake_lead)
+    monkeypatch.setattr(pi, "upsert_from_bling", fake_upsert)
+    monkeypatch.setattr(pi, "lead_do_pedido", fake_lead)
     monkeypatch.setattr(bf, "_load_progress", lambda account: None)
     monkeypatch.setattr(bf, "_save_progress", lambda account, cursor: None)
 

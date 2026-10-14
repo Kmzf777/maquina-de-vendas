@@ -28,12 +28,22 @@ from app.bling.orders import (
     upsert_from_bling,
     venda_recente,
 )
+from app.bling.errors import BlingRateLimitError
+from app.bling.pedido_import import buscar_contato
 from app.bling.products import apply_product_event
 from app.db.supabase import get_supabase
 
 logger = logging.getLogger(__name__)
 
-MAX_ATTEMPTS = 6
+# BACKOFF por evento (Fase 1, G2/G9). Antes: 6 tentativas, uma por tick, todas
+# em ~6 minutos — o evento desistia muito antes de qualquer coisa mudar. Agora a
+# n-esima falha espera BACKOFF_MINUTOS[n-1]; somando as 7 esperas sao ~8 h antes
+# de virar `failed`. E `failed` nao e mais para sempre: a varredura de pedidos
+# (Fase 2) reabre os que desistiram ha mais de 6 h (`reabrir_falhas`).
+MAX_ATTEMPTS = 8
+BACKOFF_MINUTOS = (1, 5, 15, 30, 60, 120, 240, 240)
+# Rate limit/teto diario nao e defeito do evento: reagenda sem gastar tentativa.
+_ESPERA_RATE_LIMIT = timedelta(minutes=2)
 BATCH = 20
 
 
@@ -42,16 +52,24 @@ def _new_client(account: str):
     return BlingClient(account=account)
 
 
+def _agora() -> datetime:
+    return datetime.now(timezone.utc)
+
+
 def _claim() -> list[dict]:
+    agora = _agora().isoformat()
     res = (get_supabase().table("bling_webhook_events")
            .select("*").eq("status", "pending")
+           .or_(f"next_attempt_at.is.null,next_attempt_at.lte.{agora}")
            .order("received_at").limit(BATCH).execute())
     return getattr(res, "data", None) or []
 
 
-def _update(event_id: str, payload: dict) -> None:
+def _update(event_id: str, account: str, payload: dict) -> None:
+    # PK e (account, event_id) desde a migration multi-conta: filtrar so por
+    # event_id alcancaria o evento homonimo da outra conta.
     (get_supabase().table("bling_webhook_events").update(payload)
-     .eq("event_id", event_id).execute())
+     .eq("event_id", event_id).eq("account", account).execute())
 
 
 def _contact_filter(account: str, contact_id: int) -> dict:
@@ -114,14 +132,20 @@ async def _handle_order(evento: dict, corpo: dict) -> str:
     async with _new_client(account) as client:
         pedido = (await client.get(f"/pedidos/vendas/{order_id}")).get("data") or {}
 
-    contact_id = (pedido.get("contato") or dados.get("contato") or {}).get("id")
-    lead_id = None
-    if contact_id:
-        contato = await asyncio.to_thread(_contact_row, account, int(contact_id))
-        if contato:
-            lead_id = await _resolve_lead(account, contato)
-        else:
-            logger.warning("[BLING WEBHOOK] contato %s ausente do espelho", contact_id)
+        contact_id = (pedido.get("contato") or dados.get("contato") or {}).get("id")
+        lead_id = None
+        if contact_id:
+            contato = await asyncio.to_thread(_contact_row, account, int(contact_id))
+            if not contato:
+                # G2: cliente cadastrado hoje ainda nao esta no espelho (sync diario).
+                # Busca na hora, pelo MESMO cliente da conta (rate limit e token dela).
+                logger.info("[BLING WEBHOOK] contato %s fora do espelho — buscando", contact_id)
+                contato = await buscar_contato(client, account, int(contact_id))
+            if contato:
+                lead_id = await _resolve_lead(account, contato)
+            else:
+                logger.warning("[BLING WEBHOOK] contato %s nao existe no Bling (conta %s)",
+                               contact_id, account)
 
     # Reposicao (spec P1.4): so venda NOVA e RECENTE. A checagem de existencia vem antes
     # do upsert (depois dele a linha sempre existe). Pedido criado pelo CRM ja passou
@@ -157,6 +181,7 @@ async def process_pending() -> int:
         corpo = evento.get("payload") or {}
         nome = evento.get("event") or ""
         tentativas = int(evento.get("attempts") or 0) + 1
+        conta = evento.get("account") or config.DEFAULT_ACCOUNT
 
         try:
             if nome.startswith("order."):
@@ -166,22 +191,34 @@ async def process_pending() -> int:
             else:
                 logger.info("[BLING WEBHOOK] recurso nao tratado: %s", nome)
                 status = "skipped"
+        except BlingRateLimitError as exc:
+            # Orcamento de 3 req/s ou teto diario da conta: o evento nao tem culpa.
+            await asyncio.to_thread(_update, evento["event_id"], conta, {
+                "status": "pending", "attempts": tentativas - 1, "last_error": str(exc),
+                "next_attempt_at": (_agora() + _ESPERA_RATE_LIMIT).isoformat(),
+            })
+            continue
         except Exception as exc:  # noqa: BLE001
             if tentativas >= MAX_ATTEMPTS:
-                await asyncio.to_thread(_update, evento["event_id"], {
+                await asyncio.to_thread(_update, evento["event_id"], conta, {
                     "status": "failed", "attempts": tentativas, "last_error": str(exc),
+                    # momento da desistencia: `reabrir_falhas(parados_ha=...)` le daqui
+                    "processed_at": _agora().isoformat(), "next_attempt_at": None,
                 })
-                logger.error("[BLING WEBHOOK] evento %s desistiu: %s",
-                             evento["event_id"], exc)
+                logger.error("[BLING WEBHOOK] evento %s (conta %s) desistiu: %s",
+                             evento["event_id"], conta, exc)
             else:
-                await asyncio.to_thread(_update, evento["event_id"], {
+                espera = timedelta(minutes=BACKOFF_MINUTOS[
+                    min(tentativas - 1, len(BACKOFF_MINUTOS) - 1)])
+                await asyncio.to_thread(_update, evento["event_id"], conta, {
                     "status": "pending", "attempts": tentativas, "last_error": str(exc),
+                    "next_attempt_at": (_agora() + espera).isoformat(),
                 })
             continue
 
-        await asyncio.to_thread(_update, evento["event_id"], {
+        await asyncio.to_thread(_update, evento["event_id"], conta, {
             "status": status, "attempts": tentativas,
-            "processed_at": datetime.now(timezone.utc).isoformat(),
+            "processed_at": _agora().isoformat(), "next_attempt_at": None,
         })
         if status == "done":
             concluidos += 1
@@ -207,7 +244,7 @@ def reabrir_falhas(account: str, *, parados_ha: timedelta | None = None,
     conta = config.account(account).key
     agora = agora or datetime.now(timezone.utc)
     consulta = (get_supabase().table("bling_webhook_events")
-                .update({"status": "pending", "attempts": 0})
+                .update({"status": "pending", "attempts": 0, "next_attempt_at": None})
                 .eq("account", conta).eq("status", "failed"))
     if parados_ha is not None:
         consulta = consulta.lt("processed_at", (agora - parados_ha).isoformat())

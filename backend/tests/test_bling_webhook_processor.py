@@ -17,6 +17,11 @@ class FakeQuery:
     def order(self, *_a, **_k):
         return self
 
+    def or_(self, expr):
+        # claim com backoff (Fase 1): `next_attempt_at` nulo ou vencido
+        self.store.setdefault("or_" + self.name, []).append(expr)
+        return self
+
     def limit(self, *_a, **_k):
         return self
 
@@ -137,6 +142,8 @@ async def test_processador_usa_a_conta_da_linha_do_evento(monkeypatch):
     monkeypatch.setattr(wp, "_new_client", lambda account: FakeAccountClient(account))
     monkeypatch.setattr(wp, "_last_event_date", _none_async)
     monkeypatch.setattr(wp, "_contact_row", lambda a, c: None)
+    # Fase 1: contato fora do espelho e buscado no Bling; aqui o foco e a conta.
+    monkeypatch.setattr(wp, "buscar_contato", _none_async)
     monkeypatch.setattr(wp, "upsert_from_bling", _ok_async)
 
     evento = {"event_id": "e1", "event": "order.created", "account": "secundaria"}
