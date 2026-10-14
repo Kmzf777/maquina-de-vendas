@@ -9,6 +9,7 @@ conferencias antes/depois.
     python -m app.bling.ops backfill --conta default --desde 2026-07-23
     python -m app.bling.ops backfill --conta secundaria --meses 12 --estimar
     python -m app.bling.ops reprocessar-falhas --conta default
+    python -m app.bling.ops varrer --conta secundaria
 
 Todos os comandos sao idempotentes. A saida e um JSON com o resultado (sem
 segredo nenhum: so contagens, datas e ids de pedido).
@@ -44,6 +45,8 @@ def _parser() -> argparse.ArgumentParser:
     r = sub.add_parser("reprocessar-falhas",
                        help="devolve para a fila os eventos de webhook `failed` da conta")
     r.add_argument("--conta", required=True)
+    v = sub.add_parser("varrer", help="uma rodada da varredura de pedidos alterados")
+    v.add_argument("--conta", required=True)
     return p
 
 
@@ -57,6 +60,9 @@ async def _executar(args) -> dict:
         from app.bling.webhook_processor import reabrir_falhas
         return {"conta": args.conta,
                 "reabertos": await asyncio.to_thread(reabrir_falhas, args.conta)}
+    if args.comando == "varrer":
+        from app.bling.varredura import varrer_conta
+        return await varrer_conta(args.conta)
     raise SystemExit(f"comando desconhecido: {args.comando}")
 
 
@@ -65,7 +71,7 @@ def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     resultado = asyncio.run(_executar(args))
     print(json.dumps(resultado, ensure_ascii=False, indent=2, default=str))
-    return 1 if resultado.get("status") in ("interrompido", "ocupado", "erro") else 0
+    return 1 if resultado.get("status") in ("interrompido", "ocupado", "erro", "parcial") else 0
 
 
 if __name__ == "__main__":

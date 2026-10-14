@@ -190,3 +190,27 @@ def accounts() -> list[BlingAccount]:
     """Todas as contas configuradas, na mesma ordem de account_keys()
     ('default' primeiro quando o env nao a menciona explicitamente)."""
     return [account(k) for k in account_keys()]
+
+
+# Varredura periodica de pedidos (Fase 2 da avaliacao 2026-10-13). Em HORAS no
+# env, porque e assim que o dono pensa; limitada a [1, 3] h: menos que 1 h so
+# gasta orcamento a toa (o webhook ja cobre o caso quente), mais que 3 h deixa
+# situacao/cancelamento velhos por tempo demais no CRM.
+VARREDURA_HORAS_PADRAO = 2
+
+
+def varredura_intervalo_segundos() -> int:
+    bruto = _env("BLING_VARREDURA_HORAS")
+    try:
+        horas = float(bruto) if bruto else VARREDURA_HORAS_PADRAO
+    except ValueError:
+        logger.warning("Valor invalido para BLING_VARREDURA_HORAS: %r (esperava horas)", bruto)
+        horas = VARREDURA_HORAS_PADRAO
+    return int(min(max(horas, 1), 3) * 3600)
+
+
+def varredura_ativa() -> bool:
+    """Chave de desligar a varredura e a reconciliacao sem novo deploy
+    (`BLING_VARREDURA_ATIVA=false` + restart do worker). Padrao: ligada."""
+    bruto = _env("BLING_VARREDURA_ATIVA").lower()
+    return bruto not in ("0", "false", "no", "off")

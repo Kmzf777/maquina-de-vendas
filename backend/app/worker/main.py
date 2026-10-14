@@ -79,9 +79,19 @@ async def _bling_webhook_tick() -> None:
     await bling_webhook_tick()
 
 
+async def _bling_pedidos_tick() -> None:
+    from app.bling.varredura import bling_pedidos_tick
+    await bling_pedidos_tick()
+
+
 async def _valeria_repasse_tick() -> None:
     from app.button_flow.valeria_repasse import varrer
     await varrer()
+
+
+def _bling_varredura_intervalo() -> int:
+    from app.bling.config import varredura_intervalo_segundos
+    return varredura_intervalo_segundos()
 
 
 # (nome, tipo, fn, intervalo/fallback em segundos)
@@ -102,6 +112,9 @@ TASK_SPECS = [
     ("valeria_repasse_parados", "periodic", _valeria_repasse_tick, 600),
     ("bling-sync", "periodic", _bling_sync_tick, 86400),
     ("bling-jobs", "periodic", _bling_jobs_tick, 30),
+    # Varredura de pedidos alterados, por conta (BLING_VARREDURA_HORAS, 1-3 h).
+    # Pega webhook perdido e situacao congelada; ver app/bling/varredura.py.
+    ("bling-pedidos", "periodic", _bling_pedidos_tick, _bling_varredura_intervalo()),
     # "event": o receiver publica no event bus ao gravar o webhook — o
     # processamento acorda na hora, com varredura de fallback a cada 60s.
     ("bling-webhook", "event", _bling_webhook_tick, 60),

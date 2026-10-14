@@ -199,3 +199,45 @@ select e.account, count(distinct (e.payload->'data'->>'id')) pedidos_sem_venda
  where e.event like 'order.%' and e.event <> 'order.deleted' and s.id is null
  group by 1;
 ```
+
+---
+
+## 6. Varredura periódica (Fase 2): automática, só conferir
+
+O worker roda `bling-pedidos` a cada `BLING_VARREDURA_HORAS` horas. O padrão é 2 h, e o valor fica limitado entre 1 e 3 h. A primeira rodada sai no start do worker, e o tick fica ancorado nele, como os outros. Para cada conta, em sequência:
+1. Lista os pedidos alterados desde o cursor `bling_sync_state(account, 'orders_sweep')`, menos 6 h de margem.
+2. Importa cada pedido listado, com o detalhe e o contato sob demanda.
+3. Avança o cursor **só** se todos entraram. Se algum falhar, o cursor fica onde estava e sai o alerta `bling_varredura_falhou`.
+4. Reabre os eventos de webhook `failed` da conta parados há mais de 6 h e recebidos nos últimos 7 dias.
+
+> **VERIFICAR ANTES DO DEPLOY: o filtro da API.** A varredura usa `GET /pedidos/vendas?dataAlteracaoInicial=AAAA-MM-DD HH:MM:SS`, o mesmo formato que já funciona em `/produtos` e `/contatos`. Não deu para confirmar na documentação oficial da API v3 (developer.bling.com.br/referencia) que o endpoint de pedidos aceita esse filtro. Confira lá antes do push, sem chamar a API com token de produção.
+>
+> - Se o filtro **existir**, nada a fazer.
+> - Se **não existir**, o Bling pode ignorá-lo e devolver a base inteira. A guarda `MAX_PEDIDOS_POR_RODADA = 500` para a rodada sem importar nada e grava o alerta `bling_varredura_filtro`. Nesse caso, desligue a varredura com `BLING_VARREDURA_ATIVA=false` no worker (`docker service update --env-add BLING_VARREDURA_ATIVA=false canastra_worker`) e peça a troca do filtro para `dataInicial`/`dataFinal` dos últimos 60–90 dias.
+> - Se o Bling responder **400** ao filtro, a rodada para com o alerta `bling_varredura_falhou` e nada é gravado.
+
+Custo por conta e por rodada: 1 listagem a cada 100 pedidos alterados, mais 1 detalhe por pedido alterado, mais 1 contato por cliente novo fora do espelho. Hoje são ~30 pedidos por semana na `default` e ~20 na `secundaria`. Com a margem de 6 h, cada pedido aparece em ~3 rodadas seguidas. Dá por volta de **100–300 chamadas por dia por conta**, menos de 0,3% da cota.
+
+Rodar uma rodada na mão (idempotente):
+
+```bash
+sg docker -c "$OPS varrer --conta default"
+sg docker -c "$OPS varrer --conta secundaria"
+```
+
+Conferência:
+
+```sql
+-- o cursor anda a cada 1-3 h nas duas contas
+select account, last_sync_at, now() - last_sync_at atraso
+  from bling_sync_state where resource = 'orders_sweep' order by 1;
+-- situação congelada: "Em aberto"/"Em andamento" com mais de 30 dias deve cair (G5)
+select bling_account, bling_situacao_nome, count(*)
+  from sales where bling_order_id is not null and sold_at < now() - interval '30 days'
+   and bling_situacao_nome in ('Em aberto', 'Em andamento')
+ group by 1, 2;
+-- alertas da varredura
+select type, metadata->>'conta' conta, count(*), max(created_at)
+  from system_alerts where type like 'bling_%' and created_at > now() - interval '7 days'
+ group by 1, 2 order by 1, 2;
+```
