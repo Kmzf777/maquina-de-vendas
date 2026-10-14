@@ -109,10 +109,27 @@ def test_classificar_fixo_com_9_injetado_vai_para_revisar():
 # ── Task 5: SQL de um grupo ─────────────────────────────────────────────────────────
 
 TABELAS = {"messages", "conversations", "follow_up_jobs", "sales", "broadcast_leads",
-           "lead_tags", "deals", "lead_events", "campaign_enrollments"}
+           "lead_tags", "deals", "lead_events", "campaign_enrollments", "quotes",
+           "messages_archive"}
 CHAVES = {"messages": ["id"], "conversations": ["id"], "follow_up_jobs": ["id"],
           "sales": ["id"], "broadcast_leads": ["id"], "lead_tags": ["lead_id", "tag_id"],
-          "deals": ["id"], "lead_events": ["id"], "campaign_enrollments": ["id"]}
+          "deals": ["id"], "lead_events": ["id"], "campaign_enrollments": ["id"],
+          "quotes": ["id"], "messages_archive": ["id"]}
+# Colunas de producao (crm_schema, 14/10) das tabelas que a fusao de conversas toca.
+COLUNAS = {
+    "conversations": {"id", "lead_id", "channel_id", "stage", "status", "campaign_id",
+                      "last_msg_at", "created_at", "agent_profile_id", "unread_count",
+                      "followup_enabled", "first_seller_response_at", "last_seller_response_at",
+                      "last_customer_message_at", "agent_persona", "flow_state"},
+    "follow_up_jobs": {"id", "conversation_id", "lead_id", "channel_id", "sequence", "fire_at",
+                       "status", "cancel_reason", "sent_at", "env_tag", "created_at", "job_type",
+                       "metadata", "claimed_at", "wamid"},
+    "campaign_enrollments": {"id", "campaign_id", "lead_id", "status", "metadata"},
+    "messages": {"id", "lead_id", "conversation_id", "role", "content", "created_at"},
+    "sales": {"id", "lead_id", "conversation_id", "value", "sold_at"},
+    "quotes": {"id", "lead_id", "conversation_id", "quoted_at"},
+    "messages_archive": {"id", "lead_id", "conversation_id", "content"},
+}
 
 
 def _trio():
@@ -124,7 +141,7 @@ def _trio():
 
 def test_sql_do_grupo_trava_todos_os_leads_e_confere_que_existem():
     m = _script()
-    linhas = m.sql_mesclar_grupo(_trio(), TABELAS, CHAVES).splitlines()
+    linhas = m.sql_mesclar_grupo(_trio(), TABELAS, CHAVES, COLUNAS).splitlines()
     assert linhas[0] == "begin;"
     # lead preso por outra transacao: o grupo cai como erro em 5s em vez de travar a rodada
     assert linhas[1] == "set local lock_timeout = '5s';"
@@ -137,7 +154,7 @@ def test_sql_do_grupo_trava_todos_os_leads_e_confere_que_existem():
 
 def test_sql_confere_que_o_telefone_de_cada_membro_ainda_e_do_grupo():
     m = _script()
-    sql = m.sql_mesclar_grupo(_trio(), TABELAS, CHAVES)
+    sql = m.sql_mesclar_grupo(_trio(), TABELAS, CHAVES, COLUNAS)
     trava = sql.index("for update;")
     confere = sql.index("raise exception 'grupo 5549999170363: telefone de algum lead mudou")
     assert trava < confere < sql.index("create temp table _dups")
@@ -151,7 +168,7 @@ def test_fixo_fica_sem_o_9_injetado():
     g = {"canonico": "5549934415750",
          "sobrevivente": _lead(A, "4934415750", "2026-05-08", "Loja"),
          "duplicados": [_lead(B, "554934415750", "2026-06-15", "Loja")]}
-    sql = m.sql_mesclar_grupo(g, TABELAS, CHAVES)
+    sql = m.sql_mesclar_grupo(g, TABELAS, CHAVES, COLUNAS)
     assert "update public.leads s set phone = '554934415750'," in sql
     assert "is distinct from '5549934415750'" in sql  # a conferencia usa o canonico
     assert m.telefone_final("5549934415750") == "554934415750"
@@ -160,7 +177,7 @@ def test_fixo_fica_sem_o_9_injetado():
 
 def test_sql_apaga_os_duplicados_so_depois_de_mover_as_mensagens():
     m = _script()
-    sql = m.sql_mesclar_grupo(_trio(), TABELAS, CHAVES)
+    sql = m.sql_mesclar_grupo(_trio(), TABELAS, CHAVES, COLUNAS)
     apaga = sql.index(f"delete from public.leads where id in ('{B}', '{C}');")
     assert sql.count("update public.messages") >= 4  # fusao + mover, para B e para C
     assert sql.rindex("update public.messages") < apaga
@@ -169,7 +186,7 @@ def test_sql_apaga_os_duplicados_so_depois_de_mover_as_mensagens():
 
 def test_sql_cancela_follow_up_e_matricula_em_vez_de_apagar():
     m = _script()
-    sql = m.sql_mesclar_grupo(_trio(), TABELAS, CHAVES)
+    sql = m.sql_mesclar_grupo(_trio(), TABELAS, CHAVES, COLUNAS)
     assert "update public.follow_up_jobs d set status = 'cancelled'" in sql
     assert "update public.campaign_enrollments d set status = 'cancelled'" in sql
     assert "delete from public.follow_up_jobs" not in sql
@@ -182,20 +199,24 @@ def test_sql_cancela_follow_up_e_matricula_em_vez_de_apagar():
 
 def test_sql_apaga_as_demais_colisoes_como_o_bling():
     m = _script()
-    sql = m.sql_mesclar_grupo(_trio(), TABELAS, CHAVES)
-    assert (f"delete from public.broadcast_leads d using public.broadcast_leads s"
-            f" where d.lead_id = '{C}' and s.lead_id = '{A}' and (s.broadcast_id = d.broadcast_id);"
-            in sql)
+    sql = m.sql_mesclar_grupo(_trio(), TABELAS, CHAVES, COLUNAS)
+    # a linha apagada vai inteira para o evento 'mesclagem' (<tabela>_apagados)
+    assert (f"with apagados as (delete from public.broadcast_leads d using public.broadcast_leads s"
+            f" where d.lead_id = '{C}' and s.lead_id = '{A}' and (s.broadcast_id = d.broadcast_id)"
+            " returning to_jsonb(d) as chave) insert into _mesclagem_movidos"
+            " select 'broadcast_leads_apagados', chave from apagados;") in sql
     assert "delete from public.lead_tags d using public.lead_tags s" in sql
+    assert "'lead_tags_apagados'" in sql
 
 
 def test_sql_funde_conversa_do_duplicado_no_mesmo_canal():
     m = _script()
-    sql = m.sql_mesclar_grupo(_trio(), TABELAS, CHAVES)
+    sql = m.sql_mesclar_grupo(_trio(), TABELAS, CHAVES, COLUNAS)
     assert "sc.channel_id = dc.channel_id" in sql
     assert f"set lead_id = '{A}', conversation_id = r.para where x.conversation_id = r.de" in sql
-    assert "update public.follow_up_jobs set conversation_id = r.para where conversation_id = r.de" in sql
-    assert "update public.sales set conversation_id = r.para where conversation_id = r.de" in sql
+    for tabela in ("follow_up_jobs", "sales", "quotes", "messages_archive"):
+        assert (f"update public.{tabela} x set conversation_id = r.para"
+                " where x.conversation_id = r.de") in sql
     assert "'conversas_fundidas'" in sql
     assert "delete from public.conversations where id = r.de;" in sql
     # a fusao vem antes de mover as conversas restantes do duplicado
@@ -205,7 +226,7 @@ def test_sql_funde_conversa_do_duplicado_no_mesmo_canal():
 
 def test_sql_grava_um_evento_mesclagem_por_duplicado():
     m = _script()
-    sql = m.sql_mesclar_grupo(_trio(), TABELAS, CHAVES)
+    sql = m.sql_mesclar_grupo(_trio(), TABELAS, CHAVES, COLUNAS)
     assert f"'mesclagem:{B}'" in sql and f"'mesclagem:{C}'" in sql
     assert sql.count("on conflict do nothing") == 2
     assert "'telefone canonico 5549999170363'" in sql
@@ -217,7 +238,7 @@ def test_sql_grava_um_evento_mesclagem_por_duplicado():
 
 def test_sql_copia_campos_e_nunca_perde_opt_out():
     m = _script()
-    sql = m.sql_mesclar_grupo(_trio(), TABELAS, CHAVES)
+    sql = m.sql_mesclar_grupo(_trio(), TABELAS, CHAVES, COLUNAS)
     copia = sql[sql.index("update public.leads s set phone"):]
     for campo in ("name", "email", "bsuid", "wa_id", "gclid", "traffic_type"):
         # sem valor nos duplicados, fica o do sobrevivente (nunca vira null)
@@ -231,7 +252,7 @@ def test_sql_copia_campos_e_nunca_perde_opt_out():
 
 def test_sql_tabela_que_nao_existe_no_banco_nao_entra():
     m = _script()
-    sql = m.sql_mesclar_grupo(_trio(), {"messages"}, CHAVES)
+    sql = m.sql_mesclar_grupo(_trio(), {"messages"}, CHAVES, COLUNAS)
     assert "follow_up_jobs" not in sql and "public.conversations" not in sql
     assert "public.sales" not in sql
 
@@ -241,11 +262,11 @@ def test_sql_recusa_id_que_nao_e_uuid():
     g = _trio()
     g["duplicados"][1] = _lead("x'; drop table leads; --", "554999170363", "2026-09-04")
     with pytest.raises(ValueError):
-        m.sql_mesclar_grupo(g, TABELAS, CHAVES)
+        m.sql_mesclar_grupo(g, TABELAS, CHAVES, COLUNAS)
     g = _trio()
     g["canonico"] = "55'; drop"
     with pytest.raises(ValueError):
-        m.sql_mesclar_grupo(g, TABELAS, CHAVES)
+        m.sql_mesclar_grupo(g, TABELAS, CHAVES, COLUNAS)
 
 
 # ── Task 5: executar (dry-run e --aplicar) com um banco falso ────────────────────────
@@ -295,6 +316,9 @@ class BancoFalso:
             return self.leads
         if sql is self.m.Q_FKS:
             return self.fks
+        if sql is self.m.Q_COLUNAS:
+            return [{"table_name": t, "column_name": c}
+                    for t, cs in COLUNAS.items() for c in sorted(cs)]
         if sql.startswith("select to_jsonb(l) as lead"):  # bling.q_backup (cita todas as tabelas)
             return [{"lead": dict(l), "ids_por_tabela": {}} for l in self.leads if l["id"] in sql]
         if "from public.deals" in sql:
@@ -580,3 +604,89 @@ def test_fk_desconhecida_para_leads_ou_conversations_aborta(tmp_path, fk):
 def test_fks_conhecidas_passam():
     m = _script()
     m.verificar_fks(FKS_CONHECIDAS)
+
+
+# -- revisao de 14/10 ------------------------------------------------------------------
+
+def _fusao(sql):
+    return sql[sql.index("for r in select dc.id"):sql.index("end loop;")]
+
+
+def test_fusao_junta_o_estado_da_conversa_antes_de_apagar_a_do_duplicado():
+    m = _script()
+    fusao = _fusao(m.sql_mesclar_grupo(_trio(), TABELAS, CHAVES, COLUNAS))
+    junta = fusao.index("update public.conversations sc set")
+    assert junta < fusao.index("delete from public.conversations where id = r.de;")
+    assert ("followup_enabled = coalesce(sc.followup_enabled, true)"
+            " and coalesce(dc.followup_enabled, true)") in fusao
+    for c in ("last_msg_at", "last_customer_message_at", "last_seller_response_at"):
+        assert f"{c} = greatest(sc.{c}, dc.{c})" in fusao
+    assert "unread_count = coalesce(sc.unread_count, 0) + coalesce(dc.unread_count, 0)" in fusao
+    recente = ("coalesce(dc.last_msg_at, '-infinity'::timestamptz)"
+               " > coalesce(sc.last_msg_at, '-infinity'::timestamptz)")
+    for c in ("stage", "status", "flow_state", "agent_profile_id"):
+        assert f"{c} = case when {recente} then dc.{c} else sc.{c} end" in fusao
+    assert "where sc.id = r.para and dc.id = r.de;" in fusao
+    # o estado anterior da conversa de destino vai para o evento (da para desfazer)
+    assert "'para_antes', to_jsonb(sc)" in fusao
+    assert fusao.index("'conversas_fundidas'") < junta
+
+
+def test_fusao_so_usa_colunas_que_existem():
+    m = _script()
+    colunas = {**COLUNAS, "conversations": {"id", "lead_id", "channel_id", "last_msg_at"}}
+    fusao = _fusao(m.sql_mesclar_grupo(_trio(), TABELAS, CHAVES, colunas))
+    assert "last_msg_at = greatest(sc.last_msg_at, dc.last_msg_at)" in fusao
+    for c in ("followup_enabled", "unread_count", "flow_state", "stage =",
+              "last_seller_response_at"):
+        assert c not in fusao
+    sem_coluna = {**COLUNAS, "quotes": {"id", "lead_id"}}
+    assert "update public.quotes x set conversation_id" not in \
+        m.sql_mesclar_grupo(_trio(), TABELAS, CHAVES, sem_coluna)
+
+
+def test_fusao_registra_os_reapontamentos_para_desfazer():
+    m = _script()
+    fusao = _fusao(m.sql_mesclar_grupo(_trio(), TABELAS, CHAVES, COLUNAS))
+    assert fusao.count("returning jsonb_build_object('id', x.id, 'de', r.de) as chave") == 5
+    for nome in ("messages_fundidas", "sales_reapontadas", "follow_up_jobs_reapontados",
+                 "messages_archive_reapontadas", "quotes_reapontadas"):
+        assert f"select '{nome}', chave from" in fusao
+
+
+def test_follow_up_pendente_do_duplicado_com_mesmo_tipo_do_sobrevivente_e_cancelado():
+    m = _script()
+    sql = m.sql_mesclar_grupo(_trio(), TABELAS, CHAVES, COLUNAS)
+    cancela = (f"with cancelados as (update public.follow_up_jobs d set status = 'cancelled',"
+               f" cancel_reason = 'mesclagem' where d.lead_id = '{B}'"
+               " and d.status in ('pending', 'processing') and exists (select 1 from"
+               f" public.follow_up_jobs s where s.lead_id = '{A}'"
+               " and s.status in ('pending', 'processing') and s.job_type = d.job_type)"
+               " returning to_jsonb(d.id) as chave) insert into _mesclagem_movidos"
+               " select 'follow_up_jobs_cancelados', chave from cancelados;")
+    assert cancela in sql
+    # antes da fusao do mesmo duplicado (ainda na conversa original) e antes de mover
+    assert sql.index(cancela) < sql.index(f"where dc.lead_id = '{B}'")
+    assert sql.count("update public.follow_up_jobs d set status = 'cancelled'") == 2  # B e C
+
+
+def test_cancel_reason_so_onde_a_coluna_existe():
+    m = _script()
+    sql = m.sql_mesclar_grupo(_trio(), TABELAS, CHAVES, COLUNAS)
+    assert "update public.campaign_enrollments d set status = 'cancelled' from" in sql
+    com = {**COLUNAS,
+           "campaign_enrollments": COLUNAS["campaign_enrollments"] | {"cancel_reason"}}
+    assert ("update public.campaign_enrollments d set status = 'cancelled',"
+            " cancel_reason = 'mesclagem' from") in \
+        m.sql_mesclar_grupo(_trio(), TABELAS, CHAVES, com)
+    sem = {**COLUNAS, "follow_up_jobs": COLUNAS["follow_up_jobs"] - {"cancel_reason"}}
+    assert "cancel_reason" not in m.sql_mesclar_grupo(_trio(), TABELAS, CHAVES, sem)
+
+
+def test_executar_passa_as_colunas_do_banco_para_o_sql(tmp_path):
+    m = _script()
+    db = BancoFalso(m)
+    csv_ = _csv_pares(tmp_path / "p.csv", [DOUGLAS])
+    m.executar(db, tmp_path / "s", aplicar=True, pares_csv=csv_)
+    assert "unread_count = coalesce(sc.unread_count, 0)" in db.escritas[0]
+    assert "cancel_reason = 'mesclagem'" in db.escritas[0]

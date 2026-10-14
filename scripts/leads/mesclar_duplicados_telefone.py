@@ -185,35 +185,69 @@ def _primeiro(expr, filtro):
             f" filter (where {filtro}))[1]")
 
 
-def _sql_fundir_conversas(d, s, tabelas, chaves):
+# Fusao de conversas: o que a conversa que fica herda da que some.
+_CONV_GREATEST = ("last_msg_at", "last_customer_message_at", "last_seller_response_at")
+_CONV_DA_MAIS_RECENTE = ("stage", "status", "flow_state", "agent_profile_id")
+# Tabelas com conversation_id reapontadas na fusao (nome do registro em _mesclagem_movidos).
+_REAPONTAR = (
+    ("sales", "sales_reapontadas"),
+    ("follow_up_jobs", "follow_up_jobs_reapontados"),
+    ("messages_archive", "messages_archive_reapontadas"),
+    ("quotes", "quotes_reapontadas"),
+)
+
+
+def _set_cancelado(tabela, colunas):
+    sets = "status = 'cancelled'"
+    if "cancel_reason" in colunas.get(tabela, ()):
+        sets += ", cancel_reason = 'mesclagem'"
+    return sets
+
+
+def _reaponta(tabela, colunas):
+    return {"id", "conversation_id"} <= colunas.get(tabela, set())
+
+
+def _sql_fundir_conversas(d, s, tabelas, colunas):
     """Conversa do duplicado no mesmo canal de uma do sobrevivente: (lead_id, channel_id) e
-    unico, entao em vez de mover, as mensagens/follow-ups/vendas vao para a conversa do
-    sobrevivente e a do duplicado e apagada."""
-    corpo = []
-    if "messages" in tabelas:
-        corpo.append(
-            f"    with movidas as (update public.messages x set lead_id = '{s}',"
-            " conversation_id = r.para where x.conversation_id = r.de"
-            f" returning {bling._chave('messages', chaves)} as chave)"
-            " insert into _mesclagem_movidos select 'messages', chave from movidas;")
-    for tabela in ("follow_up_jobs", "sales"):
-        if tabela in tabelas:
-            corpo.append(f"    update public.{tabela} set conversation_id = r.para"
-                         " where conversation_id = r.de;")
-    if "messages_archive" in tabelas:
-        # O arquivo de mensagens nao tem FK para conversations; so reaponta se a coluna existir.
-        corpo += [
-            "    if exists (select 1 from information_schema.columns where table_schema = 'public'"
-            " and table_name = 'messages_archive' and column_name = 'conversation_id') then",
-            "      execute format('update public.messages_archive set conversation_id = %L"
-            " where conversation_id = %L', r.para, r.de);",
-            "    end if;",
-        ]
-    corpo += [
-        "    insert into _mesclagem_movidos values ('conversas_fundidas',"
-        " jsonb_build_object('de', r.de, 'para', r.para));",
-        "    delete from public.conversations where id = r.de;",
+    unico, entao em vez de mover, tudo o que aponta para ela vai para a conversa do
+    sobrevivente, que herda o estado (follow-up, nao lidas, ultimas datas, etapa da mais
+    recente) e a do duplicado e apagada. Cada reapontamento e registrado com a conversa de
+    origem ({id, de}) e o estado anterior da conversa que fica vai em `para_antes`."""
+    conv = colunas.get("conversations", set())
+    corpo = [
+        "    insert into _mesclagem_movidos select 'conversas_fundidas', jsonb_build_object("
+        "'de', r.de, 'para', r.para, 'para_antes', to_jsonb(sc))"
+        " from public.conversations sc where sc.id = r.para;",
     ]
+    reapontar = []
+    if "messages" in tabelas and _reaponta("messages", colunas):
+        reapontar.append(("messages", "messages_fundidas", f"lead_id = '{s}', "))
+    reapontar += [(t, nome, "") for t, nome in _REAPONTAR
+                  if t in tabelas and _reaponta(t, colunas)]
+    for tabela, nome, extra in reapontar:
+        corpo.append(
+            f"    with reapontadas as (update public.{tabela} x set {extra}conversation_id = r.para"
+            " where x.conversation_id = r.de"
+            " returning jsonb_build_object('id', x.id, 'de', r.de) as chave)"
+            f" insert into _mesclagem_movidos select '{nome}', chave from reapontadas;")
+    sets = []
+    if "followup_enabled" in conv:
+        # conservador: se alguma das duas tinha o follow-up desligado, fica desligado
+        sets.append("followup_enabled = coalesce(sc.followup_enabled, true)"
+                    " and coalesce(dc.followup_enabled, true)")
+    sets += [f"{k} = greatest(sc.{k}, dc.{k})" for k in _CONV_GREATEST if k in conv]
+    if "unread_count" in conv:
+        sets.append("unread_count = coalesce(sc.unread_count, 0) + coalesce(dc.unread_count, 0)")
+    if "last_msg_at" in conv:
+        recente = ("coalesce(dc.last_msg_at, '-infinity'::timestamptz)"
+                   " > coalesce(sc.last_msg_at, '-infinity'::timestamptz)")
+        sets += [f"{k} = case when {recente} then dc.{k} else sc.{k} end"
+                 for k in _CONV_DA_MAIS_RECENTE if k in conv]
+    if sets:
+        corpo.append("    update public.conversations sc set " + ", ".join(sets)
+                     + " from public.conversations dc where sc.id = r.para and dc.id = r.de;")
+    corpo.append("    delete from public.conversations where id = r.de;")
     return "\n".join([
         "do $$",
         "declare r record;",
@@ -227,11 +261,12 @@ def _sql_fundir_conversas(d, s, tabelas, chaves):
     ])
 
 
-def sql_mesclar_grupo(grupo, tabelas, chaves=None):
+def sql_mesclar_grupo(grupo, tabelas, chaves=None, colunas=None):
     """SQL de UM grupo, numa transacao: funde no sobrevivente cada duplicado (em ordem de
     created_at), apaga os duplicados e so entao reescreve o telefone e copia os campos (bsuid
     e bling_contact_id sao unicos em `leads`). `tabelas` = tabelas com lead_id do banco;
-    `chaves` = {tabela: colunas da PK} (bling.Q_CHAVES)."""
+    `chaves` = {tabela: colunas da PK} (bling.Q_CHAVES); `colunas` = {tabela: colunas}
+    (Q_COLUNAS) — a fusao de conversas so usa colunas que existem."""
     c = str(grupo["canonico"])
     if not _CANONICO.match(c):
         raise ValueError(f"telefone canonico invalido: {c!r}")
@@ -242,6 +277,10 @@ def sql_mesclar_grupo(grupo, tabelas, chaves=None):
     todos = ", ".join(f"'{i}'" for i in [s, *dups])
     lista_dups = ", ".join(f"'{i}'" for i in dups)
     tabelas = set(tabelas)
+    if "conversations" in tabelas and colunas is None:
+        raise ValueError("sql_mesclar_grupo: passe `colunas` (Q_COLUNAS) — sem elas a fusao"
+                         " de conversas nao sabe o que reapontar")
+    colunas = {t: set(cs) for t, cs in (colunas or {}).items()}
     cobertas = sorted(tabelas & bling.TABELAS_COBERTAS)
 
     linhas = [
@@ -270,21 +309,40 @@ def sql_mesclar_grupo(grupo, tabelas, chaves=None):
     ]
     motivo = bling._texto(f"telefone canonico {c}")
     for d in dups:
+        if "follow_up_jobs" in tabelas:
+            # Follow-up aberto do duplicado com o mesmo job_type de um aberto do sobrevivente
+            # (no lead, o que inclui a conversa de destino): cancelado, para o cliente nao
+            # receber a mesma cadencia duas vezes. Cobre a colisao do indice unico do Joao.
+            linhas.append(
+                "with cancelados as (update public.follow_up_jobs d set"
+                f" {_set_cancelado('follow_up_jobs', colunas)} where d.lead_id = '{d}'"
+                " and d.status in ('pending', 'processing') and exists (select 1 from"
+                f" public.follow_up_jobs s where s.lead_id = '{s}'"
+                " and s.status in ('pending', 'processing') and s.job_type = d.job_type)"
+                f" returning {_chave_como('follow_up_jobs', chaves, 'd')} as chave)"
+                " insert into _mesclagem_movidos select 'follow_up_jobs_cancelados', chave"
+                " from cancelados;")
         if "conversations" in tabelas:
-            linhas.append(_sql_fundir_conversas(d, s, tabelas, chaves))
+            linhas.append(_sql_fundir_conversas(d, s, tabelas, colunas))
         for tabela in cobertas:
-            if tabela in CANCELAM:
+            if tabela == "follow_up_jobs":
+                pass  # cancelado acima, antes da fusao
+            elif tabela in CANCELAM:
                 linhas.append(
-                    f"with cancelados as (update public.{tabela} d set status = 'cancelled'"
+                    f"with cancelados as (update public.{tabela} d set"
+                    f" {_set_cancelado(tabela, colunas)}"
                     f" from public.{tabela} s where d.lead_id = '{d}' and s.lead_id = '{s}'"
                     f" and ({bling.COLISAO[tabela]})"
                     f" returning {_chave_como(tabela, chaves, 'd')} as chave)"
                     f" insert into _mesclagem_movidos select '{tabela}_cancelados', chave"
                     " from cancelados;")
             elif tabela in bling.COLISAO:
+                # a linha inteira vai para o evento 'mesclagem' (e esta no backup)
                 linhas.append(
-                    f"delete from public.{tabela} d using public.{tabela} s"
-                    f" where d.lead_id = '{d}' and s.lead_id = '{s}' and ({bling.COLISAO[tabela]});")
+                    f"with apagados as (delete from public.{tabela} d using public.{tabela} s"
+                    f" where d.lead_id = '{d}' and s.lead_id = '{s}' and ({bling.COLISAO[tabela]})"
+                    " returning to_jsonb(d) as chave) insert into _mesclagem_movidos"
+                    f" select '{tabela}_apagados', chave from apagados;")
             linhas.append(
                 f"with movidas as (update public.{tabela} x set lead_id = '{s}'"
                 f" where x.lead_id = '{d}' returning {bling._chave(tabela, chaves)} as chave)"
@@ -367,6 +425,16 @@ FKS_PARA_CONVERSATIONS = frozenset({
     ("messages", "conversation_id"), ("follow_up_jobs", "conversation_id"),
     ("sales", "conversation_id"),
 })
+
+
+# Colunas das tabelas que a fusao de conversas e os cancelamentos tocam: o SQL so usa as que
+# existem (cancel_reason, estado da conversa, conversation_id de quotes/messages_archive).
+Q_COLUNAS = """
+select table_name, column_name from information_schema.columns
+where table_schema = 'public'
+  and table_name in ('conversations', 'follow_up_jobs', 'campaign_enrollments', 'messages',
+                     'sales', 'quotes', 'messages_archive')
+"""
 
 
 class FKDesconhecida(RuntimeError):
@@ -541,6 +609,9 @@ def executar(db, saida, aplicar=False, limite=None, pares_csv=None, excluir=()):
     tabelas = {r["table_name"] for r in db.linhas(bling.Q_TABELAS)}
     bling.verificar_cobertura(tabelas)
     verificar_fks(db.linhas(Q_FKS))
+    colunas = {}
+    for r in db.linhas(Q_COLUNAS):
+        colunas.setdefault(r["table_name"], set()).add(r["column_name"])
     pks = {r["tabela"]: r["colunas"] for r in db.linhas(bling.Q_CHAVES)}
 
     leads = db.linhas(Q_LEADS)
@@ -596,7 +667,7 @@ def executar(db, saida, aplicar=False, limite=None, pares_csv=None, excluir=()):
                     "duplicados": [d["id"] for d in g["duplicados"]],
                     "motivo": motivos.get(g["canonico"], "")}
             try:
-                saida_psql = db.executar(sql_mesclar_grupo(g, tabelas, pks))
+                saida_psql = db.executar(sql_mesclar_grupo(g, tabelas, pks, colunas))
                 aplicados.append({**base, "resultado": "ok", "erro": "",
                                   "movidos": bling.movidos_do_stdout(saida_psql),
                                   "movidos_por_duplicado":
