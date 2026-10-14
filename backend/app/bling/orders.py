@@ -675,6 +675,13 @@ _TRECHOS_CANCELAMENTO = ("cancelad", "devolv", "devoluc")
 # parte do pedido ficou com o cliente. A venda continua contando e ganha a marca
 # `sales.devolucao_parcial` + o alerta `bling_devolucao_parcial` para revisao.
 _TRECHO_PARCIAL = "parcial"
+# Decisao do dono (2026-10-13): "Em devolucao" (devolucao EM ANDAMENTO) tambem nao
+# cancela — ainda pode nao se concretizar. Trata como a parcial: a venda segue
+# contando e fica marcada para revisao. So "Cancelado" e devolucao TOTAL CONCLUIDA
+# ("Devolvido", sem "parcial" e sem "em ") cancelam.
+# OBS: a coluna `sales.devolucao_parcial` e o alerta `bling_devolucao_parcial`
+# significam, na pratica, "devolucao a revisar" (parcial OU em andamento).
+_TRECHO_EM_ANDAMENTO = "em devoluc"
 
 # Classes de situacao (ver `classificar_situacao`).
 CANCELA = "cancela"
@@ -699,7 +706,8 @@ def classificar_situacao(nome: str | None, situacao_id=None) -> str:
     if nome:
         normal = _sem_acento(str(nome))
         if any(t in normal for t in _TRECHOS_CANCELAMENTO):
-            if _TRECHO_PARCIAL in normal and "cancelad" not in normal:
+            if "cancelad" not in normal and (
+                    _TRECHO_PARCIAL in normal or _TRECHO_EM_ANDAMENTO in normal):
                 return DEVOLUCAO_PARCIAL
             return CANCELA
         return NORMAL

@@ -196,18 +196,24 @@ async def _rodada(conta: str, inicio: datetime, resultado: dict) -> None:
 
 
 async def bling_pedidos_tick() -> None:
-    """Tick do worker: varre (e, uma vez por dia, reconcilia) as contas em
-    SEQUENCIA (o orcamento e por conta, mas rodar em serie deixa o log legivel e
-    o pico de carga no banco menor)."""
-    if not config.enabled() or not config.varredura_ativa():
+    """Tick do worker: varre (se `varredura_ativa`) e reconcilia (se
+    `reconciliacao_ativa`, uma vez por dia) as contas em SEQUENCIA (o orcamento e
+    por conta, mas rodar em serie deixa o log legivel e o pico de carga menor).
+    As duas chaves sao independentes."""
+    if not config.enabled():
         return
+    varrer = config.varredura_ativa()
+    reconciliar = config.reconciliacao_ativa()
     for conta in config.accounts():
-        try:
-            resultado = await varrer_conta(conta.key)
-            logger.info("[BLING VARREDURA] %s", {k: v for k, v in resultado.items()
-                                                 if k != "falhas"})
-        except Exception:  # noqa: BLE001 — uma conta nunca derruba a outra
-            logger.error("[BLING VARREDURA] conta %s falhou", conta.key, exc_info=True)
+        if varrer:
+            try:
+                resultado = await varrer_conta(conta.key)
+                logger.info("[BLING VARREDURA] %s", {k: v for k, v in resultado.items()
+                                                     if k != "falhas"})
+            except Exception:  # noqa: BLE001 — uma conta nunca derruba a outra
+                logger.error("[BLING VARREDURA] conta %s falhou", conta.key, exc_info=True)
+        if not reconciliar:
+            continue
         # Reconciliacao diaria (Fase 3): mesmo tick, DEPOIS da varredura da conta,
         # para nao disputar a trava. So roda uma vez por dia, de madrugada (BRT).
         try:

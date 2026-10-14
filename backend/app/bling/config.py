@@ -210,10 +210,20 @@ def varredura_intervalo_segundos() -> int:
 
 
 def varredura_ativa() -> bool:
-    """Chave de desligar a varredura e a reconciliacao sem novo deploy
-    (`BLING_VARREDURA_ATIVA=false` + restart do worker). Padrao: ligada."""
-    bruto = _env("BLING_VARREDURA_ATIVA").lower()
-    return bruto not in ("0", "false", "no", "off")
+    """Liga a varredura periodica de pedidos alterados (`BLING_VARREDURA_ATIVA=true`).
+
+    Padrao: DESLIGADA. O filtro `dataAlteracaoInicial` de `GET /pedidos/vendas`
+    ainda nao foi confirmado no Bling; so ligar depois de confirmar. Nao afeta a
+    reconciliacao diaria (ver `reconciliacao_ativa`)."""
+    return _env("BLING_VARREDURA_ATIVA").lower() in ("1", "true", "yes", "on")
+
+
+def reconciliacao_ativa() -> bool:
+    """Chave da reconciliacao diaria (`BLING_RECONCILIACAO_ATIVA=false` desliga).
+
+    Padrao: LIGADA — usa dataInicial/dataFinal, que ja funcionam em producao.
+    Independente da varredura."""
+    return _env("BLING_RECONCILIACAO_ATIVA").lower() not in ("0", "false", "no", "off")
 
 
 # Decisao do dono (revisao 2026-10-13): o 3o degrau da cascata de vendedor

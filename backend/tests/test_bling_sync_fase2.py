@@ -19,6 +19,7 @@ from app.bling.errors import BlingDailyCapError, BlingValidationError
 def _contas(monkeypatch):
     monkeypatch.setenv("BLING_ACCOUNTS", "default,secundaria")
     monkeypatch.setenv("BLING_ENABLED", "true")
+    monkeypatch.setenv("BLING_VARREDURA_ATIVA", "true")  # padrao e DESLIGADA
 
 
 AGORA = datetime(2026, 10, 14, 12, 0, tzinfo=timezone.utc)
@@ -300,3 +301,11 @@ def test_chave_de_desligar_a_varredura(monkeypatch):
 
     monkeypatch.setattr(vr, "varrer_conta", varrer)
     asyncio.run(vr.bling_pedidos_tick())
+
+
+def test_varredura_desligada_por_padrao(monkeypatch):
+    from app.bling import config
+    monkeypatch.delenv("BLING_VARREDURA_ATIVA", raising=False)
+    assert config.varredura_ativa() is False
+    monkeypatch.setenv("BLING_VARREDURA_ATIVA", "true")
+    assert config.varredura_ativa() is True

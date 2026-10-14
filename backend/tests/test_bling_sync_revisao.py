@@ -124,7 +124,8 @@ def test_reabertura_continua_funcionando_com_o_nome_conhecido(monkeypatch):
 # 5. Devolucao parcial (decisao do dono): continua venda, marca para revisao
 # ==========================================================================
 @pytest.mark.parametrize("nome", ["Devolvido parcialmente", "Devolução parcial",
-                                  "DEVOLUCAO PARCIAL", "Parcialmente devolvido"])
+                                  "DEVOLUCAO PARCIAL", "Parcialmente devolvido",
+                                  "Em devolução", "EM DEVOLUCAO"])
 def test_devolucao_parcial_mantem_a_venda_e_marca_para_revisao(monkeypatch, nome):
     db = DB(sales=[], bling_situacoes=[{"account": "secundaria", "id": 31, "nome": nome}])
     _usa(monkeypatch, db, orders)
@@ -137,7 +138,8 @@ def test_devolucao_parcial_mantem_a_venda_e_marca_para_revisao(monkeypatch, nome
     assert alertados[0]["metadata"]["pedido"] == 900
 
 
-@pytest.mark.parametrize("nome", ["Devolvido", "Em devolução", "Cancelado", "Devolução total"])
+@pytest.mark.parametrize("nome", ["Devolvido", "Cancelado", "Devolução total",
+                                  "Cancelado (em devolução)"])
 def test_devolucao_total_e_cancelamento_cancelam(monkeypatch, nome):
     db = DB(sales=[], bling_situacoes=[{"account": "default", "id": 31, "nome": nome}])
     _usa(monkeypatch, db, orders)

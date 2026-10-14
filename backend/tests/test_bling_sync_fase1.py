@@ -167,7 +167,7 @@ def test_situacao_cancelado_vira_venda_cancelada(monkeypatch, conta):
 
 
 # Devolucao PARCIAL nao cancela (decisao do dono): ver test_bling_sync_revisao.py.
-@pytest.mark.parametrize("nome", ["Devolvido", "Em devolução", "Cancelada"])
+@pytest.mark.parametrize("nome", ["Devolvido", "Cancelada"])
 def test_situacoes_de_devolucao_e_cancelamento_por_nome(monkeypatch, nome):
     db = DB(sales=[], bling_situacoes=[{"account": "secundaria", "id": 31, "nome": nome}])
     _usa(monkeypatch, db, orders)

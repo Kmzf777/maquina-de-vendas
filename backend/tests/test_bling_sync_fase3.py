@@ -19,6 +19,7 @@ from app.bling.errors import BlingServerError, BlingValidationError
 def _contas(monkeypatch):
     monkeypatch.setenv("BLING_ACCOUNTS", "default,secundaria")
     monkeypatch.setenv("BLING_ENABLED", "true")
+    monkeypatch.setenv("BLING_VARREDURA_ATIVA", "true")  # padrao e DESLIGADA
 
 
 HOJE = date(2026, 10, 14)
@@ -253,6 +254,54 @@ def test_tick_da_varredura_chama_a_reconciliacao_das_duas_contas(monkeypatch):
     monkeypatch.setattr(rc, "reconciliar_se_devido", reconciliar)
     asyncio.run(vr.bling_pedidos_tick())
     assert feitas == ["default", "secundaria"]
+
+
+def _tick_com_espioes(monkeypatch):
+    import app.bling.varredura as vr
+    varridas, reconciliadas = [], []
+
+    async def varrer(conta, agora=None):
+        varridas.append(conta)
+        return {"status": "ok"}
+
+    async def reconciliar(conta, agora=None):
+        reconciliadas.append(conta)
+
+    monkeypatch.setattr(vr, "varrer_conta", varrer)
+    monkeypatch.setattr(rc, "reconciliar_se_devido", reconciliar)
+    asyncio.run(vr.bling_pedidos_tick())
+    return varridas, reconciliadas
+
+
+def test_reconciliacao_ligada_por_padrao_e_varredura_desligada(monkeypatch):
+    from app.bling import config
+    monkeypatch.delenv("BLING_RECONCILIACAO_ATIVA", raising=False)
+    monkeypatch.delenv("BLING_VARREDURA_ATIVA", raising=False)
+    assert config.reconciliacao_ativa() is True
+    assert config.varredura_ativa() is False
+    varridas, reconciliadas = _tick_com_espioes(monkeypatch)
+    assert varridas == []
+    assert reconciliadas == ["default", "secundaria"]
+
+
+def test_reconciliacao_roda_com_a_varredura_desligada(monkeypatch):
+    monkeypatch.setenv("BLING_VARREDURA_ATIVA", "false")
+    monkeypatch.setenv("BLING_RECONCILIACAO_ATIVA", "true")
+    varridas, reconciliadas = _tick_com_espioes(monkeypatch)
+    assert varridas == [] and reconciliadas == ["default", "secundaria"]
+
+
+def test_varredura_roda_com_a_reconciliacao_desligada(monkeypatch):
+    monkeypatch.setenv("BLING_VARREDURA_ATIVA", "true")
+    monkeypatch.setenv("BLING_RECONCILIACAO_ATIVA", "false")
+    varridas, reconciliadas = _tick_com_espioes(monkeypatch)
+    assert varridas == ["default", "secundaria"] and reconciliadas == []
+
+
+def test_nada_roda_com_a_integracao_desligada(monkeypatch):
+    monkeypatch.setenv("BLING_ENABLED", "false")
+    varridas, reconciliadas = _tick_com_espioes(monkeypatch)
+    assert varridas == [] and reconciliadas == []
 
 
 def test_comando_reconciliar(monkeypatch, capsys):

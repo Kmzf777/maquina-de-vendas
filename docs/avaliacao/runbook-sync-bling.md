@@ -21,8 +21,8 @@ As migrations **não** rodam no deploy. Tudo desta seção acontece **antes** do
 
 O status da venda passa a depender do **nome** da situação no Bling. Regra:
 - nome com "cancelad" → `cancelada`;
-- nome com "devolv"/"devoluc" **sem** "parcial" (devolução total) → `cancelada`;
-- nome com "devolv"/"devoluc" **e** "parcial" (ex.: "Devolvido parcialmente") → continua venda (`registrada`), com `sales.devolucao_parcial = true` e o alerta `bling_devolucao_parcial` para revisão (decisão do dono);
+- nome com "devolv"/"devoluc" **sem** "parcial" e **sem** "em " (devolução total **concluída**, ex.: "Devolvido") → `cancelada`;
+- nome com "devolv"/"devoluc" **e** "parcial" (ex.: "Devolvido parcialmente") **ou** "em devolução" (devolução em andamento, ainda pode não se concretizar) → continua venda (`registrada`), com `sales.devolucao_parcial = true` e o alerta `bling_devolucao_parcial` para revisão (decisão do dono). Atenção: a coluna e o alerta têm "parcial" no nome por razões históricas, mas significam "devolução a revisar" (parcial ou em andamento);
 - situação padrão 12 ("Cancelado") cancela mesmo sem o espelho;
 - nome desconhecido (fora do espelho) não muda nada: venda cancelada continua cancelada.
 
@@ -31,8 +31,9 @@ O status da venda passa a depender do **nome** da situação no Bling. Regra:
 select account, id, nome,
        case
          when unaccent(lower(nome)) like '%cancelad%' then 'cancelada'
-         when unaccent(lower(nome)) ~ '(devolv|devoluc)' and unaccent(lower(nome)) like '%parcial%'
-           then 'venda + devolucao_parcial'
+         when unaccent(lower(nome)) ~ '(devolv|devoluc)'
+              and (unaccent(lower(nome)) like '%parcial%' or unaccent(lower(nome)) like '%em devoluc%')
+           then 'venda + devolucao_parcial (a revisar)'
          when unaccent(lower(nome)) ~ '(devolv|devoluc)' then 'cancelada'
          else 'registrada'
        end efeito
@@ -40,7 +41,7 @@ select account, id, nome,
 -- (sem a extensão unaccent, troque unaccent(lower(nome)) por lower(nome) e confira os acentos à mão)
 ```
 
-**Não fazer o push** enquanto o dono não confirmar a lista das duas contas, inclusive as devoluções parciais. Situação de cancelamento ou devolução com outro nome → ajustar `_TRECHOS_CANCELAMENTO`/`_TRECHO_PARCIAL` em `backend/app/bling/orders.py` antes.
+**Não fazer o push** enquanto o dono não confirmar a lista das duas contas, inclusive as devoluções parciais e em andamento. Situação de cancelamento ou devolução com outro nome → ajustar `_TRECHOS_CANCELAMENTO`/`_TRECHO_PARCIAL`/`_TRECHO_EM_ANDAMENTO` em `backend/app/bling/orders.py` antes.
 
 ### 0.2 Gate: formato da data do webhook (só leitura)
 
@@ -93,9 +94,11 @@ select to_regclass('public.bling_reconciliacao');                               
 select policyname, roles from pg_policies where tablename = 'bling_reconciliacao';      -- _select e _consulta_ro
 ```
 
-### 0.4 Deploy com a varredura DESLIGADA
+### 0.4 Deploy com a varredura DESLIGADA (já é o padrão)
 
-O filtro `dataAlteracaoInicial` de `GET /pedidos/vendas` ainda não foi confirmado (seção 6). Faça o deploy com `BLING_VARREDURA_ATIVA=false` no worker. A reconciliação diária roda no mesmo tick, então também fica desligada até lá. Só ligue (`BLING_VARREDURA_ATIVA=true` + restart do worker) depois de confirmar o filtro.
+O filtro `dataAlteracaoInicial` de `GET /pedidos/vendas` ainda não foi confirmado (seção 6). Por isso `BLING_VARREDURA_ATIVA` **assume DESLIGADA quando ausente**: faça o deploy como está, sem adicionar variável nenhuma. A reconciliação diária tem chave própria, `BLING_RECONCILIACAO_ATIVA`, **ligada por padrão** (usa `dataInicial`/`dataFinal`, que já funcionam em produção) e roda no job `bling-pedidos` mesmo com a varredura desligada.
+
+Para ligar a varredura mais tarde, depois de confirmar o filtro: adicione `BLING_VARREDURA_ATIVA=true` ao `.env` do backend na VPS e faça redeploy/restart do worker.
 
 ### 0.5 Logo depois do deploy: reprocessar os `failed` (obrigatório)
 
@@ -286,7 +289,7 @@ O worker roda `bling-pedidos` a cada `BLING_VARREDURA_HORAS` horas. O padrão é
 > **VERIFICAR ANTES DO DEPLOY: o filtro da API.** A varredura usa `GET /pedidos/vendas?dataAlteracaoInicial=AAAA-MM-DD HH:MM:SS`, o mesmo formato que já funciona em `/produtos` e `/contatos`. Não deu para confirmar na documentação oficial da API v3 (developer.bling.com.br/referencia) que o endpoint de pedidos aceita esse filtro. Confira lá antes do push, sem chamar a API com token de produção.
 >
 > - Se o filtro **existir**, nada a fazer.
-> - Se **não existir**, o Bling pode ignorá-lo e devolver a base inteira. A guarda `MAX_PEDIDOS_POR_RODADA = 500` para a rodada sem importar nada e grava o alerta `bling_varredura_filtro`. Nesse caso, desligue a varredura com `BLING_VARREDURA_ATIVA=false` no worker (`docker service update --env-add BLING_VARREDURA_ATIVA=false canastra_worker`) e peça a troca do filtro para `dataInicial`/`dataFinal` dos últimos 60–90 dias.
+> - Se **não existir**, o Bling pode ignorá-lo e devolver a base inteira. A guarda `MAX_PEDIDOS_POR_RODADA = 500` para a rodada sem importar nada e grava o alerta `bling_varredura_filtro`. Nesse caso, desligue a varredura (remova `BLING_VARREDURA_ATIVA` do `.env` do backend ou ponha `false`, e reinicie o worker; a reconciliação continua rodando) e peça a troca do filtro para `dataInicial`/`dataFinal` dos últimos 60–90 dias.
 > - Se o Bling responder **400** ao filtro, a rodada para com o alerta `bling_varredura_falhou` e nada é gravado.
 
 Custo por conta e por rodada: 1 listagem a cada 100 pedidos alterados, mais 1 detalhe por pedido alterado, mais 1 contato por cliente novo fora do espelho. Hoje são ~30 pedidos por semana na `default` e ~20 na `secundaria`. Com a margem de 6 h, cada pedido aparece em ~3 rodadas seguidas. Dá por volta de **100–300 chamadas por dia por conta**, menos de 0,3% da cota.
@@ -319,7 +322,7 @@ select type, metadata->>'conta' conta, count(*), max(created_at)
 
 ## 7. Reconciliação diária (Fase 3): automática, só conferir
 
-Ela roda no mesmo tick da varredura, uma vez por dia por conta, a partir das 03:00 de Brasília, e sempre depois da varredura da conta. Para cada conta:
+Ela roda no mesmo tick (job `bling-pedidos`) da varredura, mas **independe** dela: funciona com a varredura desligada (o padrão) e tem chave própria, `BLING_RECONCILIACAO_ATIVA` (ligada por padrão). Roda uma vez por dia por conta, a partir das 03:00 de Brasília, e, quando a varredura está ligada, depois da varredura da conta. Para cada conta:
 1. Lista os pedidos do Bling dos últimos 35 dias fechados, até ontem, pela data do pedido. Usa `dataInicial`/`dataFinal`, o mesmo filtro que o backfill já usa em produção.
 2. Compara com `sales` **por dia**: quantidade, soma (`total` × `value`) e ids. Os ids podem estar faltando no banco, sobrando no banco ou com valor diferente.
 3. Dia divergente: reimporta só os pedidos envolvidos e confere de novo.
@@ -371,7 +374,8 @@ Critério de aceite da avaliação: 35 dias × 2 contas sem `divergente`, exceto
 | Variável | Padrão | Efeito |
 |---|---|---|
 | `BLING_VARREDURA_HORAS` | `2` | Intervalo da varredura, limitado a 1–3 h. Lido no start do worker. |
-| `BLING_VARREDURA_ATIVA` | ligada | `false` desliga a varredura e a reconciliação, sem deploy (basta reiniciar o worker). **Subir com `false`** até confirmar o filtro (seção 0.4). |
+| `BLING_VARREDURA_ATIVA` | **desligada** | Controla SÓ a varredura periódica. `true` liga. Só ligar depois de confirmar o filtro `dataAlteracaoInicial` (seção 0.4/6): adicionar ao `.env` do backend na VPS e reiniciar o worker. |
+| `BLING_RECONCILIACAO_ATIVA` | ligada | Controla SÓ a reconciliação diária. `false` desliga (reiniciar o worker). Independe da varredura. |
 | `BLING_VENDEDOR_LEAD_DIAS` | `60` | Decisão do dono: o 3º degrau do vendedor (`leads.assigned_to`, responsável atual do lead) só vale para venda com `sold_at` nesses últimos dias. Venda mais antiga sem vendedor no pedido nem no contato fica sem vendedor (`sold_by`/`vendedor_fonte` nulos). Vale para webhook, varredura, backfill e reconciliação. |
 
 Nenhuma credencial nova. Varredura e reconciliação usam o `BlingClient` de cada conta: o mesmo token, o mesmo refresh com lock por conta (`auth.get_access_token`) e o mesmo rate limit.
@@ -396,5 +400,5 @@ Nenhuma credencial nova. Varredura e reconciliação usam o `BlingClient` de cad
    ```
 5. **Formato da data do webhook** (gate 0.2).
 6. **Aplicar as três migrations**, na ordem (seção 0.3), e conferir.
-7. **Deploy com `BLING_VARREDURA_ATIVA=false`** (seção 0.4).
+7. **Deploy como está** (varredura desligada por padrão, reconciliação ligada; seção 0.4).
 8. **Depois do deploy: `reprocessar-falhas` nas duas contas** (seção 0.5).

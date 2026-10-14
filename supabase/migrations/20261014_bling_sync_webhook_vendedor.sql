@@ -45,9 +45,10 @@ ALTER TABLE sales ADD CONSTRAINT sales_vendedor_fonte_check
   NOT VALID;
 ALTER TABLE sales VALIDATE CONSTRAINT sales_vendedor_fonte_check;
 
--- Devolucao PARCIAL (decisao do dono, revisao 2026-10-13): a venda continua
+-- Devolucao PARCIAL ou EM ANDAMENTO ("Em devolucao") (decisao do dono, revisao
+-- 2026-10-13). O nome da coluna e historico: significa "devolucao a revisar". A venda continua
 -- contando (status 'registrada') e fica marcada aqui para revisao, com o alerta
--- `bling_devolucao_parcial`. So "Cancelado" e devolucao TOTAL viram 'cancelada'.
+-- `bling_devolucao_parcial`. So "Cancelado" e devolucao TOTAL CONCLUIDA viram 'cancelada'.
 -- Escrita por `upsert_from_bling` sempre que a situacao do pedido e conhecida.
 -- NOT NULL DEFAULT false e so metadado no Postgres 11+ (sem reescrever a tabela).
 ALTER TABLE sales ADD COLUMN IF NOT EXISTS devolucao_parcial boolean NOT NULL DEFAULT false;
