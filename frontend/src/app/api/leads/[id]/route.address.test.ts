@@ -165,13 +165,64 @@ describe("PATCH /api/leads/[id] — endereço", () => {
     });
   });
 
-  it("backend responde erro HTTP: status error", async () => {
+  it.each([
+    [{ message: "Conta Bling desconectada" }, "Conta Bling desconectada"],
+    [{ detail: "Token expirado" }, "Token expirado"],
+    [{ error: "lead_not_found" }, "lead_not_found"],
+  ])("backend responde erro HTTP: status error com o motivo do corpo (%o)", async (corpo, motivo) => {
     instalar([ATUAL, { ...GRAVADO }, { id: "l2" }]);
-    fetchMock.mockResolvedValue(new Response(JSON.stringify({ error: "lead_not_found" }), { status: 404 }));
+    fetchMock.mockResolvedValue(new Response(JSON.stringify(corpo), { status: 502 }));
 
     const res = await patch("l2", ENDERECO);
 
     expect(res.status).toBe(200);
-    expect((await res.json()).bling_endereco.status).toBe("error");
+    expect((await res.json()).bling_endereco).toEqual({ status: "error", message: motivo });
+  });
+
+  it("erro HTTP sem corpo legível cai no texto genérico com o status", async () => {
+    instalar([ATUAL, { ...GRAVADO }, { id: "l2" }]);
+    fetchMock.mockResolvedValue(new Response("<html>bad gateway</html>", { status: 502 }));
+
+    const res = await patch("l2", ENDERECO);
+
+    expect((await res.json()).bling_endereco).toEqual({
+      status: "error",
+      message: "Backend respondeu 502 ao atualizar o Bling",
+    });
+  });
+
+  it("campos de endereço vazios gravam null, não string vazia", async () => {
+    const chamadas = instalar([ATUAL, { id: "l2", endereco: "Rua Velha" }]);
+
+    await patch("l2", {
+      cep: "",
+      logradouro: " ",
+      numero: "",
+      complemento: "",
+      bairro: null,
+      municipio: "",
+      uf: "  ",
+    });
+
+    expect(chamadas.find((c) => c.metodo === "update")?.args[0]).toEqual({
+      cep: null,
+      logradouro: null,
+      numero: null,
+      complemento: null,
+      bairro: null,
+      municipio: null,
+      uf: null,
+    });
+  });
+
+  it("campos preenchidos são aparados", async () => {
+    const chamadas = instalar([ATUAL, { ...GRAVADO }, { id: "l2" }]);
+    fetchMock.mockResolvedValue(new Response(JSON.stringify({ status: "updated", contas: [] })));
+
+    await patch("l2", { ...ENDERECO, logradouro: "  Av. Rondon Pacheco " });
+
+    expect(chamadas.find((c) => c.metodo === "update")?.args[0]).toMatchObject({
+      logradouro: "Av. Rondon Pacheco",
+    });
   });
 });

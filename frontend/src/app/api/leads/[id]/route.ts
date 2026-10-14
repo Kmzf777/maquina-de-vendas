@@ -3,26 +3,40 @@ import { getServiceSupabase } from "@/lib/supabase/api";
 import { normalizePhoneBR } from "@/lib/phone";
 import { findLeadByPhoneVariants } from "@/lib/lead-phone-lookup";
 import { cepDigits } from "@/lib/bling-contact-form";
-import { formatAddress, hasAddressChange, isAddressComplete } from "@/lib/lead-address";
+import {
+  ADDRESS_FIELDS,
+  formatAddress,
+  hasAddressChange,
+  isAddressComplete,
+  type BlingEnderecoResultado,
+} from "@/lib/lead-address";
 
 function backendUrl(): string {
   return (process.env.NEXT_PUBLIC_FASTAPI_URL || "http://localhost:8000").replace(/\/+$/, "");
 }
 
-/** Resultado da atualização do endereço no Bling, devolvido junto do lead. */
-type BlingEndereco = { status: string; message?: string; contas?: unknown[] };
-
-const BLING_INDISPONIVEL: BlingEndereco = {
+/** Só para falha de rede/timeout: o backend nem chegou a responder. */
+const BLING_INDISPONIVEL: BlingEnderecoResultado = {
   status: "error",
   message: "Bling indisponível — tente salvar de novo",
 };
+
+/** Motivo de uma resposta de erro do backend (`message`, `detail` ou `error`). */
+async function motivoDoErro(resp: Response): Promise<string> {
+  const corpo = (await resp.json().catch(() => null)) as Record<string, unknown> | null;
+  for (const chave of ["message", "detail", "error"]) {
+    const v = corpo?.[chave];
+    if (typeof v === "string" && v.trim()) return v.trim();
+  }
+  return `Backend respondeu ${resp.status} ao atualizar o Bling`;
+}
 
 /**
  * Pede ao backend que copie o endereço do lead para o(s) contato(s) vinculado(s)
  * no Bling. Nunca lança: falha vira `status: "error"` e o PATCH segue 200 — o
  * endereço já está salvo no CRM, só a cópia no ERP ficou pendente.
  */
-async function sincronizarEnderecoNoBling(leadId: string): Promise<BlingEndereco> {
+async function sincronizarEnderecoNoBling(leadId: string): Promise<BlingEnderecoResultado> {
   try {
     const resp = await fetch(`${backendUrl()}/api/bling/contacts/address`, {
       method: "POST",
@@ -30,8 +44,8 @@ async function sincronizarEnderecoNoBling(leadId: string): Promise<BlingEndereco
       body: JSON.stringify({ lead_id: leadId }),
       signal: AbortSignal.timeout(20000),
     });
-    if (!resp.ok) return BLING_INDISPONIVEL;
-    return (await resp.json()) as BlingEndereco;
+    if (!resp.ok) return { status: "error", message: await motivoDoErro(resp) };
+    return (await resp.json()) as BlingEnderecoResultado;
   } catch {
     return BLING_INDISPONIVEL;
   }
@@ -82,12 +96,17 @@ export async function PATCH(
     body.phone = canonical;
   }
 
-  // Endereço estruturado (cartão b3788533): CEP só com dígitos e UF maiúscula,
-  // no mesmo formato que o Bling recebe.
+  // Endereço estruturado (cartão b3788533): aparado, vazio vira null, CEP só
+  // com dígitos e UF maiúscula — o mesmo formato que o Bling recebe.
   const mudouEndereco = hasAddressChange(body);
   if (mudouEndereco) {
-    if ("cep" in body) body.cep = cepDigits(typeof body.cep === "string" ? body.cep : "") || null;
-    if ("uf" in body && typeof body.uf === "string") body.uf = body.uf.trim().toUpperCase();
+    for (const campo of ADDRESS_FIELDS) {
+      if (!(campo in body)) continue;
+      let valor = typeof body[campo] === "string" ? body[campo].trim() : "";
+      if (campo === "cep") valor = cepDigits(valor);
+      if (campo === "uf") valor = valor.toUpperCase();
+      body[campo] = valor || null;
+    }
   }
 
   const { data, error } = await supabase
