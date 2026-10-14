@@ -543,7 +543,13 @@ async def _atualizar_existente(client, contact_id: int, dados: dict,
 # --------------------------------------------------------------------------
 # Endereco da ficha do lead -> contato(s) vinculado(s) no Bling
 # --------------------------------------------------------------------------
-_COLUNAS_ENDERECO = "id, cep, logradouro, numero, complemento, bairro, municipio, uf"
+_CAMPOS_ENDERECO_LEAD = ("cep", "logradouro", "numero", "complemento", "bairro",
+                         "municipio", "uf")
+_COLUNAS_ENDERECO = "id, " + ", ".join(_CAMPOS_ENDERECO_LEAD)
+_UFS = frozenset({
+    "AC", "AL", "AP", "AM", "BA", "CE", "DF", "ES", "GO", "MA", "MT", "MS", "MG", "PA",
+    "PB", "PR", "PE", "PI", "RJ", "RN", "RS", "RO", "RR", "SC", "SP", "SE", "TO",
+})
 
 
 def _texto(valor) -> str:
@@ -554,9 +560,8 @@ def endereco_do_lead(lead: dict) -> dict | None:
     """`endereco.geral` do Bling montado com os campos estruturados do lead.
 
     None quando o endereco esta incompleto (sem CEP de 8 digitos, rua, numero,
-    cidade ou UF): endereco pela metade fica so no CRM, nunca vai ao Bling.
-    Bairro e complemento sao opcionais; vazios nao apagam nada no Bling porque
-    `_corpo_do_put` so sobrescreve campo preenchido.
+    cidade ou UF valida): endereco pela metade fica so no CRM, nunca vai ao
+    Bling. Bairro e complemento sao opcionais.
     """
     geral = {
         "endereco": _texto(lead.get("logradouro")),
@@ -569,7 +574,9 @@ def endereco_do_lead(lead: dict) -> dict | None:
     }
     if len(geral["cep"]) != 8:
         return None
-    if not all(geral[c] for c in ("endereco", "numero", "municipio", "uf")):
+    if geral["uf"] not in _UFS:
+        return None
+    if not all(geral[c] for c in ("endereco", "numero", "municipio")):
         return None
     return geral
 
@@ -577,15 +584,20 @@ def endereco_do_lead(lead: dict) -> dict | None:
 async def atualizar_endereco(client, contact_id: int, geral: dict) -> dict:
     """Troca so o `endereco.geral` do contato no Bling (GET + PUT).
 
-    O PUT do Bling v3 substitui o cadastro inteiro, por isso parte do GET e
-    reaproveita `_corpo_do_put`: nome, documento, telefone, cobranca etc. ficam
-    como estao. Sem mudanca, nao faz PUT. Devolve o contato como ficou (para o
-    espelho). Erros do Bling propagam — quem chama decide o que fazer.
+    O endereco do CRM SOBRESCREVE o do Bling (decisao do dono): o bloco `geral`
+    e trocado inteiro — bairro/complemento vazios na ficha limpam o antigo. Ao
+    contrario do modal de venda (`_corpo_do_put`, que so sobrescreve campo
+    preenchido). O PUT do Bling v3 substitui o cadastro inteiro, por isso o
+    corpo parte do GET: nome, documento, telefone, `endereco.cobranca` etc.
+    ficam como estao. Sem mudanca, nao faz PUT. Devolve o contato como ficou
+    (para o espelho). Erros do Bling propagam — quem chama decide.
     """
     atual = (await client.get(f"/contatos/{contact_id}")).get("data") or {}
     if not isinstance(atual, dict) or not atual:
         raise BlingValidationError("contato não encontrado no Bling", status=404)
-    corpo = _corpo_do_put(atual, {"endereco": {"geral": geral}})
+    corpo = {k: v for k, v in atual.items() if k not in _SOMENTE_LEITURA}
+    corpo["endereco"] = {**(atual.get("endereco") or {}), "geral": dict(geral)}
+    corpo = _sem_data_vazia(corpo)
     if corpo == _sem_data_vazia({k: v for k, v in atual.items()
                                  if k not in _SOMENTE_LEITURA}):
         return {**atual, "id": contact_id}
@@ -628,13 +640,23 @@ async def sync_lead_address(lead_id: str, client_factory=None) -> dict:
     cliente async-context-manager (padrao: `BlingClient` da conta).
     """
     factory = client_factory or _cliente_bling
-    lead = await asyncio.to_thread(_load_lead_endereco, lead_id)
+    try:
+        lead = await asyncio.to_thread(_load_lead_endereco, lead_id)
+    except Exception:
+        logger.warning("[BLING] lead %s: leitura do endereco falhou", lead_id, exc_info=True)
+        return {"status": "error", "message": "falha ao ler o lead no CRM"}
     if not lead:
         return {"status": "lead_not_found"}
     geral = endereco_do_lead(lead)
     if geral is None:
         return {"status": "incomplete"}
-    vinculos = await asyncio.to_thread(_vinculos_do_lead, lead_id)
+    try:
+        vinculos = await asyncio.to_thread(_vinculos_do_lead, lead_id)
+    except Exception:
+        logger.warning("[BLING] lead %s: leitura dos vinculos falhou", lead_id,
+                       exc_info=True)
+        return {"status": "error",
+                "message": "falha ao ler os vínculos do lead com o Bling"}
     if not vinculos:
         return {"status": "not_linked"}
 
@@ -645,9 +667,6 @@ async def sync_lead_address(lead_id: str, client_factory=None) -> dict:
         try:
             async with factory(account) as client:
                 no_bling = await atualizar_endereco(client, contact_id, geral)
-            await asyncio.to_thread(_upsert_mirror, no_bling, account)
-            contas.append({"account": account, "contact_id": contact_id,
-                           "status": "updated"})
         except Exception as exc:
             # So conta, contato e tipo do erro no log: a mensagem do Bling pode
             # repetir dado do cliente.
@@ -656,6 +675,14 @@ async def sync_lead_address(lead_id: str, client_factory=None) -> dict:
                            type(exc).__name__)
             contas.append({"account": account, "contact_id": contact_id,
                            "status": "error", "message": _motivo_da_falha(exc)})
+            continue
+        contas.append({"account": account, "contact_id": contact_id, "status": "updated"})
+        try:
+            await asyncio.to_thread(_upsert_mirror, no_bling, account)
+        except Exception:
+            # O Bling ja foi atualizado; o espelho se acerta no proximo sync.
+            logger.warning("[BLING] contato %s (conta %s): endereco atualizado no Bling, "
+                           "mas o espelho falhou", contact_id, account, exc_info=True)
 
     atualizadas = sum(1 for c in contas if c["status"] == "updated")
     if atualizadas == len(contas):
@@ -665,6 +692,42 @@ async def sync_lead_address(lead_id: str, client_factory=None) -> dict:
     else:
         status = "error"
     return {"status": status, "contas": contas}
+
+
+def _preencher_endereco_do_lead(lead_id: str, dados: dict) -> dict:
+    """Ensina ao lead o endereco digitado no modal de venda/orcamento.
+
+    So grava quando os 7 campos estruturados do lead estao TODOS vazios: o que
+    o vendedor ja pos na ficha nunca e sobrescrito. Fail-soft (como
+    `_preencher_lead_com_contato`): coluna inexistente ou erro so loga.
+    Devolve o que foi gravado (vazio se nada).
+    """
+    try:
+        geral = ((dados.get("endereco") or {}).get("geral")) or {}
+        novo = {
+            "logradouro": _texto(geral.get("endereco")),
+            "numero": _texto(geral.get("numero")),
+            "complemento": _texto(geral.get("complemento")),
+            "bairro": _texto(geral.get("bairro")),
+            "cep": "".join(ch for ch in _texto(geral.get("cep")) if ch.isdigit()),
+            "municipio": _texto(geral.get("municipio")),
+            "uf": _texto(geral.get("uf")).upper(),
+        }
+        novo = {k: v for k, v in novo.items() if v}
+        if not novo:
+            return {}
+        sb = get_supabase()
+        res = (sb.table("leads").select(_COLUNAS_ENDERECO)
+               .eq("id", lead_id).limit(1).execute())
+        linhas = getattr(res, "data", None) or []
+        if not linhas or not all(_vazio(linhas[0].get(c)) for c in _CAMPOS_ENDERECO_LEAD):
+            return {}
+        sb.table("leads").update(novo).eq("id", lead_id).execute()
+        return novo
+    except Exception:
+        logger.warning("[BLING] vinculo do lead %s gravado, mas o endereco do modal nao "
+                       "foi para o lead", lead_id, exc_info=True)
+        return {}
 
 
 async def create_contact(client, lead: dict, dados: dict,
@@ -779,6 +842,7 @@ async def create_contact(client, lead: dict, dados: dict,
         await asyncio.to_thread(_preencher_lead_com_contato, lead["id"], {
             "doc_digits": doc, "nome": dados.get("nome"), "email": dados.get("email"),
         })
+        await asyncio.to_thread(_preencher_endereco_do_lead, lead["id"], dados)
         return contact_id
 
 

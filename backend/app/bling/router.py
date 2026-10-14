@@ -578,10 +578,16 @@ async def sync_contact_address_endpoint(body: AddressSyncIn):
 
     Chamado pelo PATCH /api/leads/[id] do CRM depois de salvar o endereco.
     Sempre 200 com `status` (incomplete/not_linked/updated/partial/error) e o
-    resultado por conta em `contas` — falha no Bling nao desfaz nada no CRM,
-    so volta como mensagem para a ficha. Lead inexistente = 404.
+    resultado por conta em `contas` (ou `message` quando a falha e antes das
+    contas) — falha no Bling nao desfaz nada no CRM, so volta como mensagem
+    para a ficha. Lead inexistente = 404.
     """
-    resultado = await contacts.sync_lead_address(body.lead_id)
+    try:
+        resultado = await contacts.sync_lead_address(body.lead_id)
+    except Exception:
+        logger.exception("[BLING] lead %s: sincronizacao do endereco falhou", body.lead_id)
+        return {"status": "error",
+                "message": "falha inesperada ao atualizar o endereço no Bling"}
     if resultado.get("status") == "lead_not_found":
         return JSONResponse({"error": "lead_not_found"}, status_code=404)
     return resultado

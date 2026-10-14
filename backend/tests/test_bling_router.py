@@ -1440,3 +1440,38 @@ def test_endereco_endpoint_lead_inexistente_devolve_404(monkeypatch):
     resp = asyncio.run(br.sync_contact_address_endpoint(br.AddressSyncIn(lead_id="L1")))
 
     assert resp.status_code == 404
+
+
+def test_endereco_endpoint_excecao_inesperada_devolve_200_com_error(monkeypatch):
+    async def fake_sync(_lead_id):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(br.contacts, "sync_lead_address", fake_sync)
+
+    resp = asyncio.run(br.sync_contact_address_endpoint(br.AddressSyncIn(lead_id="L1")))
+
+    assert resp["status"] == "error" and resp["message"]
+
+
+def test_endereco_endpoint_via_http(monkeypatch):
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    async def fake_sync(lead_id):
+        if lead_id == "nao-existe":
+            return {"status": "lead_not_found"}
+        return {"status": "updated", "contas": [
+            {"account": "default", "contact_id": 9, "status": "updated"}]}
+
+    monkeypatch.setattr(br.contacts, "sync_lead_address", fake_sync)
+    app = FastAPI()
+    app.include_router(br.router)
+    http = TestClient(app)
+
+    ok = http.post("/api/bling/contacts/address", json={"lead_id": "L1"})
+    assert ok.status_code == 200
+    assert ok.json() == {"status": "updated", "contas": [
+        {"account": "default", "contact_id": 9, "status": "updated"}]}
+    assert http.post("/api/bling/contacts/address",
+                     json={"lead_id": "nao-existe"}).status_code == 404
+    assert http.post("/api/bling/contacts/address", json={}).status_code == 422
