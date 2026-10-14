@@ -4,8 +4,12 @@ Caso real: Douglas com `4999170363`, `554999170363` e `5549999170363` — tres l
 mesma pessoa. O script agrupa pelo telefone canonico (55 + DDD + 9 + 8 digitos, a mesma
 regra do backend e do `normalizePhoneBR` do front) e mescla no lead mais antigo.
 """
+import csv
 import importlib.util
+import json
 from pathlib import Path
+
+import pytest
 
 SCRIPT = Path(__file__).resolve().parents[2] / "scripts" / "leads" / "mesclar_duplicados_telefone.py"
 
@@ -100,3 +104,383 @@ def test_classificar_fixo_com_9_injetado_vai_para_revisar():
     m = _script()
     assert m.classificar(_grupo("Loja", "Loja", canonico="5549934415750")) == \
         ("revisar", "telefone fixo (9 injetado)")
+
+
+# ── Task 5: SQL de um grupo ─────────────────────────────────────────────────────────
+
+TABELAS = {"messages", "conversations", "follow_up_jobs", "sales", "broadcast_leads",
+           "lead_tags", "deals", "lead_events", "campaign_enrollments"}
+CHAVES = {"messages": ["id"], "conversations": ["id"], "follow_up_jobs": ["id"],
+          "sales": ["id"], "broadcast_leads": ["id"], "lead_tags": ["lead_id", "tag_id"],
+          "deals": ["id"], "lead_events": ["id"], "campaign_enrollments": ["id"]}
+
+
+def _trio():
+    return {"canonico": "5549999170363",
+            "sobrevivente": _lead(A, "4999170363", "2026-05-08", "Douglas"),
+            "duplicados": [_lead(B, "5549999170363", "2026-06-15", "Douglas"),
+                           _lead(C, "554999170363", "2026-09-04", "Douglas")]}
+
+
+def test_sql_do_grupo_trava_todos_os_leads_e_confere_que_existem():
+    m = _script()
+    linhas = m.sql_mesclar_grupo(_trio(), TABELAS, CHAVES).splitlines()
+    assert linhas[0] == "begin;"
+    assert linhas[1] == (f"select 1 from public.leads where id in ('{A}', '{B}', '{C}')"
+                         " for update;")
+    sql = "\n".join(linhas)
+    assert f"where id in ('{A}', '{B}', '{C}')) <> 3 then" in sql
+    assert sql.rstrip().endswith("commit;")
+
+
+def test_sql_apaga_os_duplicados_so_depois_de_mover_as_mensagens():
+    m = _script()
+    sql = m.sql_mesclar_grupo(_trio(), TABELAS, CHAVES)
+    apaga = sql.index(f"delete from public.leads where id in ('{B}', '{C}');")
+    assert sql.count("update public.messages") >= 4  # fusao + mover, para B e para C
+    assert sql.rindex("update public.messages") < apaga
+    assert sql.index("update public.leads s set phone = '5549999170363'") > apaga
+
+
+def test_sql_cancela_follow_up_e_matricula_em_vez_de_apagar():
+    m = _script()
+    sql = m.sql_mesclar_grupo(_trio(), TABELAS, CHAVES)
+    assert "update public.follow_up_jobs d set status = 'cancelled'" in sql
+    assert "update public.campaign_enrollments d set status = 'cancelled'" in sql
+    assert "delete from public.follow_up_jobs" not in sql
+    assert "delete from public.campaign_enrollments" not in sql
+    assert "'follow_up_jobs_cancelados'" in sql
+    # o cancelamento vem antes de mover (depois dele a linha nao colide mais)
+    assert (sql.index("update public.follow_up_jobs d set status = 'cancelled'")
+            < sql.index(f"update public.follow_up_jobs x set lead_id = '{A}' where x.lead_id = '{B}'"))
+
+
+def test_sql_apaga_as_demais_colisoes_como_o_bling():
+    m = _script()
+    sql = m.sql_mesclar_grupo(_trio(), TABELAS, CHAVES)
+    assert (f"delete from public.broadcast_leads d using public.broadcast_leads s"
+            f" where d.lead_id = '{C}' and s.lead_id = '{A}' and (s.broadcast_id = d.broadcast_id);"
+            in sql)
+    assert "delete from public.lead_tags d using public.lead_tags s" in sql
+
+
+def test_sql_funde_conversa_do_duplicado_no_mesmo_canal():
+    m = _script()
+    sql = m.sql_mesclar_grupo(_trio(), TABELAS, CHAVES)
+    assert "sc.channel_id = dc.channel_id" in sql
+    assert f"set lead_id = '{A}', conversation_id = r.para where x.conversation_id = r.de" in sql
+    assert "update public.follow_up_jobs set conversation_id = r.para where conversation_id = r.de" in sql
+    assert "update public.sales set conversation_id = r.para where conversation_id = r.de" in sql
+    assert "'conversas_fundidas'" in sql
+    assert "delete from public.conversations where id = r.de;" in sql
+    # a fusao vem antes de mover as conversas restantes do duplicado
+    assert (sql.index("sc.channel_id = dc.channel_id")
+            < sql.index(f"update public.conversations x set lead_id = '{A}' where x.lead_id = '{B}'"))
+
+
+def test_sql_grava_um_evento_mesclagem_por_duplicado():
+    m = _script()
+    sql = m.sql_mesclar_grupo(_trio(), TABELAS, CHAVES)
+    assert f"'mesclagem:{B}'" in sql and f"'mesclagem:{C}'" in sql
+    assert sql.count("on conflict do nothing") == 2
+    assert "'telefone canonico 5549999170363'" in sql
+    assert sql.count("truncate _mesclagem_movidos;") == 2
+    assert "create temp table _dups on commit drop as select * from public.leads" in sql
+    assert "select 'movidos=' ||" in sql
+    assert "select 'movidos_por_duplicado=' ||" in sql
+
+
+def test_sql_copia_campos_e_nunca_perde_opt_out():
+    m = _script()
+    sql = m.sql_mesclar_grupo(_trio(), TABELAS, CHAVES)
+    copia = sql[sql.index("update public.leads s set phone"):]
+    for campo in ("name", "email", "bsuid", "wa_id", "gclid", "traffic_type"):
+        # sem valor nos duplicados, fica o do sobrevivente (nunca vira null)
+        assert (f"{campo} = case when coalesce(btrim(s.{campo}), '') = ''"
+                f" then coalesce(d.{campo}, s.{campo}) else s.{campo} end") in copia
+    assert "bling_contact_id = coalesce(s.bling_contact_id, d.bling_contact_id)" in copia
+    assert "opt_out = coalesce(s.opt_out, false) or d.opt_out" in copia
+    assert "last_msg_at = greatest(s.last_msg_at, d.last_msg_at)" in copia
+    assert "from _dups" in copia
+
+
+def test_sql_tabela_que_nao_existe_no_banco_nao_entra():
+    m = _script()
+    sql = m.sql_mesclar_grupo(_trio(), {"messages"}, CHAVES)
+    assert "follow_up_jobs" not in sql and "public.conversations" not in sql
+    assert "public.sales" not in sql
+
+
+def test_sql_recusa_id_que_nao_e_uuid():
+    m = _script()
+    g = _trio()
+    g["duplicados"][1] = _lead("x'; drop table leads; --", "554999170363", "2026-09-04")
+    with pytest.raises(ValueError):
+        m.sql_mesclar_grupo(g, TABELAS, CHAVES)
+    g = _trio()
+    g["canonico"] = "55'; drop"
+    with pytest.raises(ValueError):
+        m.sql_mesclar_grupo(g, TABELAS, CHAVES)
+
+
+# ── Task 5: executar (dry-run e --aplicar) com um banco falso ────────────────────────
+
+F1 = "f1f1f1f1-f1f1-4f1f-8f1f-f1f1f1f1f1f1"
+F2 = "f2f2f2f2-f2f2-4f2f-8f2f-f2f2f2f2f2f2"
+SOLO = "50505050-5050-4050-8050-505050505050"
+PIPE = "99999999-9999-4999-8999-999999999999"
+
+LEADS = [
+    _lead(F1, "5551981162558", "2026-03-01T10:00:00+00:00", "Francine"),
+    _lead(A, "4999170363", "2026-05-08T10:00:00+00:00", "Douglas"),
+    _lead(B, "5549999170363", "2026-06-15T10:00:00+00:00", "Douglas Silva"),
+    _lead(F2, "555181162558", "2026-07-01T10:00:00+00:00", "Francine Souza"),
+    _lead(C, "554999170363", "2026-09-04T10:00:00+00:00", "Douglas"),
+    _lead(SOLO, "5511987654321", "2026-01-01T10:00:00+00:00", "Sozinho"),
+]
+DEALS = [{"id": "de000000-0000-4000-8000-00000000000b", "lead_id": B, "pipeline_id": PIPE},
+         {"id": "de000000-0000-4000-8000-00000000000c", "lead_id": C, "pipeline_id": PIPE}]
+
+
+class BancoFalso:
+    """Responde as consultas de `executar` e guarda o SQL de escrita (um por grupo)."""
+
+    def __init__(self, m, leads=LEADS, deals=DEALS, falhar=(), colunas_p0=3):
+        self.m, self.leads, self.deals = m, leads, deals
+        self.falhar, self.colunas_p0, self.escritas = falhar, colunas_p0, []
+
+    def linhas(self, sql):
+        b = self.m.bling
+        if sql is b.Q_TABELAS:
+            return [{"table_name": t} for t in sorted(TABELAS)]
+        if sql is b.Q_CHAVES:
+            return [{"tabela": t, "colunas": c} for t, c in CHAVES.items()]
+        if sql is b.Q_COLUNAS_P0:
+            colunas = ("occurred_at", "source", "dedupe_key")
+            return [{"column_name": c} for c in colunas][:self.colunas_p0]
+        if sql is self.m.Q_LEADS:
+            return self.leads
+        if sql.startswith("select to_jsonb(l) as lead"):  # bling.q_backup (cita todas as tabelas)
+            return [{"lead": dict(l), "ids_por_tabela": {}} for l in self.leads if l["id"] in sql]
+        if "from public.deals" in sql:
+            return [d for d in self.deals if d["lead_id"] in sql]
+        if "from public.conversations" in sql:
+            return [{"lead_id": B, "conversas": [{"id": "c0", "lead_id": B}]}] if B in sql else []
+        if "as antes" in sql:
+            return [{"id": l["id"], "antes": dict(l)} for l in self.leads if l["id"] in sql]
+        return []
+
+    def executar(self, sql):
+        self.escritas.append(sql)
+        if any(f in sql for f in self.falhar):
+            raise RuntimeError("psql: erro de teste")
+        dups = sql.split("delete from public.leads where id in (")[1].split(")")[0]
+        ids = [i.strip(" '") for i in dups.split(",")]
+        por_dup = {i: {"messages": [f"msg-{i[:4]}"]} for i in ids}
+        return ("1\nmovidos=" + json.dumps({"messages": [f"msg-{i[:4]}" for i in ids]})
+                + "\nmovidos_por_duplicado=" + json.dumps(por_dup) + "\n")
+
+
+def _aplicados(db):
+    return [sql.split("update public.leads s set phone = '")[1][:13] for sql in db.escritas]
+
+
+def _ler(caminho):
+    with open(caminho, newline="", encoding="utf-8") as f:
+        return list(csv.DictReader(f))
+
+
+def _csv_pares(caminho, linhas, campos=("canonico", "sobrevivente", "duplicados")):
+    with open(caminho, "w", newline="", encoding="utf-8") as f:
+        w = csv.DictWriter(f, fieldnames=list(campos), extrasaction="ignore")
+        w.writeheader()
+        for lin in linhas:
+            w.writerow(lin)
+    return caminho
+
+
+FRANCINE = {"canonico": "5551981162558", "sobrevivente": F1, "duplicados": F2}
+DOUGLAS = {"canonico": "5549999170363", "sobrevivente": A, "duplicados": f"{B}|{C}"}
+
+
+def test_dry_run_grava_os_csvs_e_nao_escreve(tmp_path):
+    m = _script()
+    db = BancoFalso(m)
+    r = m.executar(db, tmp_path)
+    assert db.escritas == []
+    pares = _ler(tmp_path / "pares.csv")
+    assert [(p["canonico"], p["sobrevivente"], p["duplicados"]) for p in pares] == \
+        [("5551981162558", F1, F2)]
+    assert pares[0]["duplicados_phones"] == "555181162558"
+    assert pares[0]["sobrevivente_nome"] == "Francine"
+    revisar = _ler(tmp_path / "revisar.csv")
+    assert [(x["canonico"], x["sobrevivente"], x["duplicados"], x["motivo"]) for x in revisar] == \
+        [("5549999170363", A, f"{B}|{C}", "3 leads no grupo")]
+    assert revisar[0]["duplicados_nomes"] == "Douglas Silva|Douglas"
+    deals = _ler(tmp_path / "deals_repetidos.csv")
+    assert [(d["canonico"], d["sobrevivente"], d["pipeline_id"]) for d in deals] == \
+        [("5549999170363", A, PIPE)]
+    assert deals[0]["deals"].count("|") == 1
+    assert _ler(tmp_path / "excluidos.csv") == []
+    backup = json.loads((tmp_path / "backup.json").read_text(encoding="utf-8"))
+    assert sorted(b["lead"]["id"] for b in backup) == sorted([B, C, F2])
+    item_b = next(b for b in backup if b["lead"]["id"] == B)
+    assert item_b["conversas_duplicados"] == [{"id": "c0", "lead_id": B}]
+    assert item_b["sobrevivente_antes"]["id"] == A
+    assert item_b["canonico"] == "5549999170363"
+    assert r["contagens"] == {
+        "leads_lidos": 6, "grupos": 2, "automaticos": 1, "revisar": 1, "excluidos": 0,
+        "deals_repetidos": 1, "aplicados_ok": 0, "aplicados_erro": 0,
+        "aplicados_recusados": 0, "modo": "dry-run"}
+
+
+def test_aplicar_sem_csv_aborta(tmp_path):
+    m = _script()
+    db = BancoFalso(m)
+    with pytest.raises(SystemExit) as exc:
+        m.executar(db, tmp_path, aplicar=True)
+    assert "--pares" in str(exc.value)
+    assert db.escritas == []
+
+
+def test_aplicar_sem_p0_aborta(tmp_path):
+    m = _script()
+    db = BancoFalso(m, colunas_p0=2)
+    with pytest.raises(SystemExit):
+        m.executar(db, tmp_path / "s", aplicar=True,
+                   pares_csv=_csv_pares(tmp_path / "p.csv", [FRANCINE]))
+    assert db.escritas == []
+
+
+def test_aplicar_so_os_grupos_do_csv_inclusive_do_revisar(tmp_path):
+    m = _script()
+    db = BancoFalso(m)
+    csv_ = _csv_pares(tmp_path / "p.csv", [FRANCINE, DOUGLAS])
+    r = m.executar(db, tmp_path / "s", aplicar=True, pares_csv=csv_)
+    assert _aplicados(db) == ["5551981162558", "5549999170363"]
+    assert r["contagens"]["aplicados_ok"] == 2 and r["contagens"]["modo"] == "aplicar"
+    aplicados = _ler(tmp_path / "s" / "aplicados.csv")
+    assert [a["resultado"] for a in aplicados] == ["ok", "ok"]
+    # backup.json ganha o que mudou de dono, por duplicado
+    backup = json.loads((tmp_path / "s" / "backup.json").read_text(encoding="utf-8"))
+    por_id = {b["lead"]["id"]: b for b in backup}
+    assert por_id[B]["movidos"] == {"messages": [f"msg-{B[:4]}"]}
+    assert por_id[C]["movidos"] == {"messages": [f"msg-{C[:4]}"]}
+
+
+def test_aplicar_aceita_o_proprio_pares_csv_do_dry_run(tmp_path):
+    m = _script()
+    m.executar(BancoFalso(m), tmp_path / "dry")
+    db = BancoFalso(m)
+    r = m.executar(db, tmp_path / "s", aplicar=True, pares_csv=tmp_path / "dry" / "pares.csv")
+    assert _aplicados(db) == ["5551981162558"]
+    assert r["contagens"]["aplicados_recusados"] == 0
+
+
+def test_linha_com_sobrevivente_ou_duplicados_diferentes_e_recusada(tmp_path):
+    m = _script()
+    db = BancoFalso(m)
+    csv_ = _csv_pares(tmp_path / "p.csv", [
+        {**FRANCINE, "sobrevivente": F2, "duplicados": F1},          # sobrevivente nao bate
+        {**DOUGLAS, "duplicados": B},                               # faltou o C
+        {"canonico": "5511987654321", "sobrevivente": SOLO, "duplicados": SOLO},  # sem grupo
+    ])
+    r = m.executar(db, tmp_path / "s", aplicar=True, pares_csv=csv_)
+    assert db.escritas == []
+    recusados = [a for a in r["aplicados"] if a["resultado"] == "recusado"]
+    assert len(recusados) == 3
+    assert "sobrevivente" in recusados[0]["erro"]
+    assert "duplicados" in recusados[1]["erro"]
+    assert "sem grupo" in recusados[2]["erro"]
+    assert r["contagens"]["aplicados_recusados"] == 3
+    assert (tmp_path / "s" / "aplicados.csv").read_text(encoding="utf-8").count("recusado") == 3
+
+
+def test_csv_sem_coluna_duplicados_compara_so_o_sobrevivente(tmp_path):
+    m = _script()
+    db = BancoFalso(m)
+    csv_ = _csv_pares(tmp_path / "p.csv", [DOUGLAS], campos=("canonico", "sobrevivente"))
+    r = m.executar(db, tmp_path / "s", aplicar=True, pares_csv=csv_)
+    assert _aplicados(db) == ["5549999170363"]
+    assert r["contagens"]["aplicados_ok"] == 1
+
+
+def test_csv_sem_as_colunas_obrigatorias_aborta(tmp_path):
+    m = _script()
+    db = BancoFalso(m)
+    csv_ = _csv_pares(tmp_path / "p.csv", [FRANCINE], campos=("sobrevivente",))
+    with pytest.raises(ValueError):
+        m.executar(db, tmp_path / "s", aplicar=True, pares_csv=csv_)
+    assert db.escritas == []
+
+
+def test_csv_com_id_invalido_aborta_antes_de_escrever(tmp_path):
+    m = _script()
+    db = BancoFalso(m)
+    csv_ = _csv_pares(tmp_path / "p.csv", [FRANCINE, {**DOUGLAS, "sobrevivente": "x'; drop"}])
+    with pytest.raises(ValueError):
+        m.executar(db, tmp_path / "s", aplicar=True, pares_csv=csv_)
+    assert db.escritas == []
+
+
+@pytest.mark.parametrize("limite,esperado", [
+    (0, []), (1, ["5551981162558"]), (None, ["5551981162558", "5549999170363"])])
+def test_limite(tmp_path, limite, esperado):
+    m = _script()
+    db = BancoFalso(m)
+    csv_ = _csv_pares(tmp_path / "p.csv", [FRANCINE, DOUGLAS])
+    m.executar(db, tmp_path / "s", aplicar=True, pares_csv=csv_, limite=limite)
+    assert _aplicados(db) == esperado
+
+
+def test_excluir_tira_o_grupo_que_contem_o_id(tmp_path):
+    m = _script()
+    r = m.executar(BancoFalso(m), tmp_path, excluir=[C])
+    assert r["contagens"]["excluidos"] == 1 and r["contagens"]["revisar"] == 0
+    excluidos = _ler(tmp_path / "excluidos.csv")
+    assert excluidos[0]["canonico"] == "5549999170363"
+    assert "excluido via --excluir" in excluidos[0]["motivo"]
+    # e no --aplicar a linha do grupo excluido e recusada
+    db = BancoFalso(m)
+    csv_ = _csv_pares(tmp_path / "p.csv", [FRANCINE, DOUGLAS])
+    r = m.executar(db, tmp_path / "s", aplicar=True, pares_csv=csv_, excluir=[A])
+    assert _aplicados(db) == ["5551981162558"]
+    assert r["contagens"]["aplicados_recusados"] == 1
+
+
+def test_excluir_recusa_id_invalido(tmp_path):
+    m = _script()
+    with pytest.raises(ValueError):
+        m.executar(BancoFalso(m), tmp_path, excluir=["nao-e-uuid"])
+
+
+def test_erro_num_grupo_nao_para_os_outros(tmp_path):
+    m = _script()
+    db = BancoFalso(m, falhar=(F2,))
+    csv_ = _csv_pares(tmp_path / "p.csv", [FRANCINE, DOUGLAS])
+    r = m.executar(db, tmp_path / "s", aplicar=True, pares_csv=csv_)
+    assert len(db.escritas) == 2
+    assert [a["resultado"] for a in r["aplicados"]] == ["erro", "ok"]
+    assert "erro de teste" in r["aplicados"][0]["erro"]
+    assert r["contagens"]["aplicados_erro"] == 1 and r["contagens"]["aplicados_ok"] == 1
+
+
+def test_main_aplicar_exige_pares(capsys):
+    m = _script()
+    with pytest.raises(SystemExit):
+        m.main(["--psql", "psql", "--aplicar"])
+    assert "--pares" in capsys.readouterr().err
+
+
+def test_main_repassa_os_argumentos(monkeypatch):
+    m = _script()
+    visto = {}
+
+    def falso(db, saida, **kw):
+        visto.update(kw, saida=saida)
+        return {"contagens": {}}
+
+    monkeypatch.setattr(m, "executar", falso)
+    m.main(["--psql", "psql", "--saida", "/tmp/x", "--excluir", f"{A}, {B}", "--limite", "0"])
+    assert visto["excluir"] == [A, B] and visto["limite"] == 0 and visto["aplicar"] is False
+    assert visto["saida"] == "/tmp/x"
