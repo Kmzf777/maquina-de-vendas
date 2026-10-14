@@ -163,8 +163,9 @@ async def _rodada(conta: str, inicio: datetime, resultado: dict) -> None:
 
 
 async def bling_pedidos_tick() -> None:
-    """Tick do worker: varre as contas em SEQUENCIA (o orcamento e por conta, mas
-    rodar em serie deixa o log legivel e o pico de carga no banco menor)."""
+    """Tick do worker: varre (e, uma vez por dia, reconcilia) as contas em
+    SEQUENCIA (o orcamento e por conta, mas rodar em serie deixa o log legivel e
+    o pico de carga no banco menor)."""
     if not config.enabled() or not config.varredura_ativa():
         return
     for conta in config.accounts():
@@ -174,3 +175,10 @@ async def bling_pedidos_tick() -> None:
                                                  if k != "falhas"})
         except Exception:  # noqa: BLE001 — uma conta nunca derruba a outra
             logger.error("[BLING VARREDURA] conta %s falhou", conta.key, exc_info=True)
+        # Reconciliacao diaria (Fase 3): mesmo tick, DEPOIS da varredura da conta,
+        # para nao disputar a trava. So roda uma vez por dia, de madrugada (BRT).
+        try:
+            from app.bling import reconciliacao
+            await reconciliacao.reconciliar_se_devido(conta.key)
+        except Exception:  # noqa: BLE001
+            logger.error("[BLING RECONCILIACAO] conta %s falhou", conta.key, exc_info=True)

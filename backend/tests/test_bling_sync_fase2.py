@@ -190,7 +190,12 @@ def test_tick_varre_as_duas_contas_e_isola_falha(monkeypatch):
             raise RuntimeError("explodiu")
         return {"status": "ok"}
 
+    async def reconciliar(conta, agora=None):
+        return None
+
+    import app.bling.reconciliacao as rc
     monkeypatch.setattr(vr, "varrer_conta", varrer)
+    monkeypatch.setattr(rc, "reconciliar_se_devido", reconciliar)
     asyncio.run(vr.bling_pedidos_tick())
     assert chamadas == ["default", "secundaria"]
 

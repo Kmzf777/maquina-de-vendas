@@ -10,6 +10,7 @@ conferencias antes/depois.
     python -m app.bling.ops backfill --conta secundaria --meses 12 --estimar
     python -m app.bling.ops reprocessar-falhas --conta default
     python -m app.bling.ops varrer --conta secundaria
+    python -m app.bling.ops reconciliar --conta default --dias 35
 
 Todos os comandos sao idempotentes. A saida e um JSON com o resultado (sem
 segredo nenhum: so contagens, datas e ids de pedido).
@@ -47,6 +48,11 @@ def _parser() -> argparse.ArgumentParser:
     r.add_argument("--conta", required=True)
     v = sub.add_parser("varrer", help="uma rodada da varredura de pedidos alterados")
     v.add_argument("--conta", required=True)
+
+    c = sub.add_parser("reconciliar",
+                       help="confere Bling x banco por dia (ate ontem) e reimporta o divergente")
+    c.add_argument("--conta", required=True)
+    c.add_argument("--dias", type=int, default=None, help="padrao: 35")
     return p
 
 
@@ -63,6 +69,9 @@ async def _executar(args) -> dict:
     if args.comando == "varrer":
         from app.bling.varredura import varrer_conta
         return await varrer_conta(args.conta)
+    if args.comando == "reconciliar":
+        from app.bling.reconciliacao import reconciliar_conta
+        return await reconciliar_conta(args.conta, dias=args.dias)
     raise SystemExit(f"comando desconhecido: {args.comando}")
 
 
@@ -71,7 +80,7 @@ def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     resultado = asyncio.run(_executar(args))
     print(json.dumps(resultado, ensure_ascii=False, indent=2, default=str))
-    return 1 if resultado.get("status") in ("interrompido", "ocupado", "erro", "parcial") else 0
+    return 1 if resultado.get("status") in ("interrompido", "ocupado", "erro", "parcial", "divergente") else 0
 
 
 if __name__ == "__main__":

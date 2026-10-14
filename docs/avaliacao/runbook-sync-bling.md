@@ -241,3 +241,85 @@ select type, metadata->>'conta' conta, count(*), max(created_at)
   from system_alerts where type like 'bling_%' and created_at > now() - interval '7 days'
  group by 1, 2 order by 1, 2;
 ```
+
+---
+
+## 7. Reconciliação diária (Fase 3): automática, só conferir
+
+Ela roda no mesmo tick da varredura, uma vez por dia por conta, a partir das 03:00 de Brasília, e sempre depois da varredura da conta. Para cada conta:
+1. Lista os pedidos do Bling dos últimos 35 dias fechados, até ontem, pela data do pedido. Usa `dataInicial`/`dataFinal`, o mesmo filtro que o backfill já usa em produção.
+2. Compara com `sales` **por dia**: quantidade, soma (`total` × `value`) e ids. Os ids podem estar faltando no banco, sobrando no banco ou com valor diferente.
+3. Dia divergente: reimporta só os pedidos envolvidos e confere de novo.
+4. Grava todos os dias em `bling_reconciliacao`, com status `ok`, `reimportado` ou `divergente`.
+5. Se sobrar dia divergente, grava o alerta `bling_reconciliacao_divergente`, com dedup de 12 h por conta.
+
+Pedido que sobra no banco e não existe mais no Bling (apagado, G10) **não** é cancelado automaticamente. Ele fica em `divergentes.apagados_no_bling` e o dia continua `divergente` até o dono decidir.
+
+Custo por conta e por dia: 1 a 3 listagens (35 dias × ~5 pedidos = ~175 pedidos, menos de 2 páginas), mais 1–2 chamadas por pedido divergente. Com tudo em dia, são **2–3 chamadas por conta por noite**.
+
+Rodar na mão (idempotente; grava `bling_reconciliacao` e pode reimportar):
+
+```bash
+sg docker -c "$OPS reconciliar --conta default"
+sg docker -c "$OPS reconciliar --conta secundaria --dias 35"
+```
+
+Rodar a primeira vez **depois** dos passos A, B e C. Antes deles, todo dia de julho e agosto da conta 1 sai divergente e é reimportado ali mesmo. O resultado final é o mesmo, mas o alerta polui.
+
+Conferência:
+
+```sql
+-- "Bling conferido até X", por conta: último dia sem nenhum divergente antes dele
+select account,
+       max(dia) filter (where status <> 'divergente') ultimo_dia_ok,
+       count(*) filter (where status = 'divergente') dias_divergentes,
+       count(*) filter (where status = 'reimportado') dias_corrigidos,
+       max(verificado_em) verificado_em
+  from bling_reconciliacao
+ where dia >= current_date - 35
+ group by 1 order by 1;
+
+-- dias que continuam divergentes (só agregados)
+select account, dia, qtd_bling, qtd_banco, soma_bling, soma_banco,
+       jsonb_array_length(coalesce(divergentes->'faltando', '[]')) faltando,
+       jsonb_array_length(coalesce(divergentes->'sobrando', '[]')) sobrando,
+       jsonb_array_length(coalesce(divergentes->'apagados_no_bling', '[]')) apagados
+  from bling_reconciliacao where status = 'divergente' order by 1, 2;
+```
+
+Critério de aceite da avaliação: 35 dias × 2 contas sem `divergente`, exceto os apagados confirmados no painel do Bling.
+
+---
+
+## 8. Variáveis de ambiente novas (worker)
+
+| Variável | Padrão | Efeito |
+|---|---|---|
+| `BLING_VARREDURA_HORAS` | `2` | Intervalo da varredura, limitado a 1–3 h. Lido no start do worker. |
+| `BLING_VARREDURA_ATIVA` | ligada | `false` desliga a varredura e a reconciliação, sem deploy (basta reiniciar o worker). |
+
+Nenhuma credencial nova. Varredura e reconciliação usam o `BlingClient` de cada conta: o mesmo token, o mesmo refresh com lock por conta (`auth.get_access_token`) e o mesmo rate limit.
+
+---
+
+## 9. Antes do push: checklist
+
+1. **Filtro da API.** Conferir que `GET /pedidos/vendas` aceita `dataAlteracaoInicial` (seção 6).
+2. **Nomes das situações por conta.** Venda em situação cujo nome contém "cancelad", "devolv" ou "devoluc" vira `cancelada`. A situação padrão 12, "Cancelado", também vira, mesmo sem espelho. Conferir a lista:
+   ```sql
+   select account, id, nome from bling_situacoes order by 1, 2;
+   ```
+   Se houver uma situação de cancelamento ou devolução com outro nome, ajustar `_TRECHOS_CANCELAMENTO` em `backend/app/bling/orders.py`.
+3. **Efeito em cancelados.** Medir antes quanto vai mudar quando os pedidos forem relidos pelo backfill ou pela varredura. Na avaliação eram 57 pedidos, R$ 59.842.
+   ```sql
+   select bling_account, count(*), round(sum(value)::numeric, 2)
+     from sales where bling_order_id is not null and status <> 'cancelada'
+      and (bling_situacao_nome ilike '%cancelad%' or bling_situacao_nome ilike '%devol%')
+    group by 1;
+   ```
+   Os pedidos antigos só mudam quando forem relidos. O backfill dos passos A e B relê a janela dele. O resto da base precisa de `--reiniciar` com o intervalo inteiro, que é uma decisão do dono.
+4. **Mapa de vendedores.** Só há 1 linha por conta em `bling_seller_map`. Sem mapear os ids do Bling para os e-mails, o 1º e o 2º degraus da cascata D8 não acham ninguém e a venda cai em `leads.assigned_to` ou fica sem vendedor.
+   ```sql
+   select account, count(*) from bling_seller_map group by 1;
+   ```
+5. **Aplicar as duas migrations** (seção 0).

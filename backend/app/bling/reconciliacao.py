@@ -1,0 +1,245 @@
+"""Reconciliacao diaria Bling x banco, POR CONTA e POR DIA (Fase 3 da avaliacao
+2026-10-13).
+
+E o que transforma "achamos que esta sincronizado" em "conferido ate ontem".
+Uma vez por dia por conta (de madrugada, horario de Brasilia, no mesmo tick da
+varredura e sob a mesma trava `bling:pedidos:{conta}`):
+  1. lista os pedidos do Bling dos ultimos `DIAS_PADRAO` dias fechados
+     (ate ontem), pela data do pedido — `dataInicial`/`dataFinal`, o mesmo
+     filtro que o backfill ja usa em producao;
+  2. le as vendas do banco da conta no mesmo intervalo;
+  3. compara POR DIA: quantidade, soma do total e conjunto de ids (faltando no
+     banco, sobrando no banco, mesmo id com valor diferente);
+  4. dia divergente -> reimporta so os ids envolvidos (detalhe + contato sob
+     demanda + upsert) e confere de novo;
+  5. grava o resultado de TODOS os dias em `bling_reconciliacao`
+     (status ok | reimportado | divergente) e alerta (`system_alerts`,
+     `bling_reconciliacao_divergente`) se algum dia continuar divergente.
+
+Pedido que sobra no banco e da 404 no Bling (apagado no ERP, G10) NAO e
+cancelado aqui: fica em `divergentes.apagados_no_bling` e o dia continua
+divergente ate o dono decidir. Mudar status de venda sozinho por ausencia na
+listagem e decisao de negocio, nao de sincronia.
+
+A comparacao conta TODAS as vendas com o pedido (inclusive canceladas), porque
+a listagem do Bling tambem traz todas as situacoes. `value` x `total` do Bling.
+"""
+import asyncio
+import logging
+from collections import defaultdict
+from datetime import date, datetime, time, timedelta, timezone
+from decimal import Decimal
+from zoneinfo import ZoneInfo
+
+from app.bling import config, pedido_import
+from app.bling.alertas import alertar
+from app.bling.errors import BlingValidationError
+from app.bling.sync import _load_sync_state, _save_sync_state
+from app.bling.trava import TravaOcupada, trava_pedidos
+from app.db.supabase import get_supabase
+
+logger = logging.getLogger(__name__)
+
+RESOURCE = "reconciliacao"
+DIAS_PADRAO = 35
+# Roda a partir das 03:00 de Brasilia: o dia anterior ja fechou para os dois
+# CNPJs e a madrugada e o horario de menor uso da API.
+HORA_BRT = 3
+_TZ = ZoneInfo("America/Sao_Paulo")
+_TOLERANCIA = Decimal("0.01")
+_TRAVA_TTL = 3600
+
+
+def _new_client(account: str):
+    from app.bling.client import BlingClient
+    return BlingClient(account=account)
+
+
+def _carregar_estado(conta: str) -> dict | None:
+    return _load_sync_state(RESOURCE, conta)
+
+
+def _salvar_estado(conta: str, quando: str) -> None:
+    _save_sync_state(RESOURCE, conta, last_sync_at=quando)
+
+
+def _vendas_do_banco(conta: str, inicio: date, fim: date) -> list[dict]:
+    """Vendas com pedido Bling da conta com `sold_at` em [inicio, fim].
+
+    `sold_at` de venda Bling e sempre `<data do pedido>T12:00:00+00:00`
+    (`_sold_at_iso` e `create_order`), entao o dia UTC e o dia do pedido.
+    """
+    res = (get_supabase().table("sales")
+           .select("bling_order_id, sold_at, value")
+           .eq("bling_account", conta)
+           .not_.is_("bling_order_id", "null")
+           .gte("sold_at", f"{inicio.isoformat()}T00:00:00+00:00")
+           .lt("sold_at", f"{(fim + timedelta(days=1)).isoformat()}T00:00:00+00:00")
+           .limit(10000).execute())
+    return getattr(res, "data", None) or []
+
+
+def _gravar(linhas: list[dict]) -> None:
+    if linhas:
+        (get_supabase().table("bling_reconciliacao")
+         .upsert(linhas, on_conflict="account,dia").execute())
+
+
+def _dec(valor) -> Decimal:
+    return Decimal(str(valor or 0))
+
+
+def _por_dia_bling(pedidos: list[dict]) -> dict[str, dict[int, Decimal]]:
+    dias: dict[str, dict[int, Decimal]] = defaultdict(dict)
+    for p in pedidos:
+        dias[str(p.get("data") or "")[:10]][int(p["id"])] = _dec(p.get("total"))
+    return dias
+
+
+def _por_dia_banco(vendas: list[dict]) -> dict[str, dict[int, Decimal]]:
+    dias: dict[str, dict[int, Decimal]] = defaultdict(dict)
+    for v in vendas:
+        dias[str(v.get("sold_at") or "")[:10]][int(v["bling_order_id"])] = _dec(v.get("value"))
+    return dias
+
+
+def _comparar(bling: dict[int, Decimal], banco: dict[int, Decimal]) -> dict:
+    return {
+        "faltando": sorted(set(bling) - set(banco)),
+        "sobrando": sorted(set(banco) - set(bling)),
+        "valor_diferente": sorted(i for i in set(bling) & set(banco)
+                                  if abs(bling[i] - banco[i]) > _TOLERANCIA),
+    }
+
+
+def _diverge(d: dict) -> bool:
+    return bool(d["faltando"] or d["sobrando"] or d["valor_diferente"])
+
+
+def _soma(valores: dict[int, Decimal]) -> float:
+    return float(sum(valores.values(), Decimal("0")))
+
+
+async def reconciliar_conta(account: str, *, hoje: date | None = None,
+                            dias: int | None = None) -> dict:
+    """Reconcilia os ultimos `dias` dias FECHADOS (ate ontem, BRT) da conta."""
+    conta = config.account(account).key
+    hoje = hoje or datetime.now(_TZ).date()
+    dias = dias or DIAS_PADRAO
+    fim = hoje - timedelta(days=1)
+    inicio = hoje - timedelta(days=dias)
+    resultado: dict = {"conta": conta, "inicio": inicio.isoformat(), "fim": fim.isoformat()}
+
+    try:
+        async with trava_pedidos(conta, _TRAVA_TTL):
+            async with _new_client(conta) as client:
+                return await _reconciliar(client, conta, inicio, fim, resultado)
+    except TravaOcupada as exc:
+        logger.info("[BLING RECONCILIACAO] conta %s pulada: %s", conta, exc)
+        resultado["status"] = "ocupado"
+        return resultado
+
+
+async def _reconciliar(client, conta: str, inicio: date, fim: date, resultado: dict) -> dict:
+    try:
+        pedidos = [p async for p in client.paginate(
+            "/pedidos/vendas", {"dataInicial": inicio.isoformat(), "dataFinal": fim.isoformat()})]
+    except Exception as exc:  # noqa: BLE001 — sem a lista do Bling nao ha o que comparar
+        logger.warning("[BLING RECONCILIACAO] conta %s: listagem falhou: %s", conta, exc)
+        resultado.update(status="erro", erro=str(exc))
+        return resultado
+
+    bling = _por_dia_bling(pedidos)
+    banco = _por_dia_banco(await asyncio.to_thread(_vendas_do_banco, conta, inicio, fim))
+    todos_os_dias = [(inicio + timedelta(days=i)).isoformat()
+                     for i in range((fim - inicio).days + 1)]
+
+    primeira = {d: _comparar(bling.get(d, {}), banco.get(d, {})) for d in todos_os_dias}
+    divergentes = [d for d in todos_os_dias if _diverge(primeira[d])]
+
+    erros: dict[int, str] = {}
+    apagados: set[int] = set()
+    if divergentes:
+        alvo = []
+        for d in divergentes:
+            c = primeira[d]
+            alvo.extend(c["faltando"] + c["valor_diferente"] + c["sobrando"])
+        lido_em = datetime.now(timezone.utc).isoformat()
+        for order_id in dict.fromkeys(alvo):  # sem repetir (pedido que mudou de dia)
+            try:
+                await pedido_import.importar_pedido(client, conta, order_id, event_date=lido_em)
+            except BlingValidationError as exc:
+                if exc.status == 404:
+                    apagados.add(order_id)
+                erros[order_id] = str(exc)
+            except Exception as exc:  # noqa: BLE001
+                logger.error("[BLING RECONCILIACAO] conta %s pedido %s: %s", conta, order_id, exc)
+                erros[order_id] = str(exc)
+        banco = _por_dia_banco(await asyncio.to_thread(_vendas_do_banco, conta, inicio, fim))
+
+    agora = datetime.now(timezone.utc).isoformat()
+    linhas, ainda_divergentes = [], []
+    for d in todos_os_dias:
+        depois = _comparar(bling.get(d, {}), banco.get(d, {}))
+        if not _diverge(primeira[d]):
+            status, detalhe = "ok", {}
+        elif not _diverge(depois):
+            status, detalhe = "reimportado", {**primeira[d], "reimportados": True}
+        else:
+            status = "divergente"
+            ids = set(depois["faltando"] + depois["sobrando"] + depois["valor_diferente"])
+            detalhe = {**depois,
+                       "apagados_no_bling": sorted(apagados & set(depois["sobrando"])),
+                       "erros": [{"pedido": i, "erro": erros[i]} for i in sorted(ids)
+                                 if i in erros]}
+            ainda_divergentes.append(d)
+        linhas.append({
+            "account": conta, "dia": d,
+            "qtd_bling": len(bling.get(d, {})), "qtd_banco": len(banco.get(d, {})),
+            "soma_bling": _soma(bling.get(d, {})), "soma_banco": _soma(banco.get(d, {})),
+            "divergentes": detalhe, "status": status, "verificado_em": agora,
+        })
+
+    await asyncio.to_thread(_gravar, linhas)
+    await asyncio.to_thread(_salvar_estado, conta, agora)
+
+    conferido_ate = None
+    for linha in linhas:
+        if linha["status"] == "divergente":
+            break
+        conferido_ate = linha["dia"]
+
+    resultado.update(
+        status="divergente" if ainda_divergentes else "ok",
+        dias=len(linhas), dias_reimportados=sum(1 for l in linhas if l["status"] == "reimportado"),
+        dias_divergentes=ainda_divergentes, conferido_ate=conferido_ate,
+    )
+    if ainda_divergentes:
+        alertar("bling_reconciliacao_divergente", conta,
+                f"Bling x CRM divergente ({config.account(conta).label})",
+                f"{len(ainda_divergentes)} dia(s) continuam divergentes depois de reimportar: "
+                f"{', '.join(ainda_divergentes[:10])}. Detalhe em bling_reconciliacao.",
+                metadata={"dias": ainda_divergentes})
+    logger.info("[BLING RECONCILIACAO] %s", resultado)
+    return resultado
+
+
+async def reconciliar_se_devido(account: str, *, agora: datetime | None = None) -> dict | None:
+    """Roda `reconciliar_conta` uma vez por dia (BRT), a partir de HORA_BRT.
+
+    Chamado pelo tick da varredura. O estado so e gravado quando a reconciliacao
+    chega ao fim (mesmo divergente); erro de listagem tenta de novo no proximo tick.
+    """
+    conta = config.account(account).key
+    agora_brt = (agora or datetime.now(timezone.utc)).astimezone(_TZ)
+    if agora_brt.time() < time(HORA_BRT):
+        return None
+    estado = await asyncio.to_thread(_carregar_estado, conta)
+    ultima = (estado or {}).get("last_sync_at")
+    if ultima:
+        try:
+            if datetime.fromisoformat(ultima).astimezone(_TZ).date() >= agora_brt.date():
+                return None
+        except ValueError:
+            pass
+    return await reconciliar_conta(conta, hoje=agora_brt.date())
