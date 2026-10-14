@@ -218,3 +218,36 @@ describe("BlingOrderForm — frete", () => {
     expect(screen.queryByText(/Frete R\$ 45,00/)).not.toBeNull();
   });
 });
+
+/**
+ * Cartão 7615bf70: o nome do produto aparecia cortado com "…" na linha do
+ * item e na lista de busca, e o vendedor não sabia qual item estava escolhido.
+ * A lista de busca é testada em `bling-order-form.kits.test.tsx`, que troca o
+ * Popover do Radix pelo dublê (abrir o real trava o jsdom).
+ */
+const NOME_LONGO =
+  "Café Canastra Especial Torra Média Moído 500g Caixa com 12 Unidades";
+
+const linhaLonga = {
+  blingProductId: 77,
+  descricao: NOME_LONGO,
+  codigo: "CC-500-12",
+  unidade: "CX",
+  quantidade: 1,
+  valorUnitario: 10,
+  descontoPercentual: 0,
+};
+
+describe("BlingOrderForm — nome do produto inteiro", () => {
+  it("na linha do item o nome quebra linha em vez de ser cortado", () => {
+    mockFetchVazio();
+    render(<BlingOrderForm meta={META} onChange={vi.fn()} initialLines={[linhaLonga]} />);
+    const nome = screen.getByText(NOME_LONGO);
+    expect(nome.className).not.toMatch(/\btruncate\b/);
+    expect(nome.className).toMatch(/\bbreak-words\b/);
+    const botao = nome.closest("button")!;
+    expect(botao.className).not.toMatch(/(^|\s)h-\[34px\]/);
+    expect(botao.className).toMatch(/\bmin-h-\[34px\]/);
+  });
+
+});

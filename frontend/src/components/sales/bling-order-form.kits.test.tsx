@@ -72,3 +72,28 @@ describe("BlingOrderForm — kits no topo (P4.5)", () => {
     expect(within(linha).getByText("KIT DEGUSTAÇÃO 1°")).toBeTruthy();
   });
 });
+
+/**
+ * Cartão 7615bf70: na lista de busca o nome aparecia cortado com "…" e a lista
+ * tinha a largura da coluna. Agora o nome quebra linha e a lista é mais larga.
+ */
+describe("BlingOrderForm — nome do produto inteiro na lista de busca", () => {
+  const NOME_LONGO =
+    "Café Canastra Especial Torra Média Moído 500g Caixa com 12 Unidades";
+
+  it("na lista de busca o nome quebra linha e a lista é mais larga que a coluna", async () => {
+    global.fetch = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      const data = url.startsWith("/api/bling/products")
+        ? [{ id: 77, codigo: "CC-500-12", nome: NOME_LONGO, preco: 10, unidade: "CX", saldo_virtual: 5, imagem_url: null }]
+        : [];
+      return { ok: true, json: async () => ({ data }) } as Response;
+    }) as unknown as typeof fetch;
+    render(<BlingOrderForm meta={META} onChange={vi.fn()} />);
+    fireEvent.click(screen.getByRole("button", { name: /Selecione o produto/ }));
+    const opcao = await screen.findByText(NOME_LONGO);
+    expect(opcao.className).not.toMatch(/\btruncate\b/);
+    expect(opcao.className).toMatch(/\bbreak-words\b/);
+    expect(screen.getByTestId("popover").className).toMatch(/\bmin-w-\[420px\]/);
+  });
+});

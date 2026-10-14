@@ -145,7 +145,7 @@ const label = "text-[11px] uppercase tracking-[0.6px] text-[#7b7b78]";
 const control =
   "h-[34px] w-full bg-white border border-[#dedbd6] rounded-[4px] px-2 text-[13px] text-[#111111] tabular-nums focus:border-[#111111] focus:outline-none focus:ring-0";
 const grid =
-  "grid grid-cols-[minmax(0,1fr)_58px_92px_58px_86px_26px] gap-2 items-center";
+  "grid grid-cols-[minmax(0,1fr)_58px_92px_58px_86px_26px] gap-2";
 
 const brl = (valor: number) =>
   valor.toLocaleString("pt-BR", {
@@ -474,17 +474,17 @@ export function BlingOrderForm({
         setAberta(null);
         setBusca("");
       }}
-      className="flex w-full items-center justify-between gap-2 rounded-md px-2 py-1.5 text-left hover:bg-[#f4f2ee]"
+      className="flex w-full items-start justify-between gap-2 rounded-md px-2 py-1.5 text-left hover:bg-[#f4f2ee]"
     >
       <span className="min-w-0">
-        <span className="block truncate text-[13px] text-[#111111]">{p.nome}</span>
+        <span className="block whitespace-normal break-words text-[13px] leading-snug text-[#111111]">{p.nome}</span>
         <span className="block text-[11px] text-[#7b7b78]">
           {p.codigo ?? "sem SKU"}
           {p.preco != null && ` · R$ ${brl(p.preco)}`}
           {p.saldo_virtual != null && ` · saldo ${p.saldo_virtual}`}
         </span>
       </span>
-      {linha.blingProductId === p.id && <CheckIcon className="size-4 shrink-0" />}
+      {linha.blingProductId === p.id && <CheckIcon className="mt-0.5 size-4 shrink-0" />}
     </button>
   );
 
@@ -545,7 +545,7 @@ export function BlingOrderForm({
 
         <div className="border border-[#dedbd6] rounded-[8px] overflow-hidden">
           <div
-            className={`${grid} bg-[#faf9f6] border-b border-[#dedbd6] px-3 py-2 text-[10px] uppercase tracking-[0.6px] text-[#7b7b78]`}
+            className={`${grid} items-center bg-[#faf9f6] border-b border-[#dedbd6] px-3 py-2 text-[10px] uppercase tracking-[0.6px] text-[#7b7b78]`}
           >
             <span>Produto</span>
             <span className="text-right">Qtd</span>
@@ -563,7 +563,7 @@ export function BlingOrderForm({
             return (
               <div
                 key={i}
-                className={`${grid} px-3 py-2 border-b border-[#dedbd6] last:border-b-0`}
+                className={`${grid} items-start px-3 py-2 border-b border-[#dedbd6] last:border-b-0`}
               >
                 {/* Produto */}
                 <Popover
@@ -576,9 +576,9 @@ export function BlingOrderForm({
                   <PopoverTrigger asChild>
                     <button
                       type="button"
-                      className="h-[34px] w-full flex items-center justify-between gap-2 bg-white border border-[#dedbd6] rounded-[4px] px-2.5 text-[13px] text-left text-[#111111] hover:border-[#c9c5be] focus:border-[#111111] focus:outline-none"
+                      className="min-h-[34px] py-1.5 w-full flex items-center justify-between gap-2 bg-white border border-[#dedbd6] rounded-[4px] px-2.5 text-[13px] text-left text-[#111111] hover:border-[#c9c5be] focus:border-[#111111] focus:outline-none"
                     >
-                      <span className="min-w-0 truncate">
+                      <span className="min-w-0 whitespace-normal break-words leading-snug">
                         {linha.descricao || (
                           <span className="text-[#8a8a8a]">Selecione o produto</span>
                         )}
@@ -586,7 +586,7 @@ export function BlingOrderForm({
                       <ChevronDownIcon className="size-4 shrink-0 text-[#8a8a8a]" />
                     </button>
                   </PopoverTrigger>
-                  <PopoverContent className="p-0 w-(--radix-popover-trigger-width) min-w-[280px]" portal={false}>
+                  <PopoverContent className="p-0 w-(--radix-popover-trigger-width) min-w-[420px] max-w-[calc(100vw-2rem)]" portal={false}>
                     <div className="p-2 border-b border-[#eee]">
                       <input
                         autoFocus
@@ -642,7 +642,7 @@ export function BlingOrderForm({
                   className={`${control} text-right`}
                 />
 
-                <span className="text-[13px] text-[#111111] tabular-nums text-right">
+                <span className="text-[13px] leading-[34px] text-[#111111] tabular-nums text-right">
                   {brl(lineTotal(linha))}
                 </span>
 
@@ -652,7 +652,7 @@ export function BlingOrderForm({
                   disabled={linhas.length <= 1}
                   aria-label="Remover item"
                   title="Remover item"
-                  className="w-[26px] h-[26px] flex items-center justify-center rounded-[4px] text-[#7b7b78] hover:bg-[#f0ede8] hover:text-[#c41c1c] disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:text-[#7b7b78] transition-colors"
+                  className="mt-1 w-[26px] h-[26px] flex items-center justify-center rounded-[4px] text-[#7b7b78] hover:bg-[#f0ede8] hover:text-[#c41c1c] disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:text-[#7b7b78] transition-colors"
                 >
                   <XIcon className="size-3.5" />
                 </button>

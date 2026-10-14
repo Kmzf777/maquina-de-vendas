@@ -37,9 +37,12 @@ export function dublePopover() {
     return React.cloneElement(children, { onClick: () => ctx.setOpen(!ctx.open) });
   }
 
-  function PopoverContent({ children }: { children?: React.ReactNode }) {
+  // `className` repassado para que o teste confira a largura da lista.
+  function PopoverContent({ children, className }: { children?: React.ReactNode; className?: string }) {
     const ctx = React.useContext(Contexto);
-    return ctx.open ? React.createElement("div", { "data-testid": "popover" }, children) : null;
+    return ctx.open
+      ? React.createElement("div", { "data-testid": "popover", className }, children)
+      : null;
   }
 
   return { Popover, PopoverTrigger, PopoverContent };
