@@ -51,6 +51,8 @@ interface ContactDetailProps {
   painelAcoplado?: boolean;
   /** Avisa a página quando um painel ACOPLADO abre/fecha (ela recolhe a lista). */
   onPainelAcopladoChange?: (aberto: boolean) => void;
+  /** Avisa a página quando um painel de venda/orçamento abre/fecha, acoplado ou não (ela recolhe o menu). */
+  onPainelAbertoChange?: (aberto: boolean) => void;
 }
 
 export function ContactDetail({
@@ -66,6 +68,7 @@ export function ContactDetail({
   onDealUpdate,
   painelAcoplado = false,
   onPainelAcopladoChange,
+  onPainelAbertoChange,
 }: ContactDetailProps) {
   const [activeTab, setActiveTab] = useState<TabKey>("perfil");
   const [deals, setDeals] = useState<LeadDeal[]>([]);
@@ -103,6 +106,11 @@ export function ContactDetail({
     onPainelAcopladoChange(true);
     return () => onPainelAcopladoChange(false);
   }, [acoplado, onPainelAcopladoChange]);
+  useEffect(() => {
+    if (!painelAberto || !onPainelAbertoChange) return;
+    onPainelAbertoChange(true);
+    return () => onPainelAbertoChange(false);
+  }, [painelAberto, onPainelAbertoChange]);
 
   const { sales, refetch: refetchSales } = useLeadSales(lead?.id);
   const { quotes, refetch: refetchQuotes } = useLeadQuotes(lead?.id);

@@ -182,3 +182,57 @@ describe("ContactDetail — painel acoplado ao lado do chat (/conversas)", () =>
     expect(document.querySelector('[data-slot="sheet-content"]')).toBeNull();
   });
 });
+
+// Qualquer painel aberto (acoplado ou sobreposto) faz a página recolher o menu.
+describe("onPainelAbertoChange", () => {
+  const base = { tags: [], leadTags: [], onTagToggle: vi.fn() };
+
+  it("sobreposto (painelAcoplado={false}): abrir orçamento avisa true; fechar avisa false", async () => {
+    const avisos: boolean[] = [];
+    render(
+      <ContactDetail
+        conversation={conversa("a")}
+        {...base}
+        painelAcoplado={false}
+        onPainelAbertoChange={(v) => avisos.push(v)}
+      />,
+    );
+    expect(avisos.at(-1) ?? false).toBe(false);
+
+    fireEvent.click(screen.getByRole("button", { name: "abrir orçamento" }));
+    await espera();
+    expect(screen.getByText("formulário de orçamento")).toBeTruthy();
+    expect(avisos.at(-1)).toBe(true);
+
+    fireEvent.click(screen.getAllByRole("button", { name: "Fechar" })[0]);
+    await espera();
+    expect(screen.queryByText("formulário de orçamento")).toBeNull();
+    expect(avisos.at(-1)).toBe(false);
+  });
+
+  it("acoplado: abrir venda avisa true", () => {
+    const avisos: boolean[] = [];
+    render(
+      <ContactDetail
+        conversation={conversa("a")}
+        {...base}
+        painelAcoplado
+        onPainelAbertoChange={(v) => avisos.push(v)}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "abrir venda" }));
+    expect(avisos.at(-1)).toBe(true);
+  });
+
+  it("trocar de conversa com o painel aberto avisa false", () => {
+    const avisos: boolean[] = [];
+    const props = { ...base, onPainelAbertoChange: (v: boolean) => avisos.push(v) };
+    const { rerender } = render(<ContactDetail conversation={conversa("a")} {...props} />);
+    fireEvent.click(screen.getByRole("button", { name: "abrir orçamento" }));
+    expect(avisos.at(-1)).toBe(true);
+
+    rerender(<ContactDetail conversation={conversa("b")} {...props} />);
+
+    expect(avisos.at(-1)).toBe(false);
+  });
+});
