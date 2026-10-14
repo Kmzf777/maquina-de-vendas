@@ -377,3 +377,58 @@ def test_documento_do_cliente_sai_formatado():
     assert _documento("XPTO-999") == "XPTO-999"
     assert _documento(None) == ""
     assert _documento("") == ""
+
+
+# ---------------------------------------------------------------------------
+# endereço do cliente
+# ---------------------------------------------------------------------------
+
+def test_formatar_endereco_completo():
+    from app.quotes.pdf import formatar_endereco
+
+    assert formatar_endereco({
+        "endereco": "Rua Júlio de Castilho", "numero": "123",
+        "complemento": "Sala 2", "bairro": "Centro", "municipio": "Uberlândia",
+        "uf": "MG", "cep": "38400000",
+    }) == ("Rua Júlio de Castilho, 123 - Sala 2 · Centro · Uberlândia/MG · "
+           "CEP 38400-000")
+
+
+def test_formatar_endereco_omite_partes_vazias():
+    from app.quotes.pdf import formatar_endereco
+
+    assert formatar_endereco({
+        "endereco": "Av. Brasil", "numero": "", "complemento": None,
+        "bairro": "", "municipio": "Patos de Minas", "uf": "MG", "cep": "",
+    }) == "Av. Brasil · Patos de Minas/MG"
+
+
+def test_formatar_endereco_cep_ja_mascarado_ou_estranho():
+    from app.quotes.pdf import formatar_endereco
+
+    assert formatar_endereco({"endereco": "Rua A", "cep": "38.400-000"}) == \
+        "Rua A · CEP 38400-000"
+    # Contagem de dígitos desconhecida volta crua — melhor cru que deformado.
+    assert formatar_endereco({"endereco": "Rua A", "cep": "1234"}) == \
+        "Rua A · CEP 1234"
+
+
+def test_formatar_endereco_sem_rua_nem_cidade_e_none():
+    from app.quotes.pdf import formatar_endereco
+
+    assert formatar_endereco({}) is None
+    assert formatar_endereco(None) is None
+    assert formatar_endereco({"endereco": "", "municipio": "", "cep": "38400000",
+                              "bairro": "Centro"}) is None
+
+
+def test_endereco_do_cliente_sai_no_pdf():
+    texto = pdf_text(_build(lead_endereco="Rua das Flores, 10 · Centro · Uberlândia/MG"))
+    assert "ENDEREÇO" in texto
+    assert "Rua das Flores, 10" in texto
+    assert "Uberlândia/MG" in texto
+
+
+def test_sem_endereco_a_linha_some():
+    texto = pdf_text(_build(lead_endereco=None))
+    assert "ENDEREÇO" not in texto

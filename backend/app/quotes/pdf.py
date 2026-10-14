@@ -31,6 +31,7 @@ FastAPI contaminaria os outros requests que rodam no mesmo worker.
 """
 import logging
 import os
+import re
 from datetime import date, datetime
 from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 from functools import partial
@@ -248,6 +249,41 @@ def _documento(valor) -> str:
     return str(valor)
 
 
+def formatar_endereco(geral: dict | None) -> str | None:
+    """Endereço do cliente numa linha, a partir de `endereco.geral` do Bling.
+
+    Partes vazias somem (nada de ", -" pendurado). Sem rua e sem cidade não há
+    endereço que valha imprimir: devolve None e a linha some do PDF, como as
+    demais do bloco do cliente.
+    """
+    g = geral or {}
+
+    def campo(chave: str) -> str:
+        return str(g.get(chave) or "").strip()
+
+    rua, numero, complemento = campo("endereco"), campo("numero"), campo("complemento")
+    bairro, cidade, uf = campo("bairro"), campo("municipio"), campo("uf")
+    if not rua and not cidade:
+        return None
+
+    linha = rua
+    if numero:
+        linha = f"{linha}, {numero}" if linha else numero
+    if complemento:
+        linha = f"{linha} - {complemento}" if linha else complemento
+
+    local = "/".join(p for p in (cidade, uf) if p)
+
+    cep_cru = campo("cep")
+    digitos = re.sub(r"\D", "", cep_cru)
+    if len(digitos) == 8:
+        cep = f"CEP {digitos[:5]}-{digitos[5:]}"
+    else:
+        cep = f"CEP {cep_cru}" if cep_cru else ""
+
+    return " · ".join(p for p in (linha, bairro, local, cep) if p)
+
+
 def _esc(valor) -> str:
     """Escapa para o mini-XML do `Paragraph`.
 
@@ -364,6 +400,7 @@ def _cliente(quote: dict, largura: float) -> list:
     linhas = [
         ("CLIENTE", quote.get("lead_nome")),
         ("CPF/CNPJ", _documento(quote.get("lead_documento"))),
+        ("ENDEREÇO", quote.get("lead_endereco")),
         ("E-MAIL", quote.get("lead_email")),
         ("WHATSAPP", _telefone(quote.get("lead_telefone"))),
         ("A/C", quote.get("aos_cuidados_de")),
