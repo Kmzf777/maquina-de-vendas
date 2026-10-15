@@ -5,7 +5,6 @@ import { usePathname } from "next/navigation";
 import { Sidebar } from "@/components/sidebar";
 import { MenuLateralProvider, useMenuLateral } from "@/components/menu-lateral";
 import { NotificationToast } from "@/components/notification-toast";
-import { SlaReminderPopup } from "@/components/sla-reminder-popup";
 import { PresenceProvider } from "@/hooks/use-presence";
 import { useRealtimeKeepAlive } from "@/hooks/use-realtime-keepalive";
 
@@ -81,7 +80,7 @@ export function AuthenticatedShell({ children }: { children: React.ReactNode }) 
         {children}
       </main>
       <NotificationToast />
-      <SlaReminderPopup />
+      {/* Pop-up de SLA desligado (cartão ca54ae27). Para religar: <SlaReminderPopup /> de @/components/sla-reminder-popup. */}
     </div>
     </MenuLateralProvider>
     </PresenceProvider>

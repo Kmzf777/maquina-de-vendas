@@ -6,6 +6,7 @@ import { LeadBlingSection } from "./lead-bling-section";
 import { LeadFunisTab } from "./lead-funis-tab";
 import { LeadTimeline } from "./lead-timeline";
 import { SaleCreateModal } from "@/components/sales/sale-create-modal";
+import { QuoteCreateModal } from "@/components/quotes/quote-create-modal";
 import { useCurrentUserEmail } from "@/hooks/use-current-user";
 import type { Lead, Pipeline, Tag, LeadNote, LeadEvent } from "@/lib/types";
 import { getTemperature, TEMPERATURE_CONFIG } from "@/lib/temperature";
@@ -76,6 +77,7 @@ export function LeadDetailModal({
   const [currentTagIds, setCurrentTagIds] = useState<string[]>(leadTagIds);
   const [showTagDropdown, setShowTagDropdown] = useState(false);
   const [showCreateSale, setShowCreateSale] = useState(false);
+  const [showCreateQuote, setShowCreateQuote] = useState(false);
   // Mapa conta -> id do contato no Bling. O vinculo e por conta desde a segunda
   // conta Bling; `lead.bling_contact_id` (coluna legada) so serve de valor
   // inicial para a conta default, ate o fetch abaixo trazer a verdade.
@@ -276,15 +278,6 @@ export function LeadDetailModal({
                 {statusBling.texto}
               </span>
             )}
-            {dirty && (
-              <button
-                onClick={handleSave}
-                disabled={saving}
-                className="h-8 bg-[#111111] text-white px-3 rounded-[4px] text-[13px] border border-[#111111] transition-colors hover:bg-white hover:text-[#111111] disabled:opacity-50"
-              >
-                {saving ? "Salvando..." : "Salvar alterações"}
-              </button>
-            )}
             <span
               className="text-[10px] font-semibold px-2.5 py-1 rounded-[4px]"
               style={{ background: tempConfig.bg, color: tempConfig.color }}
@@ -332,6 +325,35 @@ export function LeadDetailModal({
               ×
             </button>
           </div>
+        </div>
+
+        {/* Ações — fora da área com scroll, visíveis em qualquer aba. */}
+        <div
+          data-testid="lead-detail-actions"
+          className="px-6 py-3 border-b border-[#dedbd6] flex items-center gap-2"
+        >
+          <button
+            type="button"
+            onClick={() => setShowCreateSale(true)}
+            className="inline-flex items-center gap-1.5 rounded-md bg-[#1f9d57] px-3 py-1.5 text-[13px] font-medium text-white hover:bg-[#1b8a4c]"
+          >
+            Registrar Venda
+          </button>
+          <button
+            type="button"
+            onClick={() => setShowCreateQuote(true)}
+            className="inline-flex items-center gap-1.5 rounded-md border border-[#dedbd6] bg-white px-3 py-1.5 text-[13px] font-medium text-[#111111] hover:border-[#111111] hover:bg-[#faf9f6] transition-colors"
+          >
+            Fazer Orçamento
+          </button>
+          <button
+            type="button"
+            onClick={handleSave}
+            disabled={!dirty || saving}
+            className="ml-auto h-8 bg-[#111111] text-white px-3 rounded-[4px] text-[13px] border border-[#111111] transition-colors hover:bg-white hover:text-[#111111] disabled:opacity-40 disabled:hover:bg-[#111111] disabled:hover:text-white disabled:cursor-not-allowed"
+          >
+            {saving ? "Salvando..." : "Salvar alterações"}
+          </button>
         </div>
 
         {/* Tabs */}
@@ -464,29 +486,6 @@ export function LeadDetailModal({
                       className="w-full text-[13px] font-medium text-[#111111] bg-transparent outline-none placeholder:text-[#7b7b78]"
                     />
                   </div>
-                </div>
-              </div>
-
-              {/* A lista de oportunidades virou a aba "Funis": aqui ela lia a
-                  coluna legada `deals.stage` e rotulava por um array fixo, sem
-                  funil, sem etapa de verdade e sem como mover nada. O botao de
-                  registrar venda fica em "Dados Gerais" porque venda e um
-                  registro do lead, nao um card de funil. */}
-              <div className="mt-5 pt-4 border-t border-[#dedbd6]">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <p className="block text-[11px] uppercase tracking-[0.6px] text-[#7b7b78]">Vendas</p>
-                    <p className="text-[13px] text-[#7b7b78] mt-1">
-                      Os cards do lead estao na aba Funis.
-                    </p>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => setShowCreateSale(true)}
-                    className="inline-flex items-center gap-1.5 rounded-md bg-[#1f9d57] px-3 py-1.5 text-[13px] font-medium text-white hover:bg-[#1b8a4c]"
-                  >
-                    Registrar Venda
-                  </button>
                 </div>
               </div>
             </div>
@@ -718,6 +717,18 @@ export function LeadDetailModal({
             // A aba "Funis" tem fetch proprio e remonta ao ser aberta, entao nao
             // ha lista para recarregar daqui (antes recarregava `leadDeals`).
             onSaved={() => setShowCreateSale(false)}
+          />
+        </div>
+      )}
+
+      {showCreateQuote && (
+        // Mesmo motivo do SaleCreateModal: cliques no portal não podem fechar a ficha.
+        <div onClick={(e) => e.stopPropagation()}>
+          <QuoteCreateModal
+            leadId={lead.id}
+            currentUserEmail={currentUserEmail}
+            onClose={() => setShowCreateQuote(false)}
+            onSaved={() => setShowCreateQuote(false)}
           />
         </div>
       )}
