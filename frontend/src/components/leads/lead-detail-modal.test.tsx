@@ -14,7 +14,14 @@ vi.mock("./lead-bling-section", () => ({ LeadBlingSection: () => null }));
 vi.mock("./lead-funis-tab", () => ({ LeadFunisTab: () => null }));
 vi.mock("./lead-timeline", () => ({ LeadTimeline: () => null }));
 vi.mock("@/components/leads/lead-origin-block", () => ({ LeadOriginBlock: () => null }));
-vi.mock("@/components/sales/sale-create-modal", () => ({ SaleCreateModal: () => null }));
+vi.mock("@/components/sales/sale-create-modal", () => ({
+  SaleCreateModal: (p: { leadId?: string }) => <div data-testid="sale-modal">{p.leadId}</div>,
+}));
+vi.mock("@/components/quotes/quote-create-modal", () => ({
+  QuoteCreateModal: (p: { leadId?: string; currentUserEmail?: string }) => (
+    <div data-testid="quote-modal">{p.leadId}|{p.currentUserEmail}</div>
+  ),
+}));
 vi.mock("@/hooks/use-current-user", () => ({ useCurrentUserEmail: () => "teste@x.com" }));
 vi.mock("@/lib/supabase/client", () => ({
   createClient: () => ({
@@ -56,8 +63,8 @@ function renderModal(
   return onSave;
 }
 
-const header = () => screen.getByTestId("lead-detail-header");
-const botaoSalvar = () => screen.queryByRole("button", { name: /Salvar altera/ });
+const barra = () => screen.getByTestId("lead-detail-actions");
+const botaoSalvar = () => screen.getByRole("button", { name: /Salvar altera/ }) as HTMLButtonElement;
 
 beforeEach(() => {
   global.fetch = vi.fn(() =>
@@ -66,43 +73,59 @@ beforeEach(() => {
 });
 afterEach(cleanup);
 
-describe("LeadDetailModal — Salvar alterações no cabeçalho", () => {
-  it("sem edição, não mostra o botão", () => {
+describe("LeadDetailModal — barra de ações no topo", () => {
+  it("ao abrir, mostra Registrar Venda, Fazer Orçamento e Salvar alterações na barra", () => {
     renderModal();
-    expect(botaoSalvar()).toBeNull();
+    for (const nome of [/Registrar Venda/, /Fazer Orçamento/, /Salvar altera/]) {
+      const b = screen.getByRole("button", { name: nome });
+      expect(barra().contains(b)).toBe(true);
+      expect(screen.getAllByRole("button", { name: nome })).toHaveLength(1);
+    }
   });
 
-  it("ao editar um campo, o botão aparece dentro do cabeçalho, com acento", () => {
+  it("sem edição, Salvar fica visível e desabilitado; editando, habilita", () => {
     renderModal();
+    expect(botaoSalvar().disabled).toBe(true);
+    expect(botaoSalvar().textContent).toBe("Salvar alterações");
     fireEvent.change(screen.getByDisplayValue("teste"), { target: { value: "teste agente" } });
-    const botao = botaoSalvar();
-    expect(botao).not.toBeNull();
-    expect(botao!.textContent).toBe("Salvar alterações");
-    expect(header().contains(botao)).toBe(true);
-    // Não existe uma segunda cópia no rodapé da aba.
-    expect(screen.getAllByRole("button", { name: /Salvar altera/ })).toHaveLength(1);
+    expect(botaoSalvar().disabled).toBe(false);
   });
 
-  it("trocando de aba depois de editar, o botão continua visível", () => {
+  it("trocando de aba, a barra continua com os 3 botões", () => {
     renderModal();
-    fireEvent.change(screen.getByDisplayValue("teste"), { target: { value: "teste agente" } });
     fireEvent.click(screen.getByRole("button", { name: "Metricas" }));
-    expect(botaoSalvar()).not.toBeNull();
+    expect(barra().textContent).toContain("Registrar Venda");
+    expect(barra().textContent).toContain("Fazer Orçamento");
+    expect(barra().textContent).toContain("Salvar alterações");
   });
 
-  it("clicar salva só o campo alterado, mostra Salvando... e some ao terminar", async () => {
+  it("Registrar Venda abre o modal de venda do lead", () => {
+    renderModal();
+    expect(screen.queryByTestId("sale-modal")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: /Registrar Venda/ }));
+    expect(screen.getByTestId("sale-modal").textContent).toBe("lead-1");
+  });
+
+  it("Fazer Orçamento abre o modal de orçamento com o lead e o usuário", () => {
+    renderModal();
+    expect(screen.queryByTestId("quote-modal")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: /Fazer Orçamento/ }));
+    expect(screen.getByTestId("quote-modal").textContent).toBe("lead-1|teste@x.com");
+  });
+
+  it("clicar salva só o campo alterado, mostra Salvando... e volta a desabilitar", async () => {
     let terminar!: () => void;
     const onSave = vi.fn(() => new Promise<void>((r) => { terminar = r; }));
     renderModal(onSave);
     fireEvent.change(screen.getByDisplayValue("teste"), { target: { value: "teste agente" } });
-    fireEvent.click(botaoSalvar()!);
+    fireEvent.click(botaoSalvar());
 
     expect(onSave).toHaveBeenCalledWith("lead-1", { nome_fantasia: "teste agente" });
     const salvando = screen.getByRole("button", { name: "Salvando..." }) as HTMLButtonElement;
     expect(salvando.disabled).toBe(true);
 
     await act(async () => { terminar(); });
-    expect(botaoSalvar()).toBeNull();
+    expect(botaoSalvar().disabled).toBe(true);
     expect(screen.queryByRole("button", { name: "Salvando..." })).toBeNull();
   });
 });
@@ -151,14 +174,14 @@ describe("LeadDetailModal — endereço estruturado", () => {
     renderModal(onSave);
     fireEvent.change(campo("Número"), { target: { value: "123" } });
     fireEvent.change(campo("Complemento"), { target: { value: "Sala 2" } });
-    await act(async () => { fireEvent.click(botaoSalvar()!); });
+    await act(async () => { fireEvent.click(botaoSalvar()); });
     expect(onSave).toHaveBeenCalledWith("lead-1", { numero: "123", complemento: "Sala 2" });
   });
 
   it("depois de salvar mostra o resultado do Bling", async () => {
     renderModal(() => Promise.resolve({ id: "lead-1", bling_endereco: { status: "updated", contas: [] } }));
     fireEvent.change(campo("Número"), { target: { value: "123" } });
-    await act(async () => { fireEvent.click(botaoSalvar()!); });
+    await act(async () => { fireEvent.click(botaoSalvar()); });
     expect(screen.getByText("Endereço atualizado no Bling")).toBeTruthy();
   });
 
@@ -167,7 +190,7 @@ describe("LeadDetailModal — endereço estruturado", () => {
       Promise.resolve({ bling_endereco: { status: "error", message: "Bling indisponível — tente salvar de novo" } }),
     );
     fireEvent.change(campo("Número"), { target: { value: "123" } });
-    await act(async () => { fireEvent.click(botaoSalvar()!); });
+    await act(async () => { fireEvent.click(botaoSalvar()); });
     expect(screen.getByText("Falha ao atualizar no Bling: Bling indisponível — tente salvar de novo")).toBeTruthy();
   });
 
@@ -186,13 +209,13 @@ describe("LeadDetailModal — endereço estruturado", () => {
 
     fireEvent.change(campo("CEP"), { target: { value: "38200-000" } });
     fireEvent.change(campo("Número"), { target: { value: "123" } });
-    await act(async () => { fireEvent.click(botaoSalvar()!); });
+    await act(async () => { fireEvent.click(botaoSalvar()); });
     expect(onSave).toHaveBeenLastCalledWith("lead-1", { cep: "38200-000", numero: "123" });
     // O CEP passa a aparecer como o banco gravou.
     expect(campo("CEP").value).toBe("38200000");
 
     fireEvent.change(screen.getByDisplayValue("teste"), { target: { value: "teste agente" } });
-    await act(async () => { fireEvent.click(botaoSalvar()!); });
+    await act(async () => { fireEvent.click(botaoSalvar()); });
     expect(onSave).toHaveBeenLastCalledWith("lead-1", { nome_fantasia: "teste agente" });
   });
 
@@ -202,16 +225,16 @@ describe("LeadDetailModal — endereço estruturado", () => {
       .mockResolvedValue({ error: "boom" });
     renderModal(onSave);
     fireEvent.change(campo("Número"), { target: { value: "123" } });
-    await act(async () => { fireEvent.click(botaoSalvar()!); });
+    await act(async () => { fireEvent.click(botaoSalvar()); });
     fireEvent.change(screen.getByDisplayValue("teste"), { target: { value: "teste agente" } });
-    await act(async () => { fireEvent.click(botaoSalvar()!); });
+    await act(async () => { fireEvent.click(botaoSalvar()); });
     expect(onSave).toHaveBeenLastCalledWith("lead-1", { numero: "123", nome_fantasia: "teste agente" });
   });
 
   it("salvar campo que não é de endereço não mostra mensagem do Bling", async () => {
     renderModal(() => Promise.resolve({ id: "lead-1" }));
     fireEvent.change(screen.getByDisplayValue("teste"), { target: { value: "teste agente" } });
-    await act(async () => { fireEvent.click(botaoSalvar()!); });
+    await act(async () => { fireEvent.click(botaoSalvar()); });
     expect(screen.queryByText(/Bling/)).toBeNull();
   });
 });
