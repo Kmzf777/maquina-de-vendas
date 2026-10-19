@@ -225,6 +225,7 @@ def test_traffic_report_lead_mode_end_to_end(monkeypatch):
             {"id": "s1", "pipeline_id": "p1", "key": "entrada", "order_index": 0},
             {"id": "s2", "pipeline_id": "p1", "key": "qualificado", "order_index": 1},
         ],
+        "lead_events": [{"id": "e1", "lead_id": "a", "event_type": "repasse"}],
         "sales": [{"lead_id": "a", "value": 200.0, "sold_at": "2026-08-03T00:00:00Z"}],
     }
     monkeypatch.setattr(tr, "get_supabase", lambda: _FakeSupabase(tables))
@@ -255,19 +256,22 @@ def test_traffic_report_sale_mode_end_to_end(monkeypatch):
     assert row["receita"] == 350.0
 
 
-def test_closer_stage_before_qualificado_not_counted(monkeypatch):
-    # Deal parado no estágio ANTES de qualificado (order_index 0) não conta como closer.
+def test_closer_deal_avancado_sem_repasse_nao_conta(monkeypatch):
+    # B11 (7b143561): closer = evento 'repasse'. Deal em etapa >= qualificado (inclusive
+    # 'perdido') sem repasse NÃO conta como closer.
     tables = {
         "leads": [
             {"id": "a", "gclid": "1", "fbclid": "", "ctwa_clid": "", "utm_source": "",
              "utm_campaign": "black", "traffic_type": "paid", "created_at": "2026-08-01T00:00:00Z"},
         ],
         "conversations": [],
-        "deals": [{"lead_id": "a", "stage_id": "s1", "pipeline_id": "p1"}],
+        "deals": [{"lead_id": "a", "stage_id": "s3", "pipeline_id": "p1"}],
         "pipeline_stages": [
             {"id": "s1", "pipeline_id": "p1", "key": "entrada", "order_index": 0},
             {"id": "s2", "pipeline_id": "p1", "key": "qualificado", "order_index": 1},
+            {"id": "s3", "pipeline_id": "p1", "key": "perdido", "order_index": 2},
         ],
+        "lead_events": [],
         "sales": [],
     }
     monkeypatch.setattr(tr, "get_supabase", lambda: _FakeSupabase(tables))
@@ -275,29 +279,24 @@ def test_closer_stage_before_qualificado_not_counted(monkeypatch):
     assert out["rows"][0]["closer"] == 0
 
 
-def test_closer_cross_pipeline_isolation(monkeypatch):
-    # Cada pipeline tem seu próprio threshold de "qualificado".
-    # Lead "a": deal no pipeline p1 com order_index 1 (abaixo do qualificado p1=2) -> NÃO closer,
-    # mesmo que 1 atenderia o threshold do p2 (=1).
+def test_closer_funil_sem_qualificado_conta_pelo_repasse(monkeypatch):
+    # B11 (7b143561): funis do João não têm key 'qualificado'; o lead repassado conta.
     tables = {
         "leads": [
             {"id": "a", "gclid": "1", "fbclid": "", "ctwa_clid": "", "utm_source": "",
              "utm_campaign": "black", "traffic_type": "paid", "created_at": "2026-08-01T00:00:00Z"},
         ],
         "conversations": [],
-        "deals": [{"lead_id": "a", "stage_id": "p1s1", "pipeline_id": "p1"}],
+        "deals": [{"lead_id": "a", "stage_id": "j0", "pipeline_id": "p-joao"}],
         "pipeline_stages": [
-            {"id": "p1s0", "pipeline_id": "p1", "key": "entrada", "order_index": 0},
-            {"id": "p1s1", "pipeline_id": "p1", "key": "contato", "order_index": 1},
-            {"id": "p1s2", "pipeline_id": "p1", "key": "qualificado", "order_index": 2},
-            {"id": "p2s0", "pipeline_id": "p2", "key": "entrada", "order_index": 0},
-            {"id": "p2s1", "pipeline_id": "p2", "key": "qualificado", "order_index": 1},
+            {"id": "j0", "pipeline_id": "p-joao", "key": "novo", "order_index": 0},
         ],
+        "lead_events": [{"id": "e1", "lead_id": "a", "event_type": "repasse"}],
         "sales": [],
     }
     monkeypatch.setattr(tr, "get_supabase", lambda: _FakeSupabase(tables))
     out = tr.traffic_report(period="30d", mode="lead")
-    assert out["rows"][0]["closer"] == 0
+    assert out["rows"][0]["closer"] == 1
 
 
 def test_traffic_report_failsoft_on_error(monkeypatch):

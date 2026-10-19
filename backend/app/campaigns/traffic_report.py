@@ -91,7 +91,6 @@ def resolve_campaign_id(utm_campaign: str, utm_medium: str,
 logger = logging.getLogger(__name__)
 
 _NO_CAMPAIGN = "(sem campanha)"
-_CLOSER_STAGE_KEY = "qualificado"
 
 
 def _s(v: Any) -> str:
@@ -650,23 +649,14 @@ def _conversed_ids(sb, lead_ids: list[str]) -> set[str]:
 
 
 def _closer_ids(sb, lead_ids: list[str]) -> set[str]:
-    stages = _fetch_all(lambda: sb.table("pipeline_stages").select("id, pipeline_id, key, order_index"))
-    stage_by_id = {s["id"]: s for s in stages}
-    qualifica_idx: dict[str, int] = {
-        s["pipeline_id"]: s["order_index"]
-        for s in stages if s.get("key") == _CLOSER_STAGE_KEY and s.get("order_index") is not None
-    }
+    """D3: closer = lead da coorte com evento lead_events 'repasse' (1º repasse ao closer).
+    Não olha etapa de deal: 'perdido' não é closer e os funis do João (sem key
+    'qualificado') contam normalmente."""
     out: set[str] = set()
     for chunk in _chunks(lead_ids):
-        deals = _fetch_all(lambda c=chunk: sb.table("deals")
-                           .select("lead_id, stage_id, pipeline_id").in_("lead_id", c))
-        for d in deals:
-            stage = stage_by_id.get(d.get("stage_id"))
-            if not stage or stage.get("order_index") is None:
-                continue
-            threshold = qualifica_idx.get(d.get("pipeline_id"))
-            if threshold is not None and stage["order_index"] >= threshold:
-                out.add(d["lead_id"])
+        rows = _fetch_all(lambda c=chunk: sb.table("lead_events").select("id, lead_id")
+                          .in_("lead_id", c).eq("event_type", "repasse"))
+        out.update(r["lead_id"] for r in rows if r.get("lead_id"))
     return out
 
 
