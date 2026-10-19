@@ -724,14 +724,16 @@ export function BroadcastDetail({ broadcastId }: BroadcastDetailProps) {
                       {moveStageLabel && (
                         <td className="px-5 py-3 text-[13px]">
                           {lead.deal_moved_at ? (
+                            // Rótulos neutros: mover (ou não) o card no envio é efeito
+                            // do disparo, não acerto/erro — card em etapa final não move.
                             <span
-                              className="text-[#0bdf50]"
+                              className="text-[#7b7b78]"
                               title={new Date(lead.deal_moved_at).toLocaleString("pt-BR")}
                             >
-                              ✓ Movido
+                              Card movido no envio
                             </span>
                           ) : lead.status === "sent" || lead.status === "delivered" ? (
-                            <span className="text-[#c41c1c]">Não movido</span>
+                            <span className="text-[#7b7b78]">Card não movido</span>
                           ) : (
                             <span className="text-[#dedbd6]">—</span>
                           )}
