@@ -1,11 +1,11 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Lead } from "@/lib/types";
 import { createClient } from "@/lib/supabase/client";
 import {
-  fetchRepasseRespostaTodas,
+  fetchRepasseResposta,
   formatarMinutos,
   resumirTempoCloser,
   type RepasseResposta,
@@ -28,23 +28,30 @@ export function KanbanMetricsBar({ leads }: KanbanMetricsBarProps) {
   }).length;
 
   // Tempo até o closer assumir (D4/D6): minutos úteis da view, a partir do 1º repasse.
-  // A view é lida uma vez; o filtro da página só muda quais leads entram na conta.
-  const [repasses, setRepasses] = useState<Map<string, RepasseResposta> | null>(null);
+  // Busca só os leads exibidos (lotes de 200 em fetchRepasseResposta). A chave é o
+  // conjunto ordenado de ids: re-render/filtro que não muda o conjunto não refaz a consulta.
+  const idsKey = useMemo(
+    () => Array.from(new Set(leads.map((l) => l.id))).sort().join(","),
+    [leads],
+  );
+  const [repasses, setRepasses] = useState<{ key: string; mapa: Map<string, RepasseResposta> } | null>(null);
   useEffect(() => {
     let vivo = true;
-    fetchRepasseRespostaTodas(createClient() as unknown as SupabaseClient)
-      .then((m) => {
-        if (vivo) setRepasses(m);
+    const ids = idsKey ? idsKey.split(",") : [];
+    fetchRepasseResposta(createClient() as unknown as SupabaseClient, ids)
+      .then((mapa) => {
+        if (vivo) setRepasses({ key: idsKey, mapa });
       })
       .catch(() => {
         // View ausente/erro: mostra "—" e o resto da barra segue.
-        if (vivo) setRepasses(new Map());
+        if (vivo) setRepasses({ key: idsKey, mapa: new Map() });
       });
     return () => {
       vivo = false;
     };
-  }, []);
-  const resumo = repasses ? resumirTempoCloser(repasses, leads.map((l) => l.id)) : null;
+  }, [idsKey]);
+  const resumo =
+    repasses && repasses.key === idsKey ? resumirTempoCloser(repasses.mapa, idsKey ? idsKey.split(",") : []) : null;
   const responseStr = formatarMinutos(resumo?.mediana);
 
   return (

@@ -23,7 +23,6 @@ export interface RepasseResposta {
 
 const VIEW = "vw_repasse_resposta";
 const LOTE_IDS = 200;
-const PAGINA = 1000;
 
 /** D4/D6: tempo até o closer assumir, em minutos úteis do vendedor, a partir do 1º repasse. */
 export async function fetchRepasseResposta(
@@ -35,27 +34,6 @@ export async function fetchRepasseResposta(
     const { data, error } = await sb.from(VIEW).select("*").in("lead_id", leadIds.slice(i, i + LOTE_IDS));
     if (error) throw error;
     for (const r of (data ?? []) as RepasseResposta[]) out.set(r.lead_id, r);
-  }
-  return out;
-}
-
-/**
- * A view inteira, paginada (o PostgREST corta em 1.000 linhas). Para telas que
- * mostram todos os leads e filtram no cliente (Kanban): busca uma vez e o filtro
- * não dispara nova consulta.
- */
-export async function fetchRepasseRespostaTodas(sb: SupabaseClient): Promise<Map<string, RepasseResposta>> {
-  const out = new Map<string, RepasseResposta>();
-  for (let de = 0; ; de += PAGINA) {
-    const { data, error } = await sb
-      .from(VIEW)
-      .select("*")
-      .order("lead_id")
-      .range(de, de + PAGINA - 1);
-    if (error) throw error;
-    const linhas = (data ?? []) as RepasseResposta[];
-    for (const r of linhas) out.set(r.lead_id, r);
-    if (linhas.length < PAGINA) break;
   }
   return out;
 }

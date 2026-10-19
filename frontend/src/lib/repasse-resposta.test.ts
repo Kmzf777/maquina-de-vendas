@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
   fetchRepasseResposta,
-  fetchRepasseRespostaTodas,
   formatarMinutos,
   mapRepasseOverview,
   resumirTempoCloser,
@@ -94,41 +93,6 @@ describe("fetchRepasseResposta", () => {
   it("erro do banco (ex.: view ainda não criada) é propagado", async () => {
     const { sb } = clienteFalso({ data: null, error: { message: "relation does not exist" } });
     await expect(fetchRepasseResposta(sb, ["a"])).rejects.toBeTruthy();
-  });
-});
-
-describe("fetchRepasseRespostaTodas", () => {
-  it("pagina de 1000 em 1000 até a página vir incompleta", async () => {
-    const faixas: [number, number][] = [];
-    const paginas = [
-      Array.from({ length: 1000 }, (_, i) => linha(`a${i}`, i)),
-      [linha("z", 7)],
-    ];
-    const sb = {
-      from: () => ({
-        select: () => ({
-          order: () => ({
-            range: (de: number, ate: number) => {
-              faixas.push([de, ate]);
-              return Promise.resolve({ data: paginas[faixas.length - 1], error: null });
-            },
-          }),
-        }),
-      }),
-    };
-    const mapa = await fetchRepasseRespostaTodas(sb as never);
-    expect(faixas).toEqual([[0, 999], [1000, 1999]]);
-    expect(mapa.size).toBe(1001);
-    expect(mapa.get("z")?.minutos_uteis).toBe(7);
-  });
-
-  it("erro é propagado", async () => {
-    const sb = {
-      from: () => ({
-        select: () => ({ order: () => ({ range: () => Promise.resolve({ data: null, error: { message: "x" } }) }) }),
-      }),
-    };
-    await expect(fetchRepasseRespostaTodas(sb as never)).rejects.toBeTruthy();
   });
 });
 
