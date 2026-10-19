@@ -29,7 +29,12 @@ vi.mock("@/lib/supabase/client", () => ({
   }),
 }));
 
+vi.mock("@/hooks/use-repasse-resposta", () => ({
+  useRepasseResposta: vi.fn(() => ({ carregando: false, linha: null })),
+}));
+
 import { LeadDetailModal } from "./lead-detail-modal";
+import { useRepasseResposta } from "@/hooks/use-repasse-resposta";
 
 const LEAD = {
   id: "lead-1",
@@ -236,5 +241,34 @@ describe("LeadDetailModal — endereço estruturado", () => {
     fireEvent.change(screen.getByDisplayValue("teste"), { target: { value: "teste agente" } });
     await act(async () => { fireEvent.click(botaoSalvar()); });
     expect(screen.queryByText(/Bling/)).toBeNull();
+  });
+});
+
+describe("LeadDetailModal — aba Metricas: tempo até o closer assumir", () => {
+  it("usa os minutos úteis da view, não first_response_at - created_at", () => {
+    vi.mocked(useRepasseResposta).mockReturnValue({
+      carregando: false,
+      linha: {
+        lead_id: "lead-1",
+        repasse_em: "2026-10-01T13:00:00Z",
+        vendedor_id: "v1",
+        primeira_resposta_em: "2026-10-01T13:42:00Z",
+        minutos_uteis: 42,
+        minutos_uteis_em_aberto: null,
+        respondeu: true,
+      },
+    });
+    renderModal(undefined, { ...LEAD, first_response_at: "2026-10-05T12:00:00Z" } as Lead);
+    fireEvent.click(screen.getByRole("button", { name: "Metricas" }));
+    expect(useRepasseResposta).toHaveBeenCalledWith("lead-1");
+    expect(screen.getByTestId("tempo-closer").textContent).toBe("42 min");
+    expect(screen.getByText("Tempo até o closer assumir (horário comercial)")).toBeTruthy();
+  });
+
+  it("sem linha na view → travessão", () => {
+    vi.mocked(useRepasseResposta).mockReturnValue({ carregando: false, linha: null });
+    renderModal();
+    fireEvent.click(screen.getByRole("button", { name: "Metricas" }));
+    expect(screen.getByTestId("tempo-closer").textContent).toBe("—");
   });
 });
