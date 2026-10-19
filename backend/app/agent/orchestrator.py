@@ -619,6 +619,19 @@ class LLMQuotaExhaustedError(LLMExhaustedError):
     o parking usa esse horizonte como deadline. Wartime 10/07/2026."""
 
 
+def _is_outbound_opener(msg: dict) -> bool:
+    """Mensagem nossa que serve de abertura do 1º turno outbound: disparo (broadcast/
+    followup) ou modelo enviado à mão pelo vendedor (sent_by='seller' com
+    metadata.template verdadeiro — rota send-template)."""
+    if msg.get("role") != "assistant":
+        return False
+    sent_by = msg.get("sent_by")
+    if sent_by in ("broadcast", "followup"):
+        return True
+    meta = msg.get("metadata")
+    return sent_by == "seller" and isinstance(meta, dict) and bool(meta.get("template"))
+
+
 def _initial_thinking_off(model: str) -> bool:
     """Thinking da PRIMEIRA chamada (raciocínio inicial / escolha de tools).
 
@@ -1017,16 +1030,14 @@ async def run_agent(
     is_first_turn = not any(m.get("role") == "user" for m in history)
     campaign_message = (lead_context or {}).get("campaign_message")
     # Fallback: deriva a abertura fixa a partir do próprio template já enviado
-    # (broadcast/followup no histórico), já que campaign_message raramente é plumbado
-    # via lead_context. Sem isso, build_outbound_first_turn_context nunca dispararia.
+    # (broadcast/followup no histórico, ou modelo mandado à mão pelo vendedor pela rota
+    # send-template: sent_by='seller' + metadata.template=true), já que campaign_message
+    # raramente é plumbado via lead_context. Sem isso, build_outbound_first_turn_context
+    # nunca dispararia.
     dispatch_intent = None
     if is_outbound and is_first_turn and not campaign_message:
         dispatch_msg = next(
-            (
-                m
-                for m in reversed(history)
-                if m.get("role") == "assistant" and m.get("sent_by") in ("broadcast", "followup")
-            ),
+            (m for m in reversed(history) if _is_outbound_opener(m)),
             None,
         )
         if dispatch_msg:

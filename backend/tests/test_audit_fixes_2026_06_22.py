@@ -157,3 +157,51 @@ async def test_outbound_segundo_turno_com_abertura_nao_injeta():
     # — nem nos contents nem no system_instruction.
     assert "PRIMEIRO turno" not in blob
     assert "PRIMEIRO turno" not in (m_gen.await_args_list[0].kwargs.get("system_instruction") or "")
+
+
+async def _run_outbound_first_turn(history, conv_id):
+    from app.agent.orchestrator import run_agent
+
+    conversation = {
+        "id": conv_id,
+        "stage": "secretaria",
+        "leads": {"id": "lead-tpl", "name": "Maria", "phone": "5511900000097"},
+    }
+    with patch("app.agent.orchestrator.get_lead", return_value={
+                "id": "lead-tpl", "name": "Maria", "phone": "5511900000097", "ai_enabled": True,
+            }), \
+         patch("app.agent.orchestrator.get_history", return_value=history), \
+         patch("app.agent.orchestrator.get_agent_profile", return_value={"prompt_key": "valeria_outbound", "model": "gemini-2.5-flash"}), \
+         patch("app.agent.orchestrator.track_token_usage"), \
+         patch("app.agent.orchestrator.generate",
+               new=AsyncMock(return_value=fake_text("resposta da ia"))) as m_gen:
+        await run_agent(conversation, "sim", lead_context=None, agent_profile_id="profile-out")
+    return _capture_contents(m_gen)
+
+
+@pytest.mark.asyncio
+async def test_outbound_modelo_enviado_a_mao_pelo_vendedor_vira_abertura():
+    """Rota send-template grava o modelo como sent_by='seller' + metadata.template=true:
+    também é abertura de 1º turno outbound (igual broadcast/followup)."""
+    opener = {
+        "role": "assistant",
+        "content": "Oi, aqui é a Valéria da Café Canastra. Falo com Maria?",
+        "sent_by": "seller",
+        "metadata": {"template": True, "template_name": "abertura_x"},
+    }
+    contents, blob = await _run_outbound_first_turn([opener], "conv-tpl-seller")
+    assert "PRIMEIRO turno" in blob, contents
+    assert "Falo com Maria?" in blob
+
+
+@pytest.mark.asyncio
+async def test_outbound_texto_livre_do_vendedor_nao_vira_abertura():
+    """Mensagem comum do vendedor (sem metadata.template) não é abertura-template."""
+    opener = {
+        "role": "assistant",
+        "content": "Oi Maria, tudo bem?",
+        "sent_by": "seller",
+        "metadata": {},
+    }
+    _contents, blob = await _run_outbound_first_turn([opener], "conv-tpl-livre")
+    assert "PRIMEIRO turno" not in blob
