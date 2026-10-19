@@ -28,6 +28,10 @@ from app.leads.service import (
 
 logger = logging.getLogger(__name__)
 
+# Fuso do carimbo `metadata.handoff.at` — mesmo padrão de `app.agent.tools._TZ_BR`
+# (Brasil sem horário de verão desde 2019: offset fixo -03:00 = America/Sao_Paulo).
+_TZ_BR = timezone(timedelta(hours=-3))
+
 # ── Qual bot escreveu a nota ────────────────────────────────────────────────
 # Este módulo serve DOIS fluxos de botões (a Recuperação e a ValerIA), e quem lê
 # tudo que ele grava é o vendedor, na hora de abordar o lead. "bot de recuperação"
@@ -509,6 +513,7 @@ def _aplicar_handoff(lead: dict, conversation_id: str, *,
     except Exception as exc:
         logger.warning("[BUTTON FLOW] falha ao desligar IA no handoff do lead %s: %s",
                        lead_id, exc)
+    _marker = None
     try:
         # Marcador de sistema idêntico ao que `encaminhar_humano` grava. É ELE que o
         # dashboard conta — dashboard_kpis.handoff_msgs e
@@ -517,9 +522,9 @@ def _aplicar_handoff(lead: dict, conversation_id: str, *,
         # e não `metadata.handoff`. Sem esta linha o lead é entregue de verdade ao
         # vendedor e mesmo assim some do KPI: um disparo de 1.208 leads mostraria
         # dezenas de quentes com zero transbordos.
-        save_message(lead_id, "system",
-                     handoff_system_marker(vendedor, motivo),
-                     conversation_id=conversation_id)
+        _marker = save_message(lead_id, "system",
+                               handoff_system_marker(vendedor, motivo),
+                               conversation_id=conversation_id)
     except Exception as exc:
         logger.warning("[BUTTON FLOW] marcador de handoff não gravado p/ conv %s: %s",
                        conversation_id, exc)
@@ -527,10 +532,22 @@ def _aplicar_handoff(lead: dict, conversation_id: str, *,
         "handoff": {
             "vendedor": vendedor,
             "motivo": motivo,
-            "at": datetime.now(timezone.utc).isoformat(),
+            # BRT, igual a `encaminhar_humano` (tools._TZ_BR). ISO com offset nos dois.
+            "at": datetime.now(_TZ_BR).isoformat(),
             "origem": "button_flow",
         },
     }, rotulo="metadata.handoff")
+    # B3 (7b143561): evento `lead_events.repasse`, um por repasse — o carimbo acima
+    # sobrescreve o anterior. Fail-soft: marcador e carimbo já estão gravados.
+    try:
+        from app.leads.repasse import marcador_id_e_data, registrar_repasse
+        _marker_id, _marker_at = marcador_id_e_data(_marker)
+        registrar_repasse(lead_id=lead_id, conversation_id=conversation_id,
+                          message_id=_marker_id, occurred_at=_marker_at,
+                          source="button_flow", vendedor_id=None, vendedor=vendedor,
+                          segmento=lead.get("stage"), motivo=motivo)
+    except Exception as exc:
+        logger.error("[BUTTON FLOW] evento repasse do lead %s não gravado: %s", lead_id, exc)
     _mover_deal(lead_id, *STAGE_QUER_REPOR)
     nota = f"➡️ [TRANSBORDO p/ {vendedor}] {motivo}."
     if nota_sem_qualificacao:

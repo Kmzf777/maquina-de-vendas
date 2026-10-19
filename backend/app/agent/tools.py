@@ -852,7 +852,7 @@ async def _t_encaminhar_humano(ctx: ToolContext) -> str:
             "encaminhar_humano failed to create deal for lead %s: %s",
             lead_id, exc, exc_info=True,
         )
-    save_message(lead_id, "system", handoff_system_marker(vendedor, motivo), conversation_id=conversation_id)
+    _marker = save_message(lead_id, "system", handoff_system_marker(vendedor, motivo), conversation_id=conversation_id)
     # Item 2: carimbo ESTRUTURADO do handoff (legível por máquina), independente do LLM de
     # resumo. Torna a cascata Qualificados/Aceites contável por evento real de handoff, sem
     # depender do estágio do kanban (contaminado por desqualificações suaves).
@@ -871,6 +871,17 @@ async def _t_encaminhar_humano(ctx: ToolContext) -> str:
             "encaminhar_humano: falha ao gravar carimbo metadata.handoff p/ lead %s: %s",
             lead_id, _stamp_exc,
         )
+    # B3 (7b143561): evento estruturado `lead_events.repasse`, um por repasse (o carimbo
+    # acima sobrescreve o anterior). Fail-soft: marcador e carimbo já estão gravados.
+    try:
+        from app.leads.repasse import marcador_id_e_data, registrar_repasse
+        _marker_id, _marker_at = marcador_id_e_data(_marker)
+        registrar_repasse(lead_id=lead_id, conversation_id=conversation_id,
+                          message_id=_marker_id, occurred_at=_marker_at, source="ia",
+                          vendedor_id=_assigned_to, vendedor=vendedor, segmento=_seg,
+                          motivo=motivo)
+    except Exception as _ev_exc:
+        logger.error("encaminhar_humano: evento repasse do lead %s: %s", lead_id, _ev_exc)
     # Gera e armazena resumo estruturado da qualificação
     try:
         from app.agent.summary import generate_qualification_summary
