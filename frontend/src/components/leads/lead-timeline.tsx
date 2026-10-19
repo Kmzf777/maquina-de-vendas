@@ -11,6 +11,7 @@ import {
   MessageCircle,
   ShoppingBag,
   Target,
+  UserCheck,
   type LucideIcon,
 } from "lucide-react";
 
@@ -20,7 +21,7 @@ import {
 export interface TimelineEvent {
   kind: "evento";
   id: string;
-  /** entrada | etapa | venda | venda_cancelada | disparo | mesclagem | atribuicao_manual | (legado) stage_change */
+  /** entrada | etapa | venda | venda_cancelada | disparo | repasse | mesclagem | atribuicao_manual | (legado) stage_change */
   event_type: string;
   /** occurred_at (quando aconteceu; no backfill ≠ inserção), ISO. */
   at: string;
@@ -120,6 +121,11 @@ function descrever(item: TimelineItem): Linha {
     }
     case "disparo":
       return { icon: Megaphone, cor: "#a855f7", titulo: "Disparo", detalhe: texto(m.broadcast_nome) ?? item.new_value, selos: [] };
+    case "repasse": {
+      // Repasse ao closer (IA ou botão). Campos vazios ficam de fora.
+      const partes = [texto(m.vendedor), texto(m.segmento), texto(m.motivo)].filter(Boolean);
+      return { icon: UserCheck, cor: "#0bdf50", titulo: "Repassado ao closer", detalhe: partes.join(" · ") || null, selos: [] };
+    }
     case "mesclagem":
       return { icon: GitMerge, cor: "#7b7b78", titulo: "Lead mesclado", detalhe: item.new_value ?? item.old_value, selos: [] };
     case "atribuicao_manual":
@@ -162,7 +168,7 @@ function quando(item: TimelineItem): string {
 
 /**
  * Linha do tempo do lead: entradas (canal/campanha), etapas, vendas (valor e selo "kit"),
- * cancelamentos, disparos, mesclagens, atribuições manuais e os dias em que o cliente
+ * cancelamentos, disparos, repasses ao closer, mesclagens, atribuições manuais e os dias em que o cliente
  * conversou. Montada como aba no lead-detail-modal (P3) e no contact-detail (P4).
  */
 export function LeadTimeline({ leadId }: LeadTimelineProps) {

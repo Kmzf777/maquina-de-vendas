@@ -87,6 +87,47 @@ describe("LeadTimeline", () => {
     expect(screen.getByText("Novo → Qualificado")).toBeTruthy();
   });
 
+  it("repasse mostra 'Repassado ao closer' com vendedor, segmento e motivo; omite vazios", async () => {
+    mockFetch(
+      resposta({
+        partial: [],
+        items: [
+          {
+            kind: "evento", id: "r2", event_type: "repasse", at: "2026-10-02T13:00:00Z", source: "agente",
+            old_value: null, new_value: "v1", metadata: { vendedor: "João", segmento: "", motivo: "pediu orçamento" },
+          },
+          {
+            kind: "evento", id: "r1", event_type: "repasse", at: "2026-10-01T13:00:00Z", source: "botao",
+            old_value: null, new_value: "v1", metadata: { vendedor: "Ana", segmento: "Atacado", motivo: "quer comprar" },
+          },
+        ],
+      }),
+    );
+    const { container } = render(<LeadTimeline leadId="lead-1" />);
+    expect((await screen.findAllByText("Repassado ao closer")).length).toBe(2);
+    expect(screen.getByText("João · pediu orçamento")).toBeTruthy();
+    expect(screen.getByText("Ana · Atacado · quer comprar")).toBeTruthy();
+    const tipos = [...container.querySelectorAll("li")].map((li) => li.getAttribute("data-tipo"));
+    expect(tipos).toEqual(["repasse", "repasse"]);
+  });
+
+  it("repasse sem metadata não mostra detalhe", async () => {
+    mockFetch(
+      resposta({
+        partial: [],
+        items: [
+          {
+            kind: "evento", id: "r1", event_type: "repasse", at: "2026-10-01T13:00:00Z", source: "backfill",
+            old_value: null, new_value: null, metadata: {},
+          },
+        ],
+      }),
+    );
+    const { container } = render(<LeadTimeline leadId="lead-1" />);
+    expect(await screen.findByText("Repassado ao closer")).toBeTruthy();
+    expect(container.textContent).not.toContain("·");
+  });
+
   it("lista vazia", async () => {
     mockFetch(resposta({ items: [], partial: [] }));
     render(<LeadTimeline leadId="lead-1" />);
