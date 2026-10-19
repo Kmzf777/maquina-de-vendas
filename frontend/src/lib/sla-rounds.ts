@@ -10,13 +10,13 @@ export interface SlaMessage {
 
 /**
  * Quem conta como "resposta real" ao cliente — fecha a rodada e entra no tempo
- * médio de resposta. Vendedor humano (via CRM) e a IA conversacional (ValerIA =
- * 'agent'). Disparos não-conversacionais (broadcast/followup/campaign/automation/
- * handoff) NÃO são resposta real: não entram no tempo médio. Mas, por serem
- * mensagens NOSSAS, se forem a última da conversa tiram o lead de "em atraso"
- * (a bola está com o cliente). Ver walkConversation.
+ * médio de resposta. Só o vendedor humano (via CRM, inclusive template mandado à
+ * mão). A IA ('agent') NÃO fecha rodada (D4: o SLA mede o closer, não a ValerIA),
+ * e disparos não-conversacionais (broadcast/followup/campaign/automation/handoff)
+ * também não. Mas, por serem mensagens NOSSAS, se forem a última da conversa
+ * tiram o lead de "em atraso" (a bola está com o cliente). Ver walkConversation.
  */
-const REPLY_SENDERS = new Set(["seller", "agent"]);
+const REPLY_SENDERS = new Set(["seller"]);
 
 export interface SlaConversation {
   id: string;
@@ -46,7 +46,7 @@ export interface OpenRound {
  * Um único passe cronológico por conversa. Retorna os minutos comerciais das
  * rodadas fechadas e, se houver uma rodada aberta no fim, seus minutos decorridos.
  * Regras: rodada começa na primeira msg do cliente sem resposta; fecha (e entra no
- * tempo médio) na primeira resposta real (REPLY_SENDERS — vendedor ou IA — ou
+ * tempo médio) na primeira resposta real (REPLY_SENDERS — só o vendedor — ou
  * Finalizar via last_seller_response_at); rajadas do cliente não reiniciam; disparos
  * são ignorados no cálculo de tempo. Só fica "em atraso" (rodada aberta) se o CLIENTE
  * foi o último a falar — se mandamos qualquer mensagem depois (disparo/follow-up),

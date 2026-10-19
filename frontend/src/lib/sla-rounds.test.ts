@@ -136,18 +136,29 @@ describe("collectOpenRounds — rodadas abertas com identidade", () => {
   });
 });
 
-describe("em atraso só se o CLIENTE foi o último a falar; resposta real = vendedor/IA", () => {
+describe("em atraso só se o CLIENTE foi o último a falar; resposta real = só vendedor", () => {
   const LATE = new Date("2026-06-10T20:00:00Z"); // 17:00 SP, fora da janela → nada aberto
 
-  it("resposta da IA (agent) fecha a rodada e conta no tempo de resposta", () => {
-    // user 10:00 SP, agent 10:08 SP → rodada fechada de 8 min
+  it("resposta da IA (agent) NÃO fecha a rodada nem conta no tempo de resposta (D4)", () => {
+    // user 10:00 SP, agent 10:08 SP → nenhuma rodada fechada; IA por último → fora do atraso
     const c = conv([
       { sent_by: "user", t: "13:00:00" },
       { sent_by: "agent", t: "13:08:00" },
     ]);
     const r = collectRounds([c], DEFAULT_WINDOW, LATE);
-    expect(r.closed).toEqual([8]);
+    expect(r.closed).toEqual([]);
     expect(r.openElapsed).toEqual([]);
+  });
+
+  it("agent depois do cliente não fecha; a rodada fecha só no seller", () => {
+    // user 10:00 SP, agent 10:05, seller 10:20 → rodada de 20 min (não 5)
+    const c = conv([
+      { sent_by: "user", t: "13:00:00" },
+      { sent_by: "agent", t: "13:05:00" },
+      { sent_by: "seller", t: "13:20:00" },
+    ]);
+    const r = collectRounds([c], DEFAULT_WINDOW, LATE);
+    expect(r.closed).toEqual([20]);
   });
 
   it("IA (agent) por último → não em atraso", () => {
@@ -241,11 +252,11 @@ describe("em atraso só se o CLIENTE foi o último a falar; resposta real = vend
     ]);
   });
 
-  it("broadcast proativo (sem espera aberta) é ignorado; IA fecha a seguir", () => {
+  it("broadcast proativo (sem espera aberta) é ignorado; vendedor fecha a seguir", () => {
     const c = conv([
       { sent_by: "broadcast", t: "13:00:00" },
       { sent_by: "user", t: "13:10:00" },
-      { sent_by: "agent", t: "13:20:00" },
+      { sent_by: "seller", t: "13:20:00" },
     ]);
     const r = collectRounds([c], DEFAULT_WINDOW, LATE);
     expect(r.closed).toEqual([10]);
