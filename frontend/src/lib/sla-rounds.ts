@@ -11,12 +11,18 @@ export interface SlaMessage {
 /**
  * Quem conta como "resposta real" ao cliente — fecha a rodada e entra no tempo
  * médio de resposta. Só o vendedor humano (via CRM, inclusive template mandado à
- * mão). A IA ('agent') NÃO fecha rodada (D4: o SLA mede o closer, não a ValerIA),
- * e disparos não-conversacionais (broadcast/followup/campaign/automation/handoff)
- * também não. Mas, por serem mensagens NOSSAS, se forem a última da conversa
- * tiram o lead de "em atraso" (a bola está com o cliente). Ver walkConversation.
+ * mão). Disparos não-conversacionais (broadcast/followup/campaign/automation/
+ * handoff) não fecham rodada, mas, por serem mensagens NOSSAS, se forem a última
+ * da conversa tiram o lead de "em atraso" (a bola está com o cliente).
  */
 const REPLY_SENDERS = new Set(["seller"]);
+
+/**
+ * Quem ENCERRA a rodada sem gravar amostra: a IA ('agent') respondeu o cliente,
+ * então a espera zera (o tempo da IA não vira atraso do vendedor), mas não entra
+ * no tempo médio (D4: o SLA mede o closer, não a ValerIA).
+ */
+const SILENT_CLOSERS = new Set(["agent"]);
 
 export interface SlaConversation {
   id: string;
@@ -47,7 +53,8 @@ export interface OpenRound {
  * rodadas fechadas e, se houver uma rodada aberta no fim, seus minutos decorridos.
  * Regras: rodada começa na primeira msg do cliente sem resposta; fecha (e entra no
  * tempo médio) na primeira resposta real (REPLY_SENDERS — só o vendedor — ou
- * Finalizar via last_seller_response_at); rajadas do cliente não reiniciam; disparos
+ * Finalizar via last_seller_response_at); a resposta da IA (SILENT_CLOSERS) encerra
+ * a rodada sem amostra; rajadas do cliente não reiniciam; disparos
  * são ignorados no cálculo de tempo. Só fica "em atraso" (rodada aberta) se o CLIENTE
  * foi o último a falar — se mandamos qualquer mensagem depois (disparo/follow-up),
  * a bola está com o cliente e o lead sai da fila.
@@ -69,6 +76,8 @@ function walkConversation(
         if (mins >= 0) closed.push(mins);
         waitStart = null;
       }
+    } else if (SILENT_CLOSERS.has(msg.sent_by)) {
+      waitStart = null;
     }
   }
 

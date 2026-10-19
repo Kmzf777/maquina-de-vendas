@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { collectRounds, summarizeRounds, collectOpenRounds, type SlaConversation } from "@/lib/sla-rounds";
-import { DEFAULT_WINDOW } from "@/lib/business-hours";
+import { DEFAULT_WINDOW, businessMinutesBetween } from "@/lib/business-hours";
 
 // Datas em horário comercial SP. 13:00 UTC = 10:00 SP (qua 2026-06-10).
 const U = (sp: string) => new Date(`2026-06-10T${sp}Z`).toISOString();
@@ -150,15 +150,52 @@ describe("em atraso só se o CLIENTE foi o último a falar; resposta real = só 
     expect(r.openElapsed).toEqual([]);
   });
 
-  it("agent depois do cliente não fecha; a rodada fecha só no seller", () => {
-    // user 10:00 SP, agent 10:05, seller 10:20 → rodada de 20 min (não 5)
+  it("agent ENCERRA a rodada sem gravar amostra: seller depois não mede nada", () => {
+    // user 10:00, agent 10:05, seller 10:20 → a IA zerou a espera; sem amostra
     const c = conv([
       { sent_by: "user", t: "13:00:00" },
       { sent_by: "agent", t: "13:05:00" },
       { sent_by: "seller", t: "13:20:00" },
     ]);
     const r = collectRounds([c], DEFAULT_WINDOW, LATE);
-    expect(r.closed).toEqual([20]);
+    expect(r.closed).toEqual([]);
+    expect(r.openElapsed).toEqual([]);
+  });
+
+  it("user(seg) → agent → user(qua) → seller(qui): mede só a partir do 2º user", () => {
+    const at = (iso: string) => new Date(iso).toISOString();
+    const c: SlaConversation = {
+      id: "conv-ia-meio",
+      last_seller_response_at: null,
+      messages: [
+        { sent_by: "user", created_at: at("2026-06-08T13:00:00Z") },   // seg 10:00 SP
+        { sent_by: "agent", created_at: at("2026-06-08T13:01:00Z") },  // seg 10:01 SP
+        { sent_by: "user", created_at: at("2026-06-10T13:05:00Z") },   // qua 10:05 SP
+        { sent_by: "seller", created_at: at("2026-06-11T13:00:00Z") }, // qui 10:00 SP
+      ],
+    };
+    const r = collectRounds([c], DEFAULT_WINDOW, new Date("2026-06-11T20:00:00Z"));
+    const esperado = businessMinutesBetween(
+      new Date("2026-06-10T13:05:00Z"),
+      new Date("2026-06-11T13:00:00Z"),
+      DEFAULT_WINDOW
+    );
+    expect(r.closed).toEqual([esperado]);
+    expect(r.openElapsed).toEqual([]);
+  });
+
+  it("user → agent (último) → não fica em atraso, mesmo dentro do horário", () => {
+    const c: SlaConversation = {
+      id: "conv-agent-ultimo",
+      last_seller_response_at: null,
+      messages: [
+        { sent_by: "user", created_at: U("13:00:00") },
+        { sent_by: "agent", created_at: U("13:05:00") },
+      ],
+    };
+    const now = new Date("2026-06-10T14:00:00Z"); // 11:00 SP
+    expect(collectOpenRounds([c], DEFAULT_WINDOW, now)).toEqual([]);
+    expect(collectRounds([c], DEFAULT_WINDOW, now)).toEqual({ closed: [], openElapsed: [] });
   });
 
   it("IA (agent) por último → não em atraso", () => {
