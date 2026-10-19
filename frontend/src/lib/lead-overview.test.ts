@@ -54,6 +54,7 @@ function overview(patch: Partial<LeadOverview> = {}): LeadOverview {
     cadences: patch.cadences ?? [],
     broadcasts: patch.broadcasts ?? [],
     followups: patch.followups ?? [],
+    repasse: patch.repasse ?? null,
   };
 }
 
@@ -189,22 +190,32 @@ describe("computeVitals", () => {
     expect(v.dealsTotal).toBe(3);
   });
 
-  it("mede o tempo até o lead falar e o tempo até a nossa primeira resposta", () => {
+  it("mede o tempo até o lead falar e o tempo até o closer assumir (minutos úteis da view)", () => {
     const v = computeVitals(
       overview({
+        // first_response_at não entra mais na conta: o tempo vem de vw_repasse_resposta.
         lead: { first_response_at: "2026-09-01T12:30:00.000Z" } as LeadOverview["lead"],
         messages: { first_inbound_at: "2026-09-01T12:05:00.000Z" } as LeadOverview["messages"],
+        repasse: { repasse_em: "2026-09-01T12:10:00.000Z", minutos_uteis: 42, respondeu: true },
       }),
       AGORA,
     );
     expect(v.tempoAteContatoMs).toBe(5 * 60_000);
-    expect(v.tempoAteRespostaMs).toBe(30 * 60_000);
+    expect(v.tempoAteCloserMin).toBe(42);
   });
 
-  it("sem primeira resposta registrada os tempos são nulos (não zero)", () => {
+  it("repassado mas ainda sem resposta do closer → nulo", () => {
+    const v = computeVitals(
+      overview({ repasse: { repasse_em: "2026-09-01T12:10:00.000Z", minutos_uteis: null, respondeu: false } }),
+      AGORA,
+    );
+    expect(v.tempoAteCloserMin).toBeNull();
+  });
+
+  it("sem linha na view (ou view indisponível) os tempos são nulos (não zero)", () => {
     const v = computeVitals(overview(), AGORA);
     expect(v.tempoAteContatoMs).toBeNull();
-    expect(v.tempoAteRespostaMs).toBeNull();
+    expect(v.tempoAteCloserMin).toBeNull();
   });
 
   it("inatividade parte da última mensagem da conversa", () => {

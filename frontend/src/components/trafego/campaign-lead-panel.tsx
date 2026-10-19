@@ -34,6 +34,7 @@ import {
   type Movement,
   type MovementKind,
 } from "@/lib/lead-overview";
+import { formatarMinutos } from "@/lib/repasse-resposta";
 
 type Payload = LeadOverview & { partial?: string[] };
 
@@ -486,7 +487,10 @@ export function CampaignLeadPanel({
                 <SectionLabel>Tempos</SectionLabel>
                 <div className="divide-y divide-[#f0ede8]">
                   <Row label="Até o lead falar" value={humanDuration(vitals.tempoAteContatoMs)} />
-                  <Row label="Até nossa 1ª resposta" value={humanDuration(vitals.tempoAteRespostaMs)} />
+                  <Row
+                    label="Até o closer assumir (horário comercial)"
+                    value={formatarMinutos(vitals.tempoAteCloserMin)}
+                  />
                   <Row label="Sem trocar mensagem há" value={humanDuration(vitals.inatividadeMs)} />
                   <Row
                     label="Na etapa atual há"

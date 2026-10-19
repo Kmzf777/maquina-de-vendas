@@ -9,6 +9,7 @@
 // zero, nunca vira 1970. Um "R$ 0,00" mente; um "—" diz a verdade.
 
 import { AGENT_STAGES, DEAL_STAGES } from "@/lib/constants";
+import type { OverviewRepasse } from "@/lib/repasse-resposta";
 
 const DASH = "—";
 const MIN = 60_000;
@@ -123,6 +124,8 @@ export interface LeadOverview {
   cadences: OverviewCadence[];
   broadcasts: OverviewBroadcast[];
   followups: OverviewFollowup[];
+  /** Linha de vw_repasse_resposta. null = sem repasse, ou view indisponível. */
+  repasse?: OverviewRepasse | null;
 }
 
 // ─── Formatação ────────────────────────────────────────────────────────────────
@@ -247,8 +250,11 @@ export interface LeadVitals {
   diasNaEtapa: number | null;
   /** created_at → primeira mensagem do cliente. Quanto o anúncio demorou a virar conversa. */
   tempoAteContatoMs: number | null;
-  /** created_at → first_response_at. Quanto NÓS demoramos a responder. */
-  tempoAteRespostaMs: number | null;
+  /**
+   * 1º repasse → 1ª mensagem do closer, em minutos ÚTEIS do vendedor (vw_repasse_resposta).
+   * null = não repassado, closer ainda não assumiu, ou view indisponível.
+   */
+  tempoAteCloserMin: number | null;
   inatividadeMs: number | null;
   mensagens: { total: number; inbound: number; outbound: number };
   receita: number;
@@ -304,7 +310,7 @@ export function computeVitals(o: LeadOverview, nowMs: number): LeadVitals {
     diasNoCrm: inDays(elapsed(o.lead.created_at, nowMs)) ?? 0,
     diasNaEtapa: inDays(elapsed(o.lead.entered_stage_at, nowMs)),
     tempoAteContatoMs: desdeAEntrada(firstCustomerContactAt(o)),
-    tempoAteRespostaMs: desdeAEntrada(o.lead.first_response_at),
+    tempoAteCloserMin: o.repasse?.respondeu ? o.repasse.minutos_uteis : null,
     inatividadeMs: elapsed(o.lead.last_msg_at, nowMs),
     mensagens: {
       total: o.messages.total,

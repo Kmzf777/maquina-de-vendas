@@ -30,6 +30,7 @@ import {
   str,
   type Row,
 } from "@/lib/lead-overview-rows";
+import { mapRepasseOverview } from "@/lib/repasse-resposta";
 
 /** Trilhas longas não cabem na tela nem no orçamento de payload. */
 const MAX_EVENTS = 100;
@@ -91,6 +92,16 @@ export async function GET(
     if (res.error) throw new Error(res.error.message);
     return (res.data ?? []) as Row[];
   }
+
+  // Tempo até o closer assumir (vw_repasse_resposta, migration 20261019_repasse_sla).
+  // Fora de `section`: lead sem repasse é o caso comum, e a view ausente (antes da
+  // migration) não é "seção que caiu" — o painel mostra "—" e segue.
+  const repassePromise = Promise.resolve(
+    sb.from("vw_repasse_resposta").select("lead_id, repasse_em, minutos_uteis, respondeu").eq("lead_id", id).maybeSingle(),
+  ).then(
+    ({ data, error }) => (error ? null : mapRepasseOverview(data as Row | null)),
+    () => null,
+  );
 
   const [deals, sales, events, notes, messages, cadences, broadcasts, followups] = await Promise.all([
     section(
@@ -230,6 +241,8 @@ export async function GET(
     ),
   ]);
 
+  const repasse = await repassePromise;
+
   const payload: LeadOverview & { partial: string[] } = {
     lead: mapLead(leadRaw as unknown as Row),
     deals,
@@ -240,6 +253,7 @@ export async function GET(
     cadences,
     broadcasts,
     followups,
+    repasse,
     partial,
   };
 
