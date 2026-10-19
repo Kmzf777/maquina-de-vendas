@@ -544,6 +544,18 @@ def _minutos_uteis(inicio: datetime, fim: datetime, cfg: dict) -> float:
     return total
 
 
+def _cfg_updated_at(row: dict) -> datetime:
+    """updated_at da config SLA como datetime (ausente/invalido → minimo, perde o desempate)."""
+    raw = row.get("updated_at")
+    if not raw:
+        return datetime.min.replace(tzinfo=timezone.utc)
+    try:
+        ts = _parse_ts(raw)
+    except (TypeError, ValueError):
+        return datetime.min.replace(tzinfo=timezone.utc)
+    return ts if ts.tzinfo else ts.replace(tzinfo=timezone.utc)
+
+
 def _carregar_cfg_sla(sb, user_ids) -> dict:
     """{user_id: cfg} para `_minutos_uteis`, lendo `sla_seller_config` (ativas) e
     `sla_overrides`. Quem nao tem config usa SLA_DEFAULT_CFG; a chave None (lead sem
@@ -557,13 +569,19 @@ def _carregar_cfg_sla(sb, user_ids) -> dict:
         if ids:
             res = (
                 sb.table("sla_seller_config")
-                .select("user_id, window_start_minute, window_end_minute, active_weekdays, active")
+                .select(
+                    "user_id, window_start_minute, window_end_minute, active_weekdays, active, "
+                    "updated_at"
+                )
                 .in_("user_id", ids)
                 .eq("active", True)
                 .execute()
             )
+            # Varias configs ativas do mesmo vendedor → vale a de updated_at mais recente.
             for row in res.data or []:
-                configs[row["user_id"]] = row
+                atual = configs.get(row["user_id"])
+                if atual is None or _cfg_updated_at(row) > _cfg_updated_at(atual):
+                    configs[row["user_id"]] = row
         overrides = (
             sb.table("sla_overrides").select("user_id, start_date, end_date").execute().data or []
         )
@@ -579,7 +597,12 @@ def _carregar_cfg_sla(sb, user_ids) -> dict:
             cfg = {
                 "ini": row.get("window_start_minute", SLA_DEFAULT_CFG["ini"]),
                 "fim": row.get("window_end_minute", SLA_DEFAULT_CFG["fim"]),
-                "dias": row.get("active_weekdays") or SLA_DEFAULT_CFG["dias"],
+                # Igual ao COALESCE do SQL: so NULL cai no padrao; [] = nenhum dia util.
+                "dias": (
+                    row["active_weekdays"]
+                    if row.get("active_weekdays") is not None
+                    else SLA_DEFAULT_CFG["dias"]
+                ),
             }
         excluidas: set = set()
         for o in overrides:
@@ -671,6 +694,7 @@ def check_handoff_sla(now: datetime) -> int:
         .eq("channels.mode", "human")
         .not_.is_("last_customer_message_at", "null")
         .gte("last_customer_message_at", fetch_floor.isoformat())
+        .order("last_customer_message_at", desc=True)
         .limit(HANDOFF_SLA_FETCH_LIMIT)
         .execute()
     )

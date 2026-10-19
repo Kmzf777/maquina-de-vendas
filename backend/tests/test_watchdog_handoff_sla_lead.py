@@ -13,7 +13,7 @@ from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 from app.watchdog import service as W
-from app.watchdog.service import _minutos_uteis, check_handoff_sla
+from app.watchdog.service import _carregar_cfg_sla, _minutos_uteis, check_handoff_sla
 
 from tests.test_watchdog_checks_2026_07_02 import _iso
 from tests.test_watchdog_handoff_sla_2026_07_03 import _fake_db
@@ -239,3 +239,40 @@ def test_minutos_uteis_usa_fuso_de_sao_paulo():
     ini = datetime(2026, 10, 19, 12, 0, tzinfo=timezone.utc)   # 09:00 SP
     fim = datetime(2026, 10, 19, 13, 30, tzinfo=timezone.utc)  # 10:30 SP
     assert _minutos_uteis(ini, fim, PADRAO) == 30
+
+
+# ── _carregar_cfg_sla ───────────────────────────────────────────────────────────
+
+def _cfg_row(user_id, dias, updated_at, ini=600, fim=960):
+    return {
+        "user_id": user_id, "window_start_minute": ini, "window_end_minute": fim,
+        "active_weekdays": dias, "active": True, "updated_at": updated_at,
+    }
+
+
+def test_cfg_active_weekdays_vazio_e_zero_dias_nao_o_padrao(monkeypatch):
+    """Igual ao COALESCE do SQL: [] é "nenhum dia útil"; só NULL cai no padrão."""
+    fake = _fake_db(monkeypatch)
+    fake.tables["sla_seller_config"] = [_cfg_row(VENDEDOR, [], "2026-10-01T00:00:00+00:00")]
+    cfg = _carregar_cfg_sla(fake, [VENDEDOR])
+    assert cfg[VENDEDOR]["dias"] == []
+
+
+def test_cfg_active_weekdays_null_cai_no_padrao(monkeypatch):
+    fake = _fake_db(monkeypatch)
+    fake.tables["sla_seller_config"] = [_cfg_row(VENDEDOR, None, "2026-10-01T00:00:00+00:00")]
+    cfg = _carregar_cfg_sla(fake, [VENDEDOR])
+    assert cfg[VENDEDOR]["dias"] == W.SLA_DEFAULT_CFG["dias"]
+
+
+def test_cfg_varias_ativas_usa_a_de_updated_at_mais_recente(monkeypatch):
+    fake = _fake_db(monkeypatch)
+    fake.tables["sla_seller_config"] = [
+        _cfg_row(VENDEDOR, [1, 2, 3], "2026-10-10T00:00:00+00:00", ini=540, fim=1080),
+        _cfg_row(VENDEDOR, [4, 5], "2026-09-01T00:00:00+00:00", ini=600, fim=960),
+    ]
+    cfg = _carregar_cfg_sla(fake, [VENDEDOR])
+    assert (cfg[VENDEDOR]["ini"], cfg[VENDEDOR]["fim"], cfg[VENDEDOR]["dias"]) == (540, 1080, [1, 2, 3])
+    fake.tables["sla_seller_config"].reverse()
+    cfg = _carregar_cfg_sla(fake, [VENDEDOR])
+    assert (cfg[VENDEDOR]["ini"], cfg[VENDEDOR]["fim"], cfg[VENDEDOR]["dias"]) == (540, 1080, [1, 2, 3])

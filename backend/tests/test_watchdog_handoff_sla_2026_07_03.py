@@ -320,6 +320,8 @@ def test_check5_query_pushes_down_not_null_lookback_and_limit(monkeypatch):
 
     assert call["not_is_null"] == ["last_customer_message_at"]
     assert call["limit"] == W.HANDOFF_SLA_FETCH_LIMIT
+    # Sob o limit, ficam as mensagens de cliente MAIS RECENTES (não um recorte arbitrário).
+    assert call["order_calls"] == [("last_customer_message_at", True)]
 
     gte_by_key = dict(call["gte"])
     assert "last_customer_message_at" in gte_by_key
