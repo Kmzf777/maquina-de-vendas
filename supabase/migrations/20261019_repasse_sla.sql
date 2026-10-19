@@ -97,7 +97,12 @@ CREATE TRIGGER trg_leads_first_response
   FOR EACH ROW EXECUTE FUNCTION public.fn_leads_first_response();
 
 -- ── 3. Uma linha por lead repassado ────────────────────────────────────────────────
-CREATE OR REPLACE VIEW public.vw_repasse_resposta WITH (security_invoker = true) AS
+-- security_invoker = false DE PROPÓSITO: o marcador de repasse mora na conversa da
+-- VALERIA e a RLS de `messages` só mostra ao vendedor não-admin as mensagens dos canais
+-- dele (e `lead_events` não tem política para authenticated). Como invoker, o João veria
+-- a view vazia para os próprios leads. A view só expõe lead_id, instantes e minutos (nada
+-- de conteúdo), e `leads` já é legível por todo authenticated. anon não tem acesso.
+CREATE OR REPLACE VIEW public.vw_repasse_resposta WITH (security_invoker = false) AS
 WITH r AS (
   SELECT h.lead_id, min(h.created_at) AS repasse_em
     FROM messages h
@@ -256,6 +261,7 @@ $$;
 
 -- ── 5. Grants (o default ACL não cobre objeto novo para consulta_ro) ──────────────
 GRANT EXECUTE ON FUNCTION public.fn_minutos_uteis_vendedor(uuid, timestamptz, timestamptz) TO authenticated, service_role;
+REVOKE ALL ON public.vw_repasse_resposta FROM PUBLIC, anon;
 GRANT SELECT ON public.vw_repasse_resposta TO authenticated, service_role;
 DO $$
 BEGIN

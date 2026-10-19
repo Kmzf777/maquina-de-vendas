@@ -369,6 +369,28 @@ select 'trg_anon=' || has_function_privilege('anon', 'public.fn_leads_first_resp
     assert linhas == ["f=true|v=true"] * 3 + ["trg_anon=false"], linhas
 
 
+@_precisa_pg
+def test_view_visivel_para_vendedor_sem_acesso_as_mensagens_da_ia():
+    """O marcador mora na conversa da VALERIA, que a RLS de messages esconde do vendedor
+    não-admin. A view roda com os direitos do dono, então o vendedor ainda vê a linha."""
+    out = _cenario(
+        _repasse("2030-06-11 10:00-03")
+        + _msg(CONV_JOAO, "assistant", "seller", "2030-06-11 10:30-03")
+        + f"""
+-- auth.jwt()/auth.uid() existem em produção; no scratch, ver scripts/repasse_sla/scratch_pg.md.
+set local request.jwt.claims = '{{"sub":"00000000-0000-0000-0000-0000000000aa","role":"authenticated"}}';
+set local role authenticated;
+select 'msgs=' || count(*) from public.messages where lead_id = '{LEAD}';
+select 'view=' || count(*) || '|min=' || coalesce(max(minutos_uteis)::text, 'NULL')
+  from public.vw_repasse_resposta where lead_id = '{LEAD}';
+reset role;
+select 'anon=' || has_table_privilege('anon', 'public.vw_repasse_resposta', 'SELECT');
+""")
+    linhas = [x.strip() for x in out.splitlines() if "=" in x]
+    assert "view=1|min=30.0" in linhas, linhas
+    assert "anon=false" in linhas, linhas
+
+
 if __name__ == "__main__":
     if not PSQL:
         print("defina REPASSE_PSQL (ver scripts/repasse_sla/scratch_pg.md)")

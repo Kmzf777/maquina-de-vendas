@@ -78,3 +78,16 @@ O novo conta leads (D3).
 Outras conferências: há 0 mensagens `seller` sem `lead_id` e 0 marcadores sem `lead_id`, então o
 trigger por `lead_id` cobre tudo. O `consulta_ro` já tem SELECT em messages, leads, lead_events,
 sla_seller_config e sla_overrides, e USAGE em public.
+
+## Funções `auth.*` no scratch
+
+O dump só traz `public`/`analytics`, então `auth.jwt()`/`auth.uid()`/`auth.role()` (usadas pelas políticas RLS) não existem no scratch. Criar uma vez, como `supabase_admin`:
+
+```sql
+create or replace function auth.jwt() returns jsonb language sql stable as
+  $b$ select coalesce(nullif(current_setting('request.jwt.claims', true), ''), '{}')::jsonb $b$;
+create or replace function auth.uid() returns uuid language sql stable as $b$ select nullif(auth.jwt() ->> 'sub', '')::uuid $b$;
+create or replace function auth.role() returns text language sql stable as $b$ select auth.jwt() ->> 'role' $b$;
+grant usage on schema auth to authenticated, anon;
+grant execute on function auth.jwt(), auth.uid(), auth.role() to authenticated, anon;
+```
