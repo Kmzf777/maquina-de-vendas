@@ -310,7 +310,11 @@ def test_check5_query_pushes_down_not_null_lookback_and_limit(monkeypatch):
     result = check_handoff_sla(now)
 
     assert result == 1  # nao-regressao: a violacao real continua sendo detectada
-    conv_calls = [c for c in fake.calls if c["table"] == "conversations"]
+    # Cartão 7b143561 (B6): há uma 2ª leitura de `conversations` (respostas do
+    # vendedor em qualquer conversa do lead); a de candidatas é a do `.not_.is_`.
+    conv_calls = [
+        c for c in fake.calls if c["table"] == "conversations" and c["not_is_null"]
+    ]
     assert len(conv_calls) == 1
     call = conv_calls[0]
 
@@ -319,7 +323,9 @@ def test_check5_query_pushes_down_not_null_lookback_and_limit(monkeypatch):
 
     gte_by_key = dict(call["gte"])
     assert "last_customer_message_at" in gte_by_key
-    expected_floor = now - timedelta(hours=W.HANDOFF_SLA_LOOKBACK_HOURS)
+    # Piso do fetch cobre o fim de semana (minutos úteis); o lookback de 24h
+    # passou a valer para o início da violação (filtro Python).
+    expected_floor = now - timedelta(hours=W.HANDOFF_SLA_FETCH_LOOKBACK_HOURS)
     actual_floor = datetime.fromisoformat(
         str(gte_by_key["last_customer_message_at"]).replace("Z", "+00:00")
     )

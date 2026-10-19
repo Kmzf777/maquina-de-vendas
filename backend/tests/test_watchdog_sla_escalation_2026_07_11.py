@@ -43,7 +43,7 @@ def test_acumulo_no_limiar_dispara_escalation_critical(monkeypatch):
     """Fila com THRESHOLD conversas violadas → 1 `handoff_sla_escalation` critical
     (metadata.count = fila total), ADITIVO ao breach warning individual."""
     fake = _fake_db(monkeypatch)
-    now = _local(2026, 7, 11, 14, 0)
+    now = _local(2026, 7, 10, 14, 0)  # sexta: 11/07 é sábado (fora do horário padrão, cartão 7b143561)
     _seed_n_violations(fake, now, W.HANDOFF_SLA_ESCALATION_THRESHOLD)
 
     result = check_handoff_sla(now)
@@ -61,7 +61,7 @@ def test_acumulo_no_limiar_dispara_escalation_critical(monkeypatch):
 def test_abaixo_do_limiar_nao_escala(monkeypatch):
     """THRESHOLD-1 violações: breach warning normal, ZERO escalation."""
     fake = _fake_db(monkeypatch)
-    now = _local(2026, 7, 11, 14, 0)
+    now = _local(2026, 7, 10, 14, 0)  # sexta: 11/07 é sábado (fora do horário padrão, cartão 7b143561)
     _seed_n_violations(fake, now, W.HANDOFF_SLA_ESCALATION_THRESHOLD - 1)
 
     check_handoff_sla(now)
@@ -74,7 +74,7 @@ def test_escalation_dedup_global_nao_repete_dentro_da_janela(monkeypatch):
     """Escalation não-resolvida criada há 30min (< DEDUP_HOURS) → não re-escala
     (mesmo contrato de `_alert_recently_fired` dos Checks 1/3/6)."""
     fake = _fake_db(monkeypatch)
-    now = _local(2026, 7, 11, 14, 0)
+    now = _local(2026, 7, 10, 14, 0)  # sexta: 11/07 é sábado (fora do horário padrão, cartão 7b143561)
     # `_alert_recently_fired` usa o relógio REAL (não recebe `now`) — o seed do
     # dedup precisa ser relativo a ele. 30min < DEDUP_HOURS=2h vale sempre,
     # independente de quando a suíte roda (determinístico).
@@ -97,7 +97,7 @@ def test_escalation_conta_a_fila_em_pe_mesmo_sem_breach_novo(monkeypatch):
     mesmo assim — é o drumbeat que o caso real de 11/07 (49 warnings ignorados)
     não tinha."""
     fake = _fake_db(monkeypatch)
-    now = _local(2026, 7, 11, 14, 0)
+    now = _local(2026, 7, 10, 14, 0)  # sexta: 11/07 é sábado (fora do horário padrão, cartão 7b143561)
     n = W.HANDOFF_SLA_ESCALATION_THRESHOLD
     _seed_n_violations(fake, now, n)
     _seed_sla_alert(fake, [f"conv-{i}" for i in range(n)], now - timedelta(minutes=40))

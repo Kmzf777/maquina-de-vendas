@@ -109,6 +109,16 @@ HANDOFF_SLA_FETCH_LIMIT = 1000
 # resolvidos) sem NENHUM ping ativo ao operador — a deteccao existia, o sino nao.
 HANDOFF_SLA_ESCALATION_THRESHOLD = 3
 HANDOFF_SLA_ESCALATION_DEDUP_HOURS = 2
+# SLA no horario do VENDEDOR (cartao 7b143561, B6 / regra D4): os 20 min contam so
+# dentro da janela de `sla_seller_config` (+ folgas de `sla_overrides`), padrao
+# 10h-16h seg-sex — mesma conta de analytics.vw_resposta_closer e de
+# frontend/src/lib/business-hours.ts. `dias` segue o `dow` do Postgres (0=domingo).
+SLA_DEFAULT_CFG = {"ini": 600, "fim": 960, "dias": [1, 2, 3, 4, 5]}
+# Piso server-side da busca de candidatas: com minutos UTEIS, a msg de sexta 15:50
+# so vence na segunda 10:10 (~66h corridas depois). 96h cobre fim de semana +
+# feriado de 1 dia. O "ancient" de HANDOFF_SLA_LOOKBACK_HOURS passa a valer para
+# quando a VIOLACAO comecou, nao para quando o cliente escreveu.
+HANDOFF_SLA_FETCH_LOOKBACK_HOURS = 96
 
 # --- Check 6 (cadence_dead, incidente 26/06→09/07) -------------------------------
 # A cadencia 4-touch ficou MORTA por 13 dias (26/06→09/07): a constraint 23514
@@ -506,6 +516,116 @@ def _last_customer_message_is_reaction(sb, conversation_id: str) -> bool:
         return False
 
 
+def _minutos_uteis(inicio: datetime, fim: datetime, cfg: dict) -> float:
+    """Minutos de [inicio, fim) que caem na janela do vendedor, em America/Sao_Paulo.
+
+    `cfg` = {ini, fim, dias, excluidas?}: `ini`/`fim` em minutos desde 00:00 local,
+    `dias` no padrao `dow` do Postgres (0=domingo..6=sabado), `excluidas` = datas
+    'YYYY-MM-DD' (SP) zeradas (folgas de `sla_overrides`). Mesma conta de
+    analytics.vw_resposta_closer e de business-hours.ts.
+    """
+    if fim <= inicio:
+        return 0
+    ini_local = inicio.astimezone(_SP_TZ)
+    fim_local = fim.astimezone(_SP_TZ)
+    dias = set(cfg.get("dias") or [])
+    excluidas = cfg.get("excluidas") or set()
+    total = 0.0
+    dia = ini_local.date()
+    while dia <= fim_local.date():
+        dow = (dia.weekday() + 1) % 7  # Python seg=0 → Postgres dom=0
+        if dow in dias and dia.isoformat() not in excluidas:
+            meia_noite = datetime.combine(dia, time(0), tzinfo=_SP_TZ)
+            jan_ini = max(ini_local, meia_noite + timedelta(minutes=cfg["ini"]))
+            jan_fim = min(fim_local, meia_noite + timedelta(minutes=cfg["fim"]))
+            if jan_fim > jan_ini:
+                total += (jan_fim - jan_ini).total_seconds() / 60
+        dia += timedelta(days=1)
+    return total
+
+
+def _carregar_cfg_sla(sb, user_ids) -> dict:
+    """{user_id: cfg} para `_minutos_uteis`, lendo `sla_seller_config` (ativas) e
+    `sla_overrides`. Quem nao tem config usa SLA_DEFAULT_CFG; a chave None (lead sem
+    vendedor) tambem. Folga com `user_id` NULL vale para todos (mesma regra do CRM em
+    use-overdue-leads.ts). Fail-open: erro de leitura → padrao (o alerta continua).
+    """
+    ids = [u for u in set(user_ids) if u]
+    configs: dict = {}
+    overrides: list = []
+    try:
+        if ids:
+            res = (
+                sb.table("sla_seller_config")
+                .select("user_id, window_start_minute, window_end_minute, active_weekdays, active")
+                .in_("user_id", ids)
+                .eq("active", True)
+                .execute()
+            )
+            for row in res.data or []:
+                configs[row["user_id"]] = row
+        overrides = (
+            sb.table("sla_overrides").select("user_id, start_date, end_date").execute().data or []
+        )
+    except Exception as exc:
+        logger.warning("[WATCHDOG] falha ao ler horario SLA do vendedor: %s — usando padrao", exc)
+        configs, overrides = {}, []
+
+    out: dict = {}
+    for uid in set(user_ids) | {None}:
+        row = configs.get(uid) if uid else None
+        cfg = dict(SLA_DEFAULT_CFG)
+        if row:
+            cfg = {
+                "ini": row.get("window_start_minute", SLA_DEFAULT_CFG["ini"]),
+                "fim": row.get("window_end_minute", SLA_DEFAULT_CFG["fim"]),
+                "dias": row.get("active_weekdays") or SLA_DEFAULT_CFG["dias"],
+            }
+        excluidas: set = set()
+        for o in overrides:
+            if o.get("user_id") is not None and o.get("user_id") != uid:
+                continue
+            try:
+                d = datetime.fromisoformat(str(o["start_date"])[:10]).date()
+                end = datetime.fromisoformat(str(o["end_date"])[:10]).date()
+            except (KeyError, ValueError):
+                continue
+            while d <= end:
+                excluidas.add(d.isoformat())
+                d += timedelta(days=1)
+        cfg["excluidas"] = excluidas
+        out[uid] = cfg
+    return out
+
+
+def _ultima_resposta_por_lead(sb, lead_ids: list) -> dict:
+    """{lead_id: max(last_seller_response_at)} em TODAS as conversas do lead — o
+    vendedor costuma responder em outra conversa que nao a do repasse (B6). Fail-open:
+    erro → {} (cai no carimbo da propria conversa; na duvida o alerta fica).
+    """
+    out: dict = {}
+    try:
+        for chunk in _chunked(sorted(set(lead_ids)), ID_CHUNK_SIZE):
+            res = (
+                sb.table("conversations")
+                .select("lead_id, last_seller_response_at")
+                .in_("lead_id", chunk)
+                .execute()
+            )
+            for row in res.data or []:
+                raw = row.get("last_seller_response_at")
+                if not raw:
+                    continue
+                ts = _parse_ts(raw)
+                lid = row.get("lead_id")
+                if lid not in out or ts > out[lid]:
+                    out[lid] = ts
+    except Exception as exc:
+        logger.warning("[WATCHDOG] falha ao ler respostas por lead: %s — fail-open", exc)
+        return {}
+    return out
+
+
 def check_handoff_sla(now: datetime) -> int:
     """Check 5 (caso Juliana, 02/07) — SLA de resposta HUMANA pos-handoff.
 
@@ -526,8 +646,12 @@ def check_handoff_sla(now: datetime) -> int:
     if not _within_sla_window(now):
         return 0
 
+    # Cartao 7b143561 (B6): (1) respondido = vendedor respondeu em QUALQUER conversa
+    # do lead depois da ultima msg do cliente; (2) os 20 min contam em minutos UTEIS
+    # do vendedor (`leads.assigned_to` → sla_seller_config/sla_overrides). O lookback
+    # de HANDOFF_SLA_LOOKBACK_HOURS vale para o INICIO da violacao.
+    fetch_floor = now - timedelta(hours=HANDOFF_SLA_FETCH_LOOKBACK_HOURS)
     lookback_floor = now - timedelta(hours=HANDOFF_SLA_LOOKBACK_HOURS)
-    sla_threshold = timedelta(minutes=HANDOFF_SLA_MINUTES)
 
     # Push-down server-side (review final da Etapa 1/Frente B, Item 3): sem estes
     # filtros a query trazia TODA conversa em canal humano, sujeita ao corte
@@ -542,34 +666,60 @@ def check_handoff_sla(now: datetime) -> int:
         sb.table("conversations")
         .select(
             "id, lead_id, last_customer_message_at, last_seller_response_at, "
-            "channels!inner(mode), leads!inner(name)"
+            "channels!inner(mode), leads!inner(name, assigned_to)"
         )
         .eq("channels.mode", "human")
         .not_.is_("last_customer_message_at", "null")
-        .gte("last_customer_message_at", lookback_floor.isoformat())
+        .gte("last_customer_message_at", fetch_floor.isoformat())
         .limit(HANDOFF_SLA_FETCH_LIMIT)
         .execute()
     )
 
-    violated: list[str] = []
-    lead_names: dict[str, str] = {}
+    # Passo 1: filtro barato (sem banco) — sem msg do cliente, fora do piso, ou
+    # respondida na PROPRIA conversa.
+    candidates: list[tuple[dict, datetime]] = []
     for row in res.data or []:
         raw_customer_ts = row.get("last_customer_message_at")
         if not raw_customer_ts:
             continue
         customer_ts = _parse_ts(raw_customer_ts)
-        if customer_ts < lookback_floor:
-            continue
-        if now - customer_ts <= sla_threshold:
+        if customer_ts < fetch_floor:
             continue
         raw_seller_ts = row.get("last_seller_response_at")
         if raw_seller_ts and _parse_ts(raw_seller_ts) >= customer_ts:
             continue  # vendedor respondeu DEPOIS da ultima msg do lead — ok
+        candidates.append((row, customer_ts))
+
+    # Passo 2: resposta em qualquer conversa do lead + horario do vendedor.
+    seller_by_lead = (
+        _ultima_resposta_por_lead(sb, [r.get("lead_id") for r, _ in candidates if r.get("lead_id")])
+        if candidates else {}
+    )
+    cfg_by_user = (
+        _carregar_cfg_sla(sb, [_embed_one(r.get("leads")).get("assigned_to") for r, _ in candidates])
+        if candidates else {}
+    )
+
+    violated: list[str] = []
+    lead_names: dict[str, str] = {}
+    for row, customer_ts in candidates:
+        lead_seller_ts = seller_by_lead.get(row.get("lead_id"))
+        if lead_seller_ts and lead_seller_ts >= customer_ts:
+            continue  # respondeu em outra conversa do mesmo lead — ok
+        lead = _embed_one(row.get("leads"))
+        cfg = cfg_by_user.get(lead.get("assigned_to")) or cfg_by_user.get(None) or SLA_DEFAULT_CFG
+        if _minutos_uteis(customer_ts, now, cfg) <= HANDOFF_SLA_MINUTES:
+            continue
+        if (
+            customer_ts < lookback_floor
+            and _minutos_uteis(customer_ts, lookback_floor, cfg) > HANDOFF_SLA_MINUTES
+        ):
+            continue  # violacao comecou ha mais de HANDOFF_SLA_LOOKBACK_HOURS — antiga
         conv_id = row["id"]
         if _last_customer_message_is_reaction(sb, conv_id):
             continue  # 👍 pos-resposta e encerramento social, nao pergunta pendente
         violated.append(conv_id)
-        lead_names[conv_id] = ((row.get("leads") or {}).get("name") or "").strip()
+        lead_names[conv_id] = (lead.get("name") or "").strip()
 
     n = len(violated)
     if n:
