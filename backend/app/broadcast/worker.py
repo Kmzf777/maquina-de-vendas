@@ -77,6 +77,58 @@ _TEMPLATE_ERROR_PAUSE_THRESHOLD = 3
 _template_error_streaks: dict[str, int] = {}
 
 
+# B7 (7b143561): etapas terminais. Disparo nunca tira um card dessas etapas.
+TERMINAL_STAGE_KEYS = ("fechado_ganho", "fechado_perdido", "perdido", "encerrado")
+
+
+def _mover_deals_do_disparo(sb, lead: dict, pipeline_id: str, stage_id: str) -> bool:
+    """Move para a etapa-alvo só os deals ABERTOS do lead no funil (sem closed_at e fora de
+    etapa terminal). Sem deal aberto → cria um card novo na etapa-alvo (o ganho/perdido fica
+    intacto). Devolve True se algo mudou ou foi criado (é quando se grava deal_moved_at)."""
+    deals = (
+        sb.table("deals")
+        .select("id, closed_at, stage_id")
+        .eq("lead_id", lead["id"])
+        .eq("pipeline_id", pipeline_id)
+        .execute()
+    ).data or []
+    stage_ids = sorted({d["stage_id"] for d in deals if d.get("stage_id")})
+    keys: dict = {}
+    if stage_ids:
+        rows = sb.table("pipeline_stages").select("id,key").in_("id", stage_ids).execute().data or []
+        keys = {r["id"]: r.get("key") for r in rows}
+    abertos = [
+        d for d in deals
+        if not d.get("closed_at") and keys.get(d.get("stage_id")) not in TERMINAL_STAGE_KEYS
+    ]
+    if not abertos:
+        title = (lead.get("name") or lead.get("phone") or "Lead") + " - Oportunidade"
+        sb.table("deals").insert({
+            "lead_id": lead["id"],
+            "title": title,
+            "stage": "novo",
+            "pipeline_id": pipeline_id,
+            "stage_id": stage_id,
+        }).execute()
+        logger.info(
+            "[BROADCAST] Created deal for lead %s in pipeline %s stage %s (open_deals=0, total=%d)",
+            lead["id"], pipeline_id, stage_id, len(deals),
+        )
+        return True
+    a_mover = [d["id"] for d in abertos if d.get("stage_id") != stage_id]
+    if not a_mover:
+        return False
+    sb.table("deals").update({
+        "stage_id": stage_id,
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    }).in_("id", a_mover).execute()
+    logger.info(
+        "[BROADCAST] Moved deals for lead %s to pipeline %s stage %s (deals_updated=%d, skipped_terminal=%d)",
+        lead["id"], pipeline_id, stage_id, len(a_mover), len(deals) - len(abertos),
+    )
+    return True
+
+
 def _is_template_error(status_code: int | None, meta_err: dict) -> bool:
     """True se o erro Meta é da classe 'template quebrado' (falha igual p/ todo lead)."""
     code = meta_err.get("code")
@@ -1831,41 +1883,16 @@ async def process_single_broadcast(broadcast: dict):
             # Move lead's deal to configured Kanban stage if set
             if move_to_stage_id and target_pipeline_id:
                 try:
-                    # Update ALL deals for this lead in the pipeline at once.
-                    # Using limit(1) on the previous SELECT+UPDATE left older deals in
-                    # the original stage, causing leads to reappear in stage filters.
-                    update_result = (
-                        sb.table("deals")
-                        .update({
-                            "stage_id": move_to_stage_id,
-                            "updated_at": datetime.now(timezone.utc).isoformat(),
-                        })
-                        .eq("lead_id", lead["id"])
-                        .eq("pipeline_id", target_pipeline_id)
-                        .select("id")
-                        .execute()
-                    )
-                    if not update_result.data:
-                        # No deal found in this pipeline — create one so the lead is tracked
-                        title = (lead.get("name") or lead.get("phone") or "Lead") + " - Oportunidade"
-                        sb.table("deals").insert({
-                            "lead_id": lead["id"],
-                            "title": title,
-                            "stage": "novo",
-                            "pipeline_id": target_pipeline_id,
-                            "stage_id": move_to_stage_id,
-                        }).execute()
-                    logger.info(
-                        "[BROADCAST] Moved/created deal for lead %s to pipeline %s stage %s (deals_updated=%d)",
-                        lead["id"], target_pipeline_id, move_to_stage_id, len(update_result.data),
-                    )
-                    # Track the move timestamp on the broadcast_lead row
-                    try:
-                        sb.table("broadcast_leads").update({
-                            "deal_moved_at": datetime.now(timezone.utc).isoformat(),
-                        }).eq("id", bl["id"]).execute()
-                    except Exception as track_err:
-                        logger.debug("[BROADCAST] deal_moved_at not tracked (run migration): %s", track_err)
+                    # B7: só deals abertos; ganho/perdido ficam intactos.
+                    moved = _mover_deals_do_disparo(sb, lead, target_pipeline_id, move_to_stage_id)
+                    # Track the move timestamp on the broadcast_lead row (só se algo mudou)
+                    if moved:
+                        try:
+                            sb.table("broadcast_leads").update({
+                                "deal_moved_at": datetime.now(timezone.utc).isoformat(),
+                            }).eq("id", bl["id"]).execute()
+                        except Exception as track_err:
+                            logger.debug("[BROADCAST] deal_moved_at not tracked (run migration): %s", track_err)
                 except Exception as move_err:
                     logger.warning(
                         "[BROADCAST] Failed to move deal for lead %s: %s",
