@@ -53,14 +53,16 @@ export async function POST(
     return NextResponse.json({ error: MENSAGEM_LEAD_BLOQUEADO }, { status: 403 });
   }
 
+  let sentWamid: string | null = null;
   try {
-    await sendTemplateViaMeta(
+    const metaJson = (await sendTemplateViaMeta(
       channel.provider_config,
       lead.phone,
       template_name,
       template_language_code,
       template_variables ?? null,
-    );
+    )) as { messages?: { id?: string }[] } | null;
+    sentWamid = metaJson?.messages?.[0]?.id ?? null;
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : "Failed to send template";
     return NextResponse.json({ error: msg }, { status: 502 });
@@ -136,13 +138,22 @@ export async function POST(
     }
   }
 
-  await supabase.from("messages").insert({
+  // Template mandado à mão pelo vendedor no CRM é mensagem DO VENDEDOR (sent_by='seller'):
+  // conta como "closer assumiu" (D4) e fecha a rodada de SLA. O selo `metadata.template`
+  // separa do texto livre. Disparo em massa continua 'broadcast' (outro caminho).
+  const insertData: Record<string, unknown> = {
     lead_id: lead.id,
     conversation_id: conversationId,
     role: "assistant",
     content,
-    sent_by: "broadcast",
-  });
+    sent_by: "seller",
+    metadata: { template: true, template_name },
+  };
+  if (sentWamid) {
+    insertData.wamid = sentWamid;
+    insertData.delivery_status = "accepted";
+  }
+  await supabase.from("messages").insert(insertData);
 
   await supabase
     .from("conversations")
