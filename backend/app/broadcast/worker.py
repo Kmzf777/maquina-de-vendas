@@ -82,12 +82,15 @@ TERMINAL_STAGE_KEYS = ("fechado_ganho", "fechado_perdido", "perdido", "encerrado
 
 
 def _mover_deals_do_disparo(sb, lead: dict, pipeline_id: str, stage_id: str) -> bool:
-    """Move para a etapa-alvo só os deals ABERTOS do lead no funil (sem closed_at e fora de
-    etapa terminal). Sem deal aberto → cria um card novo na etapa-alvo (o ganho/perdido fica
-    intacto). Devolve True se algo mudou ou foi criado (é quando se grava deal_moved_at)."""
+    """Move para a etapa-alvo só os deals ABERTOS do lead no funil. "Aberto" é decidido SÓ
+    pela etapa (key fora de TERMINAL_STAGE_KEYS) — closed_at é ignorado, pois deals reabertos
+    pelo kanban guardam closed_at antigo. Sem deal aberto → cria um card novo na etapa-alvo
+    (o ganho/perdido fica intacto), exceto se o lead já tem deal nesse funil na própria
+    etapa-alvo (mesmo terminal). Devolve True se algo mudou ou foi criado (é quando se grava
+    deal_moved_at)."""
     deals = (
         sb.table("deals")
-        .select("id, closed_at, stage_id")
+        .select("id, stage_id")
         .eq("lead_id", lead["id"])
         .eq("pipeline_id", pipeline_id)
         .execute()
@@ -97,11 +100,10 @@ def _mover_deals_do_disparo(sb, lead: dict, pipeline_id: str, stage_id: str) -> 
     if stage_ids:
         rows = sb.table("pipeline_stages").select("id,key").in_("id", stage_ids).execute().data or []
         keys = {r["id"]: r.get("key") for r in rows}
-    abertos = [
-        d for d in deals
-        if not d.get("closed_at") and keys.get(d.get("stage_id")) not in TERMINAL_STAGE_KEYS
-    ]
+    abertos = [d for d in deals if keys.get(d.get("stage_id")) not in TERMINAL_STAGE_KEYS]
     if not abertos:
+        if any(d.get("stage_id") == stage_id for d in deals):
+            return False
         title = (lead.get("name") or lead.get("phone") or "Lead") + " - Oportunidade"
         sb.table("deals").insert({
             "lead_id": lead["id"],

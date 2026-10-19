@@ -1,4 +1,7 @@
-"""B7 (7b143561): o disparo só move deals ABERTOS do lead; card ganho/perdido fica intacto."""
+"""B7 (7b143561): o disparo só move deals ABERTOS do lead; card ganho/perdido fica intacto.
+
+"Aberto" é decidido SÓ pela etapa (key fora de TERMINAL_STAGE_KEYS): deals reabertos pelo
+kanban guardam closed_at antigo e mesmo assim são abertos."""
 
 from types import SimpleNamespace
 
@@ -81,11 +84,23 @@ def test_so_ganho_cria_card_novo_sem_mexer_no_ganho():
     }
 
 
-def test_closed_at_em_etapa_nao_terminal_conta_como_fechado():
+def test_closed_at_antigo_em_etapa_nao_terminal_e_aberto_e_move():
+    # deal reaberto pelo kanban: closed_at ficou, mas a etapa não é terminal → MOVE, sem INSERT
     sb = _SB([{"id": "d1", "closed_at": "2026-07-01T00:00:00Z", "stage_id": "st-novo"}])
     assert _mover_deals_do_disparo(sb, LEAD, PIPE, ALVO) is True
+    ups = sb.ops("deals", "update")
+    assert len(ups) == 1
+    assert ups[0][2]["stage_id"] == ALVO
+    assert ("in", "id", ["d1"]) in ups[0][3]
+    assert sb.ops("deals", "insert") == []
+
+
+def test_etapa_alvo_terminal_ja_ocupada_nao_cria_card():
+    # disparo com alvo terminal (ex.: fechado_ganho) e o lead já tem deal nessa etapa → nada
+    sb = _SB([{"id": "d1", "closed_at": "2026-07-01T00:00:00Z", "stage_id": "st-ganho"}])
+    assert _mover_deals_do_disparo(sb, LEAD, PIPE, "st-ganho") is False
     assert sb.ops("deals", "update") == []
-    assert len(sb.ops("deals", "insert")) == 1
+    assert sb.ops("deals", "insert") == []
 
 
 def test_move_so_o_aberto_e_nao_cria():
