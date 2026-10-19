@@ -1,6 +1,8 @@
 "use client";
 
 import { getTemperature, TEMPERATURE_CONFIG } from "@/lib/temperature";
+import { useRepasseResposta } from "@/hooks/use-repasse-resposta";
+import { formatarMinutos } from "@/lib/repasse-resposta";
 import type { Lead } from "@/lib/types";
 
 interface CrmMetricasTabProps {
@@ -13,12 +15,11 @@ export function CrmMetricasTab({ lead }: CrmMetricasTabProps) {
 
   const daysInCrm = Math.floor((Date.now() - new Date(lead.created_at).getTime()) / (1000 * 60 * 60 * 24));
 
-  const firstResponseTime = lead.first_response_at
-    ? Math.round((new Date(lead.first_response_at).getTime() - new Date(lead.created_at).getTime()) / 60000)
-    : null;
-  const firstResponseStr = firstResponseTime !== null
-    ? firstResponseTime < 60 ? `${firstResponseTime}min` : `${Math.round(firstResponseTime / 60)}h`
-    : "—";
+  // Tempo até o closer assumir (D4/D6): minutos úteis do vendedor desde o 1º repasse,
+  // lidos de vw_repasse_resposta. Sem linha / view indisponível → "—".
+  const { linha: repasse } = useRepasseResposta(lead.id);
+  const tempoCloserStr = formatarMinutos(repasse?.respondeu ? repasse.minutos_uteis : null);
+  const aguardandoMin = repasse && !repasse.respondeu ? repasse.minutos_uteis_em_aberto : null;
 
   const daysInStage = lead.entered_stage_at
     ? Math.floor((Date.now() - new Date(lead.entered_stage_at).getTime()) / (1000 * 60 * 60 * 24))
@@ -37,8 +38,15 @@ export function CrmMetricasTab({ lead }: CrmMetricasTabProps) {
           </p>
         </div>
         <div className="bg-[#faf9f6] border border-[#dedbd6] rounded-[8px] p-4 text-center">
-          <p className="text-[11px] uppercase tracking-[0.6px] text-[#7b7b78]">1a Resposta</p>
-          <p className="text-[24px] font-semibold text-[#111111] mt-1">{firstResponseStr}</p>
+          <p className="text-[11px] uppercase tracking-[0.6px] text-[#7b7b78]">
+            Tempo até o closer assumir (horário comercial)
+          </p>
+          <p data-testid="tempo-closer" className="text-[24px] font-semibold text-[#111111] mt-1">
+            {tempoCloserStr}
+          </p>
+          {aguardandoMin != null && (
+            <p className="text-[11px] text-[#7b7b78] mt-0.5">Aguardando há {formatarMinutos(aguardandoMin)}</p>
+          )}
         </div>
       </div>
 
@@ -80,7 +88,7 @@ export function CrmMetricasTab({ lead }: CrmMetricasTabProps) {
         )}
         {lead.first_response_at && (
           <div className="flex items-center justify-between">
-            <span className="text-[12px] text-[#7b7b78]">1a resposta em</span>
+            <span className="text-[12px] text-[#7b7b78]">Closer assumiu em</span>
             <span className="text-[13px] text-[#111111]">
               {new Date(lead.first_response_at).toLocaleDateString("pt-BR")}
             </span>
