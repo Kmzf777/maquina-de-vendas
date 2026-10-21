@@ -99,7 +99,24 @@ async def _handle_create_order(payload: dict, job: dict) -> dict:
                                    account=account, **kwargs)
 
 
-_HANDLERS = {"create_order": _handle_create_order}
+async def _handle_agente_pedidos(payload: dict, job: dict) -> dict:
+    """Retenta a criacao de um rascunho do agente de pedidos (Discord).
+
+    Mesma rotina do clique (sem a trava); grava o desfecho em
+    `agente_pedidos:resultado:<id>`, que o bot consulta. A idempotencia e a
+    do proprio agente: `numeroLoja` na venda, marca nas observacoes da compra,
+    documento no contato.
+    """
+    from app.agente_pedidos.confirmar import executar_job
+    return await executar_job(payload, job)
+
+
+_HANDLERS = {
+    "create_order": _handle_create_order,
+    "agente_venda": _handle_agente_pedidos,
+    "agente_compra": _handle_agente_pedidos,
+    "agente_contato": _handle_agente_pedidos,
+}
 
 
 async def drain() -> int:
