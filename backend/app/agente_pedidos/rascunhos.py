@@ -6,6 +6,7 @@ pronto, a conta, o tipo e o autor; so o clique de quem pediu, via
 que a pessoa confere antes do clique, por isso sai dos MESMOS numeros do
 payload (`orders.item_total`, `order_net_total`, as parcelas do proprio payload).
 """
+import asyncio
 import json
 import re
 import secrets
@@ -255,6 +256,91 @@ def preparar_venda(corpo: RascunhoVendaIn) -> dict:
         "avisos": avisos,
     })
     return {"tipo": "venda", "conta": conta, "payload": payload, "resumo": resumo,
+            "autor": corpo.autor.model_dump()}
+
+
+# --------------------------------------------------------------------------
+# Compra (à fábrica)
+# --------------------------------------------------------------------------
+CustoAoVivo = Callable[[str, int], Awaitable[Decimal | None]]
+
+
+def novo_cliente_bling(conta: str):
+    """Fábrica de `BlingClient` (os testes trocam por um duble)."""
+    from app.bling.client import BlingClient
+    return BlingClient(account=conta, max_attempts=2)
+
+
+def _decimal_positivo(valor) -> Decimal | None:
+    try:
+        d = Decimal(str(valor))
+    except Exception:  # noqa: BLE001 — valor estranho do Bling = sem custo
+        return None
+    return d if d > 0 else None
+
+
+async def custo_ao_vivo(conta: str, produto_id: int) -> Decimal | None:
+    """Preço de custo do produto lido AO VIVO no Bling (`GET /produtos/{id}`):
+    `fornecedor.precoCusto` e, se zero/ausente, `precoCusto`."""
+    async with novo_cliente_bling(conta) as client:
+        resp = await client.get(f"/produtos/{int(produto_id)}")
+    dados = resp.get("data") or {}
+    return (_decimal_positivo((dados.get("fornecedor") or {}).get("precoCusto"))
+            or _decimal_positivo(dados.get("precoCusto")))
+
+
+async def preparar_compra(corpo: RascunhoCompraIn, custo: CustoAoVivo | None = None) -> dict:
+    custo = custo or custo_ao_vivo
+    conta = contas.validar(corpo.conta)
+    fornecedor_id = contas.fabrica(conta)
+    fabrica = await asyncio.to_thread(leitura.cliente, conta, fornecedor_id)
+
+    data = hoje()
+    avisos: list[str] = []
+    itens: list[dict] = []
+    linhas: list[dict] = []
+    for it in corpo.itens:
+        p = await asyncio.to_thread(_produto_ativo, conta, it.produto_id)
+        nome = p.get("nome") or ""
+        if it.valor_unitario is not None:
+            valor = Decimal(str(it.valor_unitario))
+            avisos.append(f"Valor de {nome} informado na mensagem: {_brl(valor)}")
+        else:
+            try:
+                valor = await custo(conta, int(p["id"]))
+            except BlingError as exc:
+                raise erro(422, "custo", f"não consegui ler o custo de {nome} no Bling "
+                                         f"({exc}): informe o valor") from exc
+            if not valor:
+                raise erro(422, "custo", f"sem preço de custo para {nome}: informe o valor")
+        item = {"codigo": p.get("codigo") or "", "unidade": p.get("unidade") or "UN",
+                "descricao": nome, "quantidade": it.quantidade, "valor_unitario": valor}
+        itens.append({"produto": {"id": int(p["id"]), "codigo": p.get("codigo") or ""},
+                      "descricao": nome, "unidade": item["unidade"],
+                      "quantidade": float(it.quantidade), "valor": float(valor)})
+        linhas.append(_linha(item, it.valor_unitario is not None))
+
+    payload = {
+        "fornecedor": {"id": fornecedor_id},
+        "data": data,
+        "dataPrevista": corpo.data_prevista or data,
+        "itens": itens,
+        "observacoes": corpo.observacoes or "",
+        "observacoesInternas": _nota_interna(corpo.autor),
+    }
+    total = float(orders._money(sum((Decimal(str(l["total"])) for l in linhas), Decimal("0"))))
+    resumo = _resumo_vazio(conta)
+    resumo.update({
+        "parte": {"nome": (fabrica or {}).get("nome") or "Fábrica",
+                  "documento": leitura.formatar_documento((fabrica or {}).get("doc_digits"))},
+        "linhas": linhas,
+        "subtotal": total,
+        "total": total,
+        "data_prevista": payload["dataPrevista"],
+        "observacoes": corpo.observacoes or None,
+        "avisos": avisos,
+    })
+    return {"tipo": "compra", "conta": conta, "payload": payload, "resumo": resumo,
             "autor": corpo.autor.model_dump()}
 
 
