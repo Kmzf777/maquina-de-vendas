@@ -61,6 +61,9 @@ if PYDANTIC_V2:
         history_char_budget: int = 36000
         rehearsal_mode: bool = False
         ai_phone_number_id: Optional[str] = None
+        # Token do agente de pedidos (bot do Discord, /api/agente-pedidos). Sem ele
+        # as rotas do agente respondem 503. Env AGENTE_PEDIDOS_TOKEN.
+        agente_pedidos_token: Optional[str] = None
 
         model_config = {
             "extra": "allow",
@@ -106,6 +109,9 @@ else:
         history_char_budget: int = 36000
         rehearsal_mode: bool = False
         ai_phone_number_id: Optional[str] = None
+        # Token do agente de pedidos (bot do Discord, /api/agente-pedidos). Sem ele
+        # as rotas do agente respondem 503. Env AGENTE_PEDIDOS_TOKEN.
+        agente_pedidos_token: Optional[str] = None
 
         class Config:
             env_file = ".env"
