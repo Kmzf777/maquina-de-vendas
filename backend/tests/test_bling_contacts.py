@@ -57,6 +57,10 @@ class FakeQuery:
         self.filters["upsert"] = payload
         return self
 
+    def delete(self):
+        self.filters["delete"] = True
+        return self
+
     def execute(self):
         class R:
             pass
@@ -1247,3 +1251,60 @@ def test_aviso_e_opcional_para_quem_chama(monkeypatch):
     out = asyncio.run(ct.create_contact(client, {"id": "L1"}, dict(_DADOS_DM)))
 
     assert out == 17702865922 and _vinculou(sb)
+
+
+# ==========================================================================
+# Vendedor confirma "É este cliente" num contato que ja e de outro lead
+# ==========================================================================
+async def test_link_confirmado_transfere_contato_de_outro_lead(monkeypatch):
+    """Caso Primordium (21/10): o modal diz "ja pertence a outro lead, confirme
+    so se for o mesmo cliente". O vendedor confirma e o indice UNIQUE recusava
+    sempre — o pedido montado ficava preso, sem saida. A confirmacao humana e
+    a decisao: o contato passa para o lead do pedido nesta conta."""
+    from app.bling import contacts
+    chamadas = []
+    tentativas = {"n": 0}
+
+    def fake_link(lead_id, contact_id, account):
+        tentativas["n"] += 1
+        if tentativas["n"] == 1:
+            raise FakeUniqueViolation()
+        chamadas.append(("link", lead_id, contact_id, account))
+
+    def fake_soltar(contact_id, account):
+        chamadas.append(("soltar", contact_id, account))
+        return ["lead-antigo"]
+
+    monkeypatch.setattr(contacts, "_link", fake_link)
+    monkeypatch.setattr(contacts, "_soltar_contato", fake_soltar)
+    monkeypatch.setattr(contacts, "_preencher_pelo_espelho", lambda *a: {})
+
+    await contacts.link("lead-novo", 777, "secundaria")
+    assert chamadas == [("soltar", 777, "secundaria"),
+                        ("link", "lead-novo", 777, "secundaria")]
+
+
+async def test_link_erro_que_nao_e_unicidade_continua_estourando(monkeypatch):
+    from app.bling import contacts
+
+    def fake_link(*_a):
+        raise RuntimeError("supabase fora")
+
+    soltou = []
+    monkeypatch.setattr(contacts, "_link", fake_link)
+    monkeypatch.setattr(contacts, "_soltar_contato",
+                        lambda *a: soltou.append(a) or [])
+    with pytest.raises(RuntimeError):
+        await contacts.link("lead-novo", 777, "default")
+    assert soltou == []
+
+
+def test_soltar_contato_apaga_so_a_linha_desta_conta(monkeypatch):
+    from app.bling import contacts
+    supa = FakeSupabase({"lead_bling_contacts": [{"lead_id": "lead-antigo"}]})
+    monkeypatch.setattr(contacts, "get_supabase", lambda: supa)
+    assert contacts._soltar_contato(777, "secundaria") == ["lead-antigo"]
+    apagou = [q for q in supa.queries if q.filters.get("delete")]
+    assert len(apagou) == 1
+    assert apagou[0].filters["bling_contact_id"] == 777
+    assert apagou[0].filters["account"] == "secundaria"

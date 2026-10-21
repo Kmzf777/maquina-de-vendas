@@ -375,9 +375,35 @@ async def link(lead_id: str, contact_id: int,
     por conta — vincular na conta 2 nunca apaga nem troca o vinculo da conta 1.
 
     Depois de vincular, devolve ao lead o documento/razao/e-mail do contato (so nos
-    campos vazios) — ver `_preencher_lead_com_contato`."""
-    await asyncio.to_thread(_link, lead_id, contact_id, account)
+    campos vazios) — ver `_preencher_lead_com_contato`.
+
+    Se o contato ja for de OUTRO lead nesta conta (indice UNIQUE), o vinculo e
+    TRANSFERIDO para este lead. O modal so chega aqui depois de mostrar "ja
+    pertence a outro lead, confirme so se for o mesmo cliente" e o vendedor
+    clicar "E este cliente": a confirmacao humana e exatamente a decisao que o
+    `resolve` devolveu para ele. Sem isto o clique estourava sempre e o pedido
+    montado ficava preso (caso Primordium, 21/10). O lead antigo so perde o
+    vinculo NESTA conta; a proxima venda dele volta a resolucao por documento."""
+    try:
+        await asyncio.to_thread(_link, lead_id, contact_id, account)
+    except Exception as exc:
+        if not _e_violacao_de_unicidade(exc):
+            raise
+        antigos = await asyncio.to_thread(_soltar_contato, contact_id, account)
+        logger.warning(
+            "[BLING] contato %s (conta %s) transferido para o lead %s por confirmacao "
+            "do vendedor; era do(s) lead(s) %s", contact_id, account, lead_id, antigos,
+        )
+        await asyncio.to_thread(_link, lead_id, contact_id, account)
     await asyncio.to_thread(_preencher_pelo_espelho, lead_id, contact_id, account)
+
+
+def _soltar_contato(contact_id: int, account: str) -> list[str]:
+    """Apaga o vinculo de quem hoje tem este contato NESTA conta; devolve quem era."""
+    tabela = get_supabase().table("lead_bling_contacts")
+    res = (tabela.delete().eq("bling_contact_id", contact_id)
+           .eq("account", account).execute())
+    return [linha.get("lead_id") for linha in (getattr(res, "data", None) or [])]
 
 
 def _unlink(lead_id: str, account: str) -> None:
