@@ -744,7 +744,56 @@ async def create_contact(client, lead: dict, dados: dict,
     telefone e endereco que o vendedor preencheu (ver `_atualizar_existente`).
     Aviso nao bloqueante para o vendedor (recusa que ele nao tem como corrigir)
     entra em `avisos`, se quem chama passar a lista.
+
+    A parte que nao depende de lead e `criar_contato_sem_lead`; aqui o vinculo
+    com o lead roda DENTRO da mesma trava por documento (via `dentro_da_trava`),
+    como sempre rodou.
     """
+    async def _vincular(contact_id: int) -> None:
+        try:
+            await asyncio.to_thread(_link, lead["id"], contact_id, account)
+        except Exception as exc:
+            if not _e_violacao_de_unicidade(exc):
+                raise
+            # Sem isto o vendedor entra num laco de falha permanente: o contato ja
+            # existe no Bling, entao cada nova tentativa refaz GET → acha → 500.
+            raise BlingValidationError(
+                "este contato do Bling ja esta vinculado a outro lead",
+                type_="CONFLICT",
+                description=(
+                    f"O contato {contact_id} pertence a outro lead do CRM. "
+                    "Abra o lead existente ou desfaca o vinculo antes de continuar."
+                ),
+                status=409,
+            ) from exc
+        await asyncio.to_thread(_preencher_lead_com_contato, lead["id"], {
+            "doc_digits": doc_digits(dados.get("numeroDocumento")),
+            "nome": dados.get("nome"), "email": dados.get("email"),
+        })
+        await asyncio.to_thread(_preencher_endereco_do_lead, lead["id"], dados)
+
+    return await _criar_contato(client, dados, account=account, avisos=avisos,
+                                nome_padrao=lead.get("name") or "",
+                                dentro_da_trava=_vincular)
+
+
+async def criar_contato_sem_lead(client, dados: dict, *,
+                                 account: str = config.DEFAULT_ACCOUNT,
+                                 avisos: list[str] | None = None) -> int:
+    """Mesma trava por documento e checagem ao vivo do create_contact, sem vincular lead.
+
+    Usada pelo agente de pedidos (Discord), que cadastra o cliente sem lead no
+    CRM. Atualiza o espelho `bling_contacts` como o `create_contact`.
+    """
+    return await _criar_contato(client, dados, account=account, avisos=avisos)
+
+
+async def _criar_contato(client, dados: dict, *, account: str,
+                         avisos: list[str] | None = None, nome_padrao: str = "",
+                         dentro_da_trava=None) -> int:
+    """Nucleo comum: valida o documento, trava, re-checa ao vivo, cria ou
+    reaproveita o contato, grava o espelho e roda `dentro_da_trava(contact_id)`
+    (se veio) ainda segurando a trava."""
     doc = doc_digits(dados.get("numeroDocumento"))
     if not is_valid_document(doc):
         raise BlingValidationError(
@@ -795,7 +844,7 @@ async def create_contact(client, lead: dict, dados: dict,
                 no_bling = await _atualizar_existente(client, contact_id, dados, avisos)
         else:
             payload = {
-                "nome": dados.get("nome") or lead.get("name") or "",
+                "nome": dados.get("nome") or nome_padrao,
                 "tipo": dados.get("tipo") or ("J" if len(doc) == 14 else "F"),
                 "situacao": "A",
                 "numeroDocumento": doc,
@@ -813,7 +862,7 @@ async def create_contact(client, lead: dict, dados: dict,
         # senao, o recorte do formulario, como sempre foi.
         espelho = {**no_bling, "id": contact_id} if no_bling else {
             "id": contact_id,
-            "nome": dados.get("nome") or lead.get("name") or "",
+            "nome": dados.get("nome") or nome_padrao,
             "tipo": dados.get("tipo"),
             "numeroDocumento": doc,
             "telefone": dados.get("telefone"),
@@ -823,26 +872,8 @@ async def create_contact(client, lead: dict, dados: dict,
             "endereco": dados.get("endereco"),
         }
         await asyncio.to_thread(_upsert_mirror, espelho, account)
-        try:
-            await asyncio.to_thread(_link, lead["id"], contact_id, account)
-        except Exception as exc:
-            if not _e_violacao_de_unicidade(exc):
-                raise
-            # Sem isto o vendedor entra num laco de falha permanente: o contato ja
-            # existe no Bling, entao cada nova tentativa refaz GET → acha → 500.
-            raise BlingValidationError(
-                "este contato do Bling ja esta vinculado a outro lead",
-                type_="CONFLICT",
-                description=(
-                    f"O contato {contact_id} pertence a outro lead do CRM. "
-                    "Abra o lead existente ou desfaca o vinculo antes de continuar."
-                ),
-                status=409,
-            ) from exc
-        await asyncio.to_thread(_preencher_lead_com_contato, lead["id"], {
-            "doc_digits": doc, "nome": dados.get("nome"), "email": dados.get("email"),
-        })
-        await asyncio.to_thread(_preencher_endereco_do_lead, lead["id"], dados)
+        if dentro_da_trava is not None:
+            await dentro_da_trava(contact_id)
         return contact_id
 
 

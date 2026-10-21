@@ -345,6 +345,62 @@ async def preparar_compra(corpo: RascunhoCompraIn, custo: CustoAoVivo | None = N
 
 
 # --------------------------------------------------------------------------
+# Contato
+# --------------------------------------------------------------------------
+def _texto(valor: str | None) -> str | None:
+    valor = (valor or "").strip()
+    return valor or None
+
+
+def _endereco_texto(e: dict) -> str | None:
+    rua = ", ".join(x for x in (e.get("endereco"), e.get("numero"), e.get("complemento")) if x)
+    cidade = "/".join(x for x in (e.get("municipio"), e.get("uf")) if x)
+    partes = [x for x in (rua, e.get("bairro"), cidade) if x]
+    if e.get("cep"):
+        partes.append(f"CEP {e['cep']}")
+    return " - ".join(partes) or None
+
+
+def preparar_contato(corpo: RascunhoContatoIn) -> dict:
+    conta = contas.validar(corpo.conta)
+    if not contacts.is_valid_document(corpo.documento):
+        raise erro(422, "documento", f"CPF/CNPJ inválido: {corpo.documento}")
+    digitos = contacts.doc_digits(corpo.documento)
+    existente = leitura.contato_por_documento(conta, digitos)
+    if existente:
+        raise erro(409, "contato_existe",
+                   f"já existe contato com este documento nesta conta: {existente.get('nome')} "
+                   f"(id {existente.get('id')})",
+                   contato={"id": int(existente["id"]), "nome": existente.get("nome") or ""})
+
+    tipo = corpo.tipo or ("J" if len(digitos) == 14 else "F")
+    nome = corpo.nome.strip()
+    payload: dict = {"nome": nome, "numeroDocumento": digitos, "tipo": tipo}
+    for campo in ("email", "telefone", "celular"):
+        valor = _texto(getattr(corpo, campo))
+        if valor:
+            payload[campo] = valor
+    endereco = {k: v.strip() for k, v in (corpo.endereco.model_dump() if corpo.endereco else {}).items()
+                if isinstance(v, str) and v.strip()}
+    if endereco.get("uf"):
+        endereco["uf"] = endereco["uf"].upper()
+    if endereco:
+        payload["endereco"] = {"geral": endereco}
+
+    documento = leitura.formatar_documento(digitos)
+    resumo = _resumo_vazio(conta)
+    resumo.update({
+        "parte": {"nome": nome, "documento": documento},
+        "contato": {"nome": nome, "documento": documento, "tipo": tipo,
+                    "email": payload.get("email"), "telefone": payload.get("telefone"),
+                    "celular": payload.get("celular"),
+                    "endereco_texto": _endereco_texto(endereco) if endereco else None},
+    })
+    return {"tipo": "contato", "conta": conta, "payload": payload, "resumo": resumo,
+            "autor": corpo.autor.model_dump()}
+
+
+# --------------------------------------------------------------------------
 # Guardar / carregar
 # --------------------------------------------------------------------------
 async def guardar(r: dict) -> dict:
