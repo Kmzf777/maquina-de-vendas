@@ -151,6 +151,7 @@ from app.lp_webhook.router import router as lp_webhook_router
 from app.fx.router import router as fx_router
 from app.bling.webhook_router import router as bling_webhook_router
 from app.bling.router import router as bling_router
+from app.agente_pedidos.router import router as agente_pedidos_router
 from app.quotes.router import router as quotes_router
 from app.button_flow.valeria_flow_router import router as valeria_flow_router
 
@@ -175,6 +176,7 @@ app.include_router(lp_webhook_router)
 app.include_router(fx_router)
 app.include_router(bling_webhook_router)
 app.include_router(bling_router)
+app.include_router(agente_pedidos_router)
 app.include_router(quotes_router)
 app.include_router(valeria_flow_router)
 
