@@ -44,3 +44,32 @@ describe("ChatHeader — chat estreito ao lado do painel acoplado", () => {
     expect(cabecalho).toBeTruthy();
   });
 });
+
+describe("ChatHeader — cor do avatar pelo segmento (b67f1c6b)", () => {
+  function corDoAvatar(leads: Record<string, unknown>): string {
+    const { container } = render(
+      <ChatHeader
+        conversation={{ ...conversa, leads: { ...conversa.leads, ...leads } } as unknown as Conversation}
+        tags={[]}
+        aiEnabled
+        onToggleAi={vi.fn()}
+        followupEnabled
+        onToggleFollowup={vi.fn()}
+      />,
+    );
+    const avatar = Array.from(container.querySelectorAll<HTMLElement>("[style]")).find((el) =>
+      el.style.backgroundColor,
+    );
+    cleanup();
+    return avatar?.style.backgroundColor ?? "";
+  }
+
+  it("lê leads.segmento, não a fase", () => {
+    // #8b6bab = private_label
+    expect(corDoAvatar({ stage: "qualificando", segmento: "private_label" })).toBe("rgb(139, 107, 171)");
+  });
+
+  it("cai no stage antigo enquanto o backfill não roda", () => {
+    expect(corDoAvatar({ stage: "atacado", segmento: null })).toBe("rgb(91, 138, 173)");
+  });
+});

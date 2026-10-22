@@ -10,6 +10,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { AgentPersonaBadge } from "@/components/conversas/agent-persona-badge";
+import { agentStageKeyDoLead } from "@/lib/segmento";
 
 interface ChatHeaderProps {
   conversation: Conversation;
@@ -30,8 +31,9 @@ interface ChatHeaderProps {
 }
 
 function getStageColor(stage: string | undefined): string {
+  // Chave de `agentStageKeyDoLead`: o segmento do lead ou "triagem" (b67f1c6b).
   const map: Record<string, string> = {
-    secretaria: "#8a8a80",
+    triagem: "#8a8a80",
     atacado: "#5b8aad",
     private_label: "#8b6bab",
     exportacao: "#5aad65",
@@ -62,7 +64,7 @@ export function ChatHeader({
 
   const displayName = lead?.name || lead?.phone || "Desconhecido";
   const initial = displayName.charAt(0).toUpperCase();
-  const avatarColor = getStageColor(lead?.stage);
+  const avatarColor = getStageColor(agentStageKeyDoLead(lead) ?? undefined);
 
   useEffect(() => {
     function handleClickOutside(e: MouseEvent) {

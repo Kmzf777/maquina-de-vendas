@@ -11,6 +11,7 @@ import {
   cursorOrFilter,
   decodeCursor,
   parseTabFilter,
+  segmentoTabOrFilter,
   splitPage,
 } from "./list-params";
 
@@ -192,7 +193,9 @@ export async function GET(request: NextRequest) {
 
   if (tabFilter.kind === "unread") dbQuery = dbQuery.gt("unread_count", 0);
   else if (tabFilter.kind === "no_lead") dbQuery = dbQuery.is("lead_id", null);
-  else if (tabFilter.kind === "stage") dbQuery = dbQuery.eq("leads.stage", tabFilter.stage);
+  else if (tabFilter.kind === "stage") {
+    dbQuery = dbQuery.or(segmentoTabOrFilter(tabFilter.stage), { referencedTable: "leads" });
+  }
 
   // Keyset: só linhas DEPOIS da última entregue. Na cauda (last_msg_at nulo) a
   // ordem é só pelo id.

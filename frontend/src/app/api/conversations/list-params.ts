@@ -89,6 +89,16 @@ export function parseTabFilter(tab: string | null | undefined): ConversationTabF
 }
 
 /**
+ * Filtro `or` (no lead embutido) de uma aba de segmento — cartão b67f1c6b: lê
+ * `leads.segmento`, com reserva no `stage` antigo para lead que ainda não passou pelo
+ * backfill (segmento vazio e o segmento gravado em `stage`). Espelha
+ * `leadCasaAgentStage`. `segmento` vem de STAGE_TAB_KEYS (lista fechada), nunca da URL crua.
+ */
+export function segmentoTabOrFilter(segmento: string): string {
+  return `segmento.eq.${segmento},and(segmento.is.null,stage.eq.${segmento})`;
+}
+
+/**
  * Corta as linhas buscadas com `limit(pageSize + 1)`: a linha extra só prova que
  * existe próxima página; o cursor aponta para a última linha MANTIDA.
  */

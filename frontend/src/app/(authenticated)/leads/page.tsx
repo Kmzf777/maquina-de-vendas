@@ -2,6 +2,7 @@
 
 import { useState, useMemo, useEffect, useRef, Suspense } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
+import { leadCasaAgentStage, rotuloDoLead } from "@/lib/segmento";
 import { useRealtimeLeads } from "@/hooks/use-realtime-leads";
 import { getTemperature } from "@/lib/temperature";
 import { LeadGridCard } from "@/components/leads/lead-grid-card";
@@ -96,7 +97,8 @@ function LeadsPageInner() {
     return leads.filter((lead) => {
       if (filters.search && !leadMatchesSearch(filters.search, lead)) return false;
       if (filters.temperature && getTemperature(lead.last_msg_at) !== filters.temperature) return false;
-      if (filters.stage && lead.stage !== filters.stage) return false;
+      // Filtro por segmento (leads.segmento, reserva no stage antigo) ou "Em triagem".
+      if (filters.stage && !leadCasaAgentStage(lead, filters.stage)) return false;
       if (filters.channel && lead.channel !== filters.channel) return false;
       if (filters.tagId) {
         const leadTags = leadTagsMap[lead.id] || [];
@@ -501,8 +503,8 @@ function LeadsPageInner() {
             <div className="px-5 py-4 space-y-3">
               {mobileSelectedLead.stage && (
                 <div className="flex items-center justify-between">
-                  <span className="text-[11px] uppercase tracking-[0.6px] text-[#7b7b78]">Stage</span>
-                  <span className="text-[13px] text-[#111111]">{mobileSelectedLead.stage}</span>
+                  <span className="text-[11px] uppercase tracking-[0.6px] text-[#7b7b78]">Segmento</span>
+                  <span className="text-[13px] text-[#111111]">{rotuloDoLead(mobileSelectedLead)}</span>
                 </div>
               )}
               {mobileSelectedLead.company && (

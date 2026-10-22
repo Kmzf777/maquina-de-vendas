@@ -3,6 +3,7 @@ import { getServiceSupabase } from "@/lib/supabase/api";
 import { normalizePhoneBR } from "@/lib/phone";
 import { findLeadByPhoneVariants } from "@/lib/lead-phone-lookup";
 import { cepDigits } from "@/lib/bling-contact-form";
+import { resolverSegmentoFase } from "@/lib/segmento";
 import {
   ADDRESS_FIELDS,
   formatAddress,
@@ -61,9 +62,20 @@ export async function PATCH(
 
   const { data: currentLead } = await supabase
     .from("leads")
-    .select("stage, phone")
+    .select("stage, phone, segmento")
     .eq("id", id)
     .single();
+
+  // Segmento e fase separados (cartão b67f1c6b): `segmento` validado contra o enum;
+  // `stage` só aceita fase. Tela antiga que manda o segmento em `stage` continua
+  // funcionando (vira `segmento` + fase `qualificando`; "secretaria" vira `triagem`).
+  const segmentoFase = resolverSegmentoFase(body);
+  if (!segmentoFase.ok) {
+    return NextResponse.json({ error: segmentoFase.erro }, { status: 400 });
+  }
+  delete body.stage;
+  delete body.segmento;
+  Object.assign(body, segmentoFase.campos);
 
   // Telefone: grava o canônico e recusa número que outro lead já usa em
   // qualquer formato antigo (cartão b747da43).
@@ -134,16 +146,17 @@ export async function PATCH(
       await supabase.from("lead_events").insert(events);
     }
 
-    // Fire automation trigger for stage_enter (fire-and-forget)
-    if (body.stage && body.stage !== currentLead.stage) {
+    // Gatilho stage_enter (fire-and-forget). Um disparo por campo que MUDOU, cada um
+    // com só o seu valor: o filtro de segmento olha `segmento`, o de fase olha `stage`
+    // (automation/triggers.py::_passes_filter).
+    const mudancas: Record<string, string>[] = [];
+    if (body.stage && body.stage !== currentLead.stage) mudancas.push({ stage: body.stage });
+    if (body.segmento && body.segmento !== currentLead.segmento) mudancas.push({ segmento: body.segmento });
+    for (const data of mudancas) {
       void fetch(`${backendUrl()}/api/automation/trigger`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          event_type: "stage_enter",
-          lead_id: id,
-          data: { stage: body.stage },
-        }),
+        body: JSON.stringify({ event_type: "stage_enter", lead_id: id, data }),
       }).catch(() => {});
     }
   }

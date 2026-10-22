@@ -1,5 +1,6 @@
 import { UNREAD_TAB_KEY } from "@/lib/constants";
 import { sortByLastMsgDesc } from "@/lib/conversations-live";
+import { leadCasaAgentStage } from "@/lib/segmento";
 import type { Conversation } from "@/lib/types";
 
 /** Abaixo disso a busca não vai ao servidor (ruído demais, resultado inútil). */
@@ -14,7 +15,8 @@ export function conversationMatchesTab(conv: Conversation, activeTab: string): b
   if (activeTab === UNREAD_TAB_KEY) return (conv.unread_count ?? 0) > 0;
   if (activeTab === "todos") return true;
   if (activeTab === "pessoal") return !conv.leads;
-  return conv.leads?.stage === activeTab;
+  // Aba de segmento: `leads.segmento`, com reserva no `stage` antigo (b67f1c6b).
+  return !!conv.leads && leadCasaAgentStage(conv.leads, activeTab);
 }
 
 /**

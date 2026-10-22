@@ -103,11 +103,16 @@ describe("GET /api/conversations — paginação", () => {
 });
 
 describe("GET /api/conversations — abas como filtro de servidor", () => {
-  it("filters a segment tab by the lead stage with an inner join", async () => {
+  it("filters a segment tab by leads.segmento (fallback no stage antigo) with an inner join", async () => {
     const { de } = instalar([]);
     await chamar("?tab=atacado");
     expect(String(de("select")[0][0])).toContain("leads!inner(");
-    expect(de("eq")).toContainEqual(["leads.stage", "atacado"]);
+    expect(String(de("select")[0][0])).toMatch(/leads!inner\([^)]*, segmento,/);
+    expect(de("or")).toContainEqual([
+      "segmento.eq.atacado,and(segmento.is.null,stage.eq.atacado)",
+      { referencedTable: "leads" },
+    ]);
+    expect(de("eq")).not.toContainEqual(["leads.stage", "atacado"]);
   });
 
   it("filters the unread tab by unread_count", async () => {

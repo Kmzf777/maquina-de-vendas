@@ -1,7 +1,8 @@
 "use client";
 
 import { useState, useRef, useCallback, useEffect } from "react";
-import { CONVERSATION_TABS, AGENT_STAGES, UNREAD_TAB_KEY } from "@/lib/constants";
+import { CONVERSATION_TABS, UNREAD_TAB_KEY } from "@/lib/constants";
+import { agentStageKeyDoLead } from "@/lib/segmento";
 import type { Conversation, Channel, MessageSearchResult } from "@/lib/types";
 import { MessageSearchResults } from "@/components/conversas/message-search-results";
 import { leadMatchesSearch } from "@/lib/search";
@@ -42,8 +43,9 @@ interface ChatListProps {
 }
 
 function getStageColor(stage: string | undefined): string {
+  // Chave de `agentStageKeyDoLead`: o segmento do lead ou "triagem" (b67f1c6b).
   const avatarColorMap: Record<string, string> = {
-    secretaria: "bg-[#8a8a80]",
+    triagem: "bg-[#8a8a80]",
     atacado: "bg-[#5b8aad]",
     private_label: "bg-[#8b6bab]",
     exportacao: "bg-[#5aad65]",
@@ -55,7 +57,7 @@ function getStageColor(stage: string | undefined): string {
 
 function getStagePillColor(stage: string | undefined): string {
   const pillColorMap: Record<string, string> = {
-    secretaria: "bg-[#8a8a80]/10 text-[#8a8a80]",
+    triagem: "bg-[#8a8a80]/10 text-[#8a8a80]",
     atacado: "bg-[#5b8aad]/10 text-[#5b8aad]",
     private_label: "bg-[#8b6bab]/10 text-[#8b6bab]",
     exportacao: "bg-[#5aad65]/10 text-[#5aad65]",
@@ -271,7 +273,8 @@ export function ChatList({
     const lead = conv.leads;
     const channel = conv.channels;
     const displayName = lead?.name || lead?.phone || "Desconhecido";
-    const stage = lead?.stage;
+    // Cor por SEGMENTO (leads.segmento, reserva no stage antigo) ou "triagem".
+    const stage = agentStageKeyDoLead(lead) ?? undefined;
     const isActive = selectedConversationId === conv.id;
     const unreadCount = conv.unread_count ?? 0;
     const provider = channel?.provider;

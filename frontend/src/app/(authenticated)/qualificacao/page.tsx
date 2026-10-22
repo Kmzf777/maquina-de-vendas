@@ -4,6 +4,7 @@ import { useState, useEffect } from "react";
 import { useRealtimeLeads } from "@/hooks/use-realtime-leads";
 import { useDragScroll } from "@/hooks/use-drag-scroll";
 import { AGENT_STAGES } from "@/lib/constants";
+import { leadCasaAgentStage } from "@/lib/segmento";
 import { KanbanColumn } from "@/components/kanban-column";
 import { KanbanMetricsBar } from "@/components/kanban-metrics-bar";
 import { KanbanFilters } from "@/components/kanban-filters";
@@ -117,7 +118,8 @@ export default function QualificacaoPage() {
           onMouseLeave={kanbanMouseLeave}
         >
           {AGENT_STAGES.map((stage) => {
-            const stageLeads = filteredLeads.filter((l) => l.stage === stage.key);
+            // Coluna por SEGMENTO (leads.segmento, reserva no stage antigo) + "Em triagem".
+            const stageLeads = filteredLeads.filter((l) => leadCasaAgentStage(l, stage.key));
             return (
               <KanbanColumn
                 key={stage.key}

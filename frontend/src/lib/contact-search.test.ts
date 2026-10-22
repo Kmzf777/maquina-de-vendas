@@ -44,6 +44,14 @@ describe("conversationMatchesTab", () => {
     expect(conversationMatchesTab(atacado, "atacado")).toBe(true);
     expect(conversationMatchesTab(atacado, "private_label")).toBe(false);
   });
+
+  it("aba de segmento lê leads.segmento (b67f1c6b), com reserva no stage antigo", () => {
+    const novo = conv({ id: "a", leads: { id: "l1", stage: "qualificando", segmento: "private_label" } as never });
+    expect(conversationMatchesTab(novo, "private_label")).toBe(true);
+    expect(conversationMatchesTab(novo, "atacado")).toBe(false);
+    const triagem = conv({ id: "b", leads: { id: "l2", stage: "triagem", segmento: null } as never });
+    expect(conversationMatchesTab(triagem, "atacado")).toBe(false);
+  });
 });
 
 describe("mergeContactResults", () => {
