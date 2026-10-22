@@ -116,5 +116,6 @@ export const config = {
     "/api/system-alerts/:path*",
     "/api/valeria-flow/:path*",
     "/api/valeria-score/:path*",
+    "/api/vendedores/:path*",
   ],
 };
