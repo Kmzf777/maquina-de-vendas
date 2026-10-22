@@ -1084,7 +1084,11 @@ async def ensure_lead(contato: dict, account: str = config.DEFAULT_ACCOUNT) -> s
         "email": contato.get("email"),
         "endereco": " - ".join([p for p in partes if p]) or None,
         "stage": config.lead_default_stage(),
-        "status": "ativo",
+        # 'active' (nao 'imported', que poe o lead na lista de disparo; nem o 'ativo'
+        # antigo, fora do vocabulario). origem_cadastro tira o importado do "Leads novos"
+        # (D1) e do relatorio de trafego (b67f1c6b).
+        "status": "active",
+        "origem_cadastro": "bling_import",
         "channel": "bling",
         "metadata": {"origem": "bling_webhook", "id_bling": str(contact_id)},
     }

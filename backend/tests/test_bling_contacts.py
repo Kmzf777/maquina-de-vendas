@@ -811,6 +811,9 @@ def test_ensure_lead_cria_com_placeholder_quando_contato_nao_tem_telefone(monkey
     assert "bling_contact_id" not in inseridos[0], \
         "o vinculo agora mora em lead_bling_contacts, nao mais numa coluna do lead"
     assert inseridos[0]["metadata"]["origem"] == "bling_webhook"
+    # b67f1c6b (B8): importado do Bling nao e lead de marketing nem entra no disparo
+    assert inseridos[0]["status"] == "active"
+    assert inseridos[0]["origem_cadastro"] == "bling_import"
     # apos o insert, o vinculo do lead recem-criado tem que ser gravado a parte
     assert any(q.name == "lead_bling_contacts" and
                q.filters.get("upsert") == {"lead_id": "LEAD-NOVO", "account": "default",
