@@ -36,9 +36,12 @@ export interface KpisRow {
   sla_samples: number | string | null;
   cost_per_handoff_usd: number | string | null;
   cost_per_atendimento_usd: number | string | null;
+  /** b67f1c6b: todos os leads criados no período (a contagem antiga de leads_new). */
+  contacts_new?: number | string | null;
 }
 
 export interface KpisResponse {
+  /** b67f1c6b (D1): 1ª entrada no período, sem importados e sem quem já era cliente. */
   leads_new: number;
   leads_prev: number;
   /** % vs período anterior; null quando não há base de comparação (prev=0). */
@@ -53,6 +56,8 @@ export interface KpisResponse {
   sla_samples: number;
   cost_per_handoff_usd: number | null;
   cost_per_atendimento_usd: number | null;
+  /** "Todos os contatos" (leads.created_at); null quando a RPC ainda não tem a coluna. */
+  contacts_new: number | null;
 }
 
 export function mapKpis(row: KpisRow | null | undefined): KpisResponse {
@@ -73,6 +78,7 @@ export function mapKpis(row: KpisRow | null | undefined): KpisResponse {
     sla_samples: toNum(row?.sla_samples),
     cost_per_handoff_usd: toNumOrNull(row?.cost_per_handoff_usd),
     cost_per_atendimento_usd: toNumOrNull(row?.cost_per_atendimento_usd),
+    contacts_new: toNumOrNull(row?.contacts_new),
   };
 }
 

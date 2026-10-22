@@ -41,6 +41,23 @@ describe("mapKpis", () => {
     expect(r.leads_new).toBe(0);
     expect(r.sla_samples).toBe(0);
     expect(r.sla_median_minutes).toBeNull();
+    expect(r.contacts_new).toBeNull();
+  });
+
+  // b67f1c6b: leads_new passa a ser a D1; "Todos os contatos" = contacts_new (created_at)
+  it("contacts_new (string do PostgREST) vira número; ausente (RPC antiga) vira null", () => {
+    const base = {
+      leads_new: "439", leads_prev: "400",
+      active_with_ai: 0, active_awaiting_lead: 0,
+      conversations_attended: 0, handoffs: 0, qualification_rate: "0.37",
+      sla_median_minutes: null, sla_p95_minutes: null, sla_samples: 0,
+      cost_per_handoff_usd: null, cost_per_atendimento_usd: null,
+    };
+    const r = mapKpis({ ...base, contacts_new: "505" });
+    expect(r.contacts_new).toBe(505);
+    expect(r.leads_new).toBe(439);
+    expect(r.qualification_rate).toBe(0.37);
+    expect(mapKpis(base).contacts_new).toBeNull();
   });
 });
 

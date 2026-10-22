@@ -18,6 +18,8 @@ export interface DashboardKpis {
   sla_samples: number;
   cost_per_handoff_usd: number | null;
   cost_per_atendimento_usd: number | null;
+  /** b67f1c6b: "Todos os contatos" (leads.created_at); null se a RPC ainda não tem a coluna */
+  contacts_new: number | null;
 }
 
 /** GET /api/dashboard/conversion?start&end */

@@ -114,6 +114,14 @@ const DollarIcon = (
   </svg>
 );
 
+// b67f1c6b: textos da spec 2026-10-22-crm-leads-vendedor-design.md (seção 5)
+const HINT_LEADS_NOVOS =
+  "leads que chegaram por anúncio, LP ou orgânico; não conta importados nem quem já era cliente";
+const HINT_TAXA_QUALIFICACAO =
+  "leads qualificados (repasse ao vendedor ou score ≥5 no B2B) ÷ leads atendidos pela Valeria";
+const HINT_TODOS_CONTATOS =
+  "todos os leads criados no CRM no período, inclusive importados e quem já era cliente";
+
 function SectionLabel({ children }: { children: React.ReactNode }) {
   return (
     <p className="text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] mb-4">
@@ -278,10 +286,11 @@ export default function DashboardPage() {
             ) : kpis.error && !k ? (
               <BlockError label="os indicadores do motor" />
             ) : k ? (
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-4 md:gap-5">
+              <div className="grid grid-cols-2 md:grid-cols-5 gap-4 md:gap-5">
                 <KpiCard
                   label="Leads novos"
                   value={fmtInt(k.leads_new)}
+                  hint={HINT_LEADS_NOVOS}
                   icon={TrendUpIcon}
                   trend={
                     trendPct !== null
@@ -289,6 +298,12 @@ export default function DashboardPage() {
                       : undefined
                   }
                   trendPositive={trendPct !== null ? trendPct >= 0 : undefined}
+                />
+                <KpiCard
+                  label="Todos os contatos"
+                  value={k.contacts_new === null ? "—" : fmtInt(k.contacts_new)}
+                  hint={HINT_TODOS_CONTATOS}
+                  icon={TrendUpIcon}
                 />
                 <KpiCard
                   label="Leads ativos com a Valéria"
@@ -324,6 +339,7 @@ export default function DashboardPage() {
                 <KpiCard
                   label="Taxa de qualificação"
                   value={fmtPct(k.qualification_rate)}
+                  hint={HINT_TAXA_QUALIFICACAO}
                   icon={PercentIcon}
                 />
                 <KpiCard
