@@ -11,6 +11,7 @@
 --   * funil com dono: pipelines.owner_user_id (se ele está em vendedores);
 --   * funil sem dono: leads.assigned_to do lead, se está em vendedores e NÃO foi gravado por este F6
 --     (é o vendedor que o lead já tinha; assim a 2ª execução não acha nada novo).
+--   * funil "Blacklist": nunca (nem pelo dono do funil) — vai para o relatório vendedores_ambiguos.sql.
 --
 -- Pré-requisitos: migrations 20261022a/b e o F1 (vendedores + dono do funil do Arthur).
 -- Roda DEPOIS do push do código (F4–F7). Só UPDATE de assigned_to/metadata: nenhum gatilho reage
@@ -21,7 +22,7 @@
 
 \if :{?teto_deals}
 \else
-\set teto_deals 3706
+\set teto_deals 3633
 \endif
 \if :{?teto_leads}
 \else
@@ -85,6 +86,7 @@ select d.id,
        and not exists (select 1 from public.backup_b67f_f6 b
                         where b.id = l.id and b.valor_anterior->>'tabela' = 'leads')
  where d.assigned_to is null
+   and (p.id is null or lower(btrim(p.name)) <> 'blacklist')
    and case when p.owner_user_id is not null then vp.id else vl.id end is not null;
 
 do $$

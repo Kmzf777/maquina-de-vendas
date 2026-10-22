@@ -107,7 +107,7 @@ Teto = contagem + 10%, arredondado para cima; é o default no topo de cada scrip
 |---|---|---|---|
 | `f1_vendedores.sql` | `vendedores` a partir de `auth.users` (4: João Brás e Arthur ativos; Rafael `rafael@cafecanastra.com` e Comercial 2 inativos — em `auth.users` está `Comercial2@cafecanastra.com`, gravado em minúsculo); `bling_seller_map.vendedor_id` (2 linhas do João: default e secundaria); insert Arthur → vendedor Bling 5845108828 na conta `default` (existe em `bling_sellers` como "Arthur Silva Boaventura"); dono do funil "Arthur - Exportação" (4a0c9f7f-…, hoje NULL) | 4 + 2 + 1 + 1 = 8 | `teto` 9 |
 | `f6_vendedor.sql` (leads) | `leads.assigned_to` e `metadata.handoff.vendedor_id` := `fn_vendedor_id(handoff.vendedor)` só em lead sem `assigned_to` e sem `handoff.vendedor_id`: João 524, Arthur 20 | 544 | `teto_leads` 599 |
-| `f6_vendedor.sql` (deals) | `deals.assigned_to` (só NULL): dono do funil 3.301 (João 3.271 nos 6 funis dele, Arthur 30 depois do F1) + funil sem dono pelo `assigned_to` que o lead já tinha 68 (João; 67 no funil Blacklist, 1 em Importação Leads Frios) | 3.369 | `teto_deals` 3.706 |
+| `f6_vendedor.sql` (deals) | `deals.assigned_to` (só NULL, fora do funil Blacklist): dono do funil 3.301 (João 3.271 nos 6 funis dele, Arthur 30 depois do F1) + funil sem dono pelo `assigned_to` que o lead já tinha 1 (João, em Importação Leads Frios) | 3.302 | `teto_deals` 3.633 |
 
 Ficam fora do F6 (vão para `relatorios/vendedores_ambiguos.sql`): "Vendedor" 61 (nome não resolve) e "Joao Bras" em
 lead de consumo 15 / secretaria 5 / exportacao 2 = 22 (vendedor não atende o segmento: `leads.segmento`,
@@ -116,10 +116,12 @@ lead de consumo 15 / secretaria 5 / exportacao 2 = 22 (vendedor não atende o se
 Notas:
 - Ordem: migration `20261022a` → `f1_vendedores.sql` (antes do push). `f6_vendedor.sql` depois do push (F4–F7)
   e depois do F1 (e do F2/F3, para o filtro de segmento enxergar `leads.segmento`).
-- Diferença da spec (3.278 + 48): os funis do João têm hoje 3.271 deals; o fallback pelo lead dá 68 (a spec
-  citava 48), dos quais 67 estão no funil **Blacklist** — conferir se quer vendedor nesses deals. O fallback usa
-  só o `assigned_to` que o lead já tinha: deals de funil sem dono cujo lead só ganha vendedor no próprio F6
-  (seriam +354) ficam NULL. Isso mantém a 2ª execução com alvo=0.
+- Funil **Blacklist** (decisão de 22/10, caminho conservador): o F6 não preenche nenhum deal dele, nem pelo dono
+  do funil nem pelo vendedor do lead. Hoje são 177 deals sem vendedor lá, 67 deles com lead do João (seriam o
+  fallback pelo lead); todos vão para a seção `blacklist` de `relatorios/vendedores_ambiguos.sql`.
+- Diferença da spec (3.278 + 48): os funis do João têm hoje 3.271 deals; o fallback pelo lead, fora da Blacklist,
+  dá 1. O fallback usa só o `assigned_to` que o lead já tinha: deals de funil sem dono cujo lead só ganha vendedor
+  no próprio F6 (seriam +354) ficam NULL. Isso mantém a 2ª execução com alvo=0.
 - Leads: a spec citava 508 + 20; hoje são 524 + 20 (repasses novos desde 20/10).
 - Backups: `public.backup_b67f_f1` (id text `<tabela>:<chave>`; valor_anterior com `existia`, o valor anterior e
   `novo`) e `public.backup_b67f_f6` (id do lead ou do deal; valor_anterior com `tabela`, `assigned_to`, `handoff`
@@ -132,4 +134,4 @@ Notas:
 Teste: `backend/tests/test_backfill_f1f6_b67f_pg.py` (com `B67F_PSQL`; usa o banco próprio `b67f1c6b_f16` no
 container scratch, clonado do schema do `postgres` com `pg_dump -s`, porque os scripts fazem COMMIT): roda,
 2ª execução com alvo=0 e sem mudança, rollback devolve o estado (2×), teto pequeno estoura sem gravar, dono de
-funil já preenchido não é tocado, sem o vendedor Bling do Arthur não insere o mapa, relatório lista os ambíguos.
+funil já preenchido não é tocado, deal da Blacklist não é tocado (nem com dono no funil), sem o vendedor Bling do Arthur não insere o mapa, relatório lista os ambíguos.

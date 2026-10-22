@@ -1,7 +1,7 @@
 -- scripts/leads_vendedor/f6_contagem_producao.sql — contagem prévia do F6 (cartão b67f1c6b), SÓ SELECT.
 -- Roda em produção ANTES das migrations (sem public.vendedores nem fn_vendedor_id): simula os 4
 -- vendedores do F1 (uuids + nome/apelidos normalizados) e o dono do funil do Arthur que o F1 grava.
--- Mesma regra de f6_vendedor.sql (deal sem dono de funil usa o assigned_to que o lead JÁ tinha
+-- Deals do funil Blacklist ficam fora. Mesma regra de f6_vendedor.sql (deal sem dono de funil usa o assigned_to que o lead JÁ tinha
 -- antes do F6, não o que o F6 grava). Uso: psql -X -tA -f f6_contagem_producao.sql
 begin read only;
 
@@ -50,6 +50,9 @@ with vend(id, segmentos, chaves) as (values
     left join owner_sim o on o.id = d.pipeline_id
     left join public.leads l on l.id = d.lead_id
    where d.assigned_to is null
+     and (d.pipeline_id is null
+          or not exists (select 1 from public.pipelines p
+                          where p.id = d.pipeline_id and lower(btrim(p.name)) = 'blacklist'))
 )
 select 'leads', classe, coalesce(vendedor_id::text, '-'), count(*) from cls group by 2, 3
 union all

@@ -10,7 +10,7 @@
 -- Mesma regra de f6_vendedor.sql. Precisa da migration 20261022a e do F1 (vendedores).
 -- Saída: lead_id | nome | phone | stage | segmento | handoff.segmento | handoff.vendedor |
 --        vendedor resolvido | motivo | handoff.at | handoff.motivo
--- No fim, um resumo por motivo e nome. Uso: psql -X -A -F '|' -f vendedores_ambiguos.sql
+-- Depois, um resumo por motivo e nome, e a seção dos deals do funil Blacklist. Uso: psql -X -A -F '|' -f vendedores_ambiguos.sql
 
 begin read only;
 
@@ -72,5 +72,26 @@ select 'resumo' as tipo,
   from base b
  group by 2, 3
  order by 2, 3;
+
+rollback;
+
+-- Seção à parte: deals do funil Blacklist sem assigned_to. O F6 NÃO os preenche (decisão de 22/10),
+-- nem pelo dono do funil nem pelo vendedor do lead. Mostra o vendedor que o F6 usaria.
+-- Saída: 'blacklist' | deal_id | título | lead_id | nome do lead | phone | vendedor sugerido | via | criado em
+begin read only;
+
+select 'blacklist' as secao, d.id as deal_id, d.title, d.lead_id, l.name, l.phone,
+       coalesce(vp.nome, vl.nome) as vendedor_sugerido,
+       case when vp.id is not null then 'dono do funil'
+            when vl.id is not null then 'assigned_to do lead' end as via,
+       d.created_at
+  from public.deals d
+  join public.pipelines p on p.id = d.pipeline_id
+  left join public.vendedores vp on vp.id = p.owner_user_id
+  left join public.leads l on l.id = d.lead_id
+  left join public.vendedores vl on vl.id = l.assigned_to
+ where lower(btrim(p.name)) = 'blacklist'
+   and d.assigned_to is null
+ order by vendedor_sugerido nulls last, d.created_at;
 
 rollback;

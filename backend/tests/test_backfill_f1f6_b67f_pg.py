@@ -34,6 +34,7 @@ KELWIN = "af949c1b-18d2-421d-bcb7-224d1efe3c22"
 PIPE_ARTHUR = "4a0c9f7f-47ac-45b1-a760-e2ffc976ccf9"
 PIPE_JOAO = "9706a14a-3d9a-413b-bceb-26838fc2cc45"
 PIPE_VALERIA = "bda5a3c1-d12b-4df8-bf94-f0e1b9bb0bdb"
+PIPE_BLACK = "8988e852-2836-4add-b023-4db4d6cd0e6e"
 
 
 def L(n: int) -> str:
@@ -93,7 +94,8 @@ insert into public.bling_seller_map (user_email, bling_seller_id, account) value
 insert into public.pipelines (id, name, owner_user_id) values
   ('{PIPE_ARTHUR}', 'Arthur - Exportação', null),
   ('{PIPE_JOAO}', 'João - Atacado', '{JOAO}'),
-  ('{PIPE_VALERIA}', 'Valeria - Atacado', null);
+  ('{PIPE_VALERIA}', 'Valeria - Atacado', null),
+  ('{PIPE_BLACK}', 'Blacklist', '{JOAO}');
 insert into public.leads (id, phone, stage, assigned_to, metadata) values
   ('{L(1)}', '5599700000001', 'pending', null,
      '{{"handoff": {{"vendedor": "Joao Bras", "motivo": "x", "at": "2026-10-01"}}}}'),
@@ -121,7 +123,9 @@ insert into public.deals (id, lead_id, title, pipeline_id, assigned_to) values
   ('{D(3)}', '{L(5)}', 'd3', '{PIPE_VALERIA}', null),
   ('{D(4)}', '{L(1)}', 'd4', '{PIPE_VALERIA}', null),
   ('{D(5)}', '{L(3)}', 'd5', '{PIPE_VALERIA}', null),
-  ('{D(6)}', '{L(8)}', 'd6', '{PIPE_JOAO}', '{ARTHUR}');
+  ('{D(6)}', '{L(8)}', 'd6', '{PIPE_JOAO}', '{ARTHUR}'),
+  ('{D(7)}', '{L(5)}', 'd7', '{PIPE_BLACK}', null),
+  ('{D(8)}', '{L(8)}', 'd8', '{PIPE_BLACK}', null);
 """
 
 FOTO_F1 = """
@@ -239,6 +243,8 @@ def test_f6_preenche_deals_e_leads_so_onde_inequivoco():
     assert deals[D(4)] == ""        # funil sem dono, lead só ganhou vendedor no F6 -> fica
     assert deals[D(5)] == ""        # lead sem vendedor
     assert deals[D(6)] == ARTHUR    # já preenchido: não mexe
+    assert deals[D(7)] == ""        # Blacklist: nem pelo lead
+    assert deals[D(8)] == ""        # Blacklist: nem pelo dono do funil
 
     leads = {l.split("|")[0]: l.split("|")[1:] for l in q(
         "select id, coalesce(assigned_to::text, ''), coalesce(metadata->'handoff'->>'vendedor_id', ''), "
@@ -297,3 +303,5 @@ def test_relatorio_vendedores_ambiguos():
     assert "nome nao resolve" in por_lead[L(3)]
     assert "vendedor nao atende o segmento" in por_lead[L(4)]
     assert "vendedor nao atende o segmento" in por_lead[L(7)]
+    blacklist = [l for l in r.stdout.splitlines() if l.startswith("blacklist|")]
+    assert sorted(l.split("|")[1] for l in blacklist) == [D(7), D(8)]
