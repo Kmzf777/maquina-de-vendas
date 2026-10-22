@@ -102,7 +102,9 @@ def turno(monkeypatch):
                 "historico": [], "score": [], "classificacoes": [], "kw_efeitos": []}
     conversa = {"id": "C1", "stage": "atacado", "flow_state": None}
     lead = {"id": "L1", "phone": "5534988861441", "wa_id": "5534988861441",
-            "name": "Roner", "human_control": False, "metadata": {}}
+            "name": "Roner", "human_control": False, "metadata": {},
+            # b67f1c6b: o score só é gravado para lead B2B (segmento atacado/private_label).
+            "segmento": "atacado", "stage": "qualificando"}
     estado_catalogo = {"linhas": catalogo_producao()}
 
     def _gravar_estado(_cid, **kw):

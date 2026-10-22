@@ -701,7 +701,8 @@ async def _executar_turno(
     saida = _Saida(provider=provider, lead=lead, conversation=conversation,
                    channel=channel, conteudo=conteudo, catalogo=catalogo)
     efetiva = await _enviar(decisao, saida, estado=estado, no=no)
-    await v1.aplicar_criterios(lead_id, decisao.criterios, rotulo=_rotulo_do_turno(evento_motor))
+    await v1.aplicar_criterios(lead_id, decisao.criterios, rotulo=_rotulo_do_turno(evento_motor),
+                               lead=lead)
 
     campos = proximo_estado_v2(estado, efetiva, viu=saida.viu)
     if deal and deal.get("stage_id"):
