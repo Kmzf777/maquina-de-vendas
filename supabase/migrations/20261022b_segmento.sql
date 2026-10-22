@@ -73,6 +73,13 @@ COMMENT ON FUNCTION public.fn_lead_b2b(uuid) IS
   'D9 (b67f1c6b): segmento atacado/private_label OU deal em funil Atacado/Private Label OU contato Bling com CNPJ.';
 
 REVOKE ALL ON FUNCTION public.fn_lead_b2b(uuid) FROM PUBLIC;
-GRANT EXECUTE ON FUNCTION public.fn_lead_b2b(uuid) TO authenticated, service_role, consulta_ro;
+GRANT EXECUTE ON FUNCTION public.fn_lead_b2b(uuid) TO authenticated, service_role;
+-- consulta_ro só existe em produção: grant guardado, como nas c/d.
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'consulta_ro') THEN
+    GRANT EXECUTE ON FUNCTION public.fn_lead_b2b(uuid) TO consulta_ro;
+  END IF;
+END $$;
 
 COMMIT;

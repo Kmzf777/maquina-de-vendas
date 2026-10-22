@@ -47,8 +47,15 @@ end $$;
 
 revoke all on public.vendedores from anon;
 revoke insert, update, delete, truncate on public.vendedores from authenticated;
-grant select on public.vendedores to authenticated, consulta_ro;
+grant select on public.vendedores to authenticated;
 grant all on public.vendedores to service_role;
+-- consulta_ro (agente de consulta) só existe em produção: grant guardado, como nas c/d.
+do $$
+begin
+  if exists (select 1 from pg_roles where rolname = 'consulta_ro') then
+    grant select on public.vendedores to consulta_ro;
+  end if;
+end $$;
 
 -- Resolvedor. Ordem: uuid existente, e-mail (minúsculo), nome/apelido sem acento
 -- (comparado com o nome inteiro, com cada apelido e com o 1º token do nome).
@@ -89,7 +96,13 @@ end;
 $$;
 
 revoke all on function public.fn_vendedor_id(text) from public, anon;
-grant execute on function public.fn_vendedor_id(text) to authenticated, service_role, consulta_ro;
+grant execute on function public.fn_vendedor_id(text) to authenticated, service_role;
+do $$
+begin
+  if exists (select 1 from pg_roles where rolname = 'consulta_ro') then
+    grant execute on function public.fn_vendedor_id(text) to consulta_ro;
+  end if;
+end $$;
 
 -- Vendedor Bling -> vendedor do CRM (preenchido no F1).
 alter table public.bling_seller_map
