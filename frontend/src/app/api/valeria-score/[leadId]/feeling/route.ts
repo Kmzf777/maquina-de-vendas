@@ -22,9 +22,10 @@ export async function PUT(request: NextRequest, context: { params: Promise<{ lea
   const { leadId } = await context.params;
   const { feeling, justification } = body as { feeling: "baixo" | "medio" | "alto"; justification: string };
   const supabase = await getServiceSupabase();
-  const { data: lead, error: leadError } = await supabase.from("leads").select("id").eq("id", leadId).eq("stage", "atacado").maybeSingle();
+  // b67f1c6b: vale para todo lead com score (o mesmo conjunto de valeria_score_directory), não só stage='atacado'.
+  const { data: lead, error: leadError } = await supabase.from("lead_qualification_scores").select("lead_id").eq("lead_id", leadId).maybeSingle();
   if (leadError) return NextResponse.json({ error: leadError.message }, { status: 500 });
-  if (!lead) return NextResponse.json({ error: "Lead de atacado não encontrado." }, { status: 404 });
+  if (!lead) return NextResponse.json({ error: "Lead com score não encontrado." }, { status: 404 });
   const { data, error } = await supabase
     .from("lead_seller_feelings")
     .upsert({ lead_id: leadId, user_id: user.userId, seller_email: user.email ?? null, feeling, justification: justification.trim(), updated_at: new Date().toISOString() }, { onConflict: "lead_id,user_id" })
