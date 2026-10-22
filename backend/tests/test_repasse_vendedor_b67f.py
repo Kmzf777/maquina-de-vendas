@@ -597,3 +597,25 @@ async def test_atacado_com_llm_dizendo_arthur_segue_o_joao(monkeypatch, tabela):
     await _encaminhar({"vendedor": "Arthur", "motivo": "q"})
     assert reg["provider"].send_contact.call_args.kwargs["contact_name"] == SUPERVISOR_NAME
     assert len(reg["rescue"]) == 1
+
+
+# ─────────────────────────────────────────────── deals.assigned_to pelo vendedor do repasse
+
+@pytest.mark.asyncio
+async def test_repasse_atribui_o_vendedor_resolvido_ao_card(monkeypatch, tabela):
+    reg = _mocks_handoff(monkeypatch, LEAD_SEM_SEG)
+    atrib = []
+    monkeypatch.setattr(tools, "atribuir_vendedor_ao_deal",
+                        lambda deal, vid, *a: atrib.append((deal.get("id"), vid)) or True)
+    await _encaminhar({"vendedor": "Rafael", "motivo": "q"})
+    assert atrib == [("d", "u-rafael")]
+
+
+@pytest.mark.asyncio
+async def test_consumo_nao_atribui_vendedor_ao_card(monkeypatch, tabela):
+    reg = _mocks_handoff(monkeypatch, dict(LEAD_ATACADO, segmento="consumo"))
+    atrib = []
+    monkeypatch.setattr(tools, "atribuir_vendedor_ao_deal",
+                        lambda deal, vid, *a: atrib.append((deal.get("id"), vid)) or True)
+    await _encaminhar()
+    assert atrib == []

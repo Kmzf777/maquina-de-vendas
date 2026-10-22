@@ -11,7 +11,7 @@ from app.leads.service import (
     update_lead, save_message, create_deal, get_lead, get_history,
     apply_optout_side_effects, append_lead_observation, move_lead_deals_to_perdido,
     move_open_deal_for_handoff, resolve_send_target, lead_has_active_relationship,
-    add_tags_to_lead, move_deal_to_vendor_pipeline, vendor_user_id_for_segment,
+    add_tags_to_lead, atribuir_vendedor_ao_deal, move_deal_to_vendor_pipeline, vendor_user_id_for_segment,
     SEGMENT_HANDOFF_PIPELINE,
     ensure_segment_deal, mark_deal_qualificado,
     get_relationship_summary, sanitize_display_name, segmento_do_lead,
@@ -957,11 +957,16 @@ async def _t_encaminhar_humano(ctx: ToolContext) -> str:
         # b67f1c6b: consumo e lead sem segmento NÃO mudam de funil — o card fica onde está
         # (create_deal com dedupe reaproveita o aberto; sem card, cria um).
         if _seg in SEGMENT_HANDOFF_PIPELINE:
-            if not move_deal_to_vendor_pipeline(lead_id, _seg, title=deal_title):
-                if not move_open_deal_for_handoff(lead_id, title=deal_title):
-                    create_deal(lead_id, title=deal_title, category=_seg, dedupe_open=True)
+            _deal = (
+                move_deal_to_vendor_pipeline(lead_id, _seg, title=deal_title)
+                or move_open_deal_for_handoff(lead_id, title=deal_title)
+                or create_deal(lead_id, title=deal_title, category=_seg, dedupe_open=True)
+            )
         else:
-            create_deal(lead_id, title=deal_title, category=_seg, dedupe_open=True)
+            _deal = create_deal(lead_id, title=deal_title, category=_seg, dedupe_open=True)
+        # O card do repasse fica com o vendedor resolvido (só se vazio; fail-soft).
+        if _assigned_to and isinstance(_deal, dict):
+            atribuir_vendedor_ao_deal(_deal, _assigned_to)
     except Exception as exc:
         logger.error(
             "encaminhar_humano failed to create deal for lead %s: %s",

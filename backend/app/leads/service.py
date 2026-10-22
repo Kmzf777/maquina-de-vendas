@@ -961,6 +961,41 @@ SEGMENT_HANDOFF_PIPELINE: dict[str, str] = {
 }
 
 
+def _dono_do_pipeline(sb, pipeline_id: str | None) -> str | None:
+    """`pipelines.owner_user_id` do funil (None = funil administrativo). Erro -> None."""
+    if not pipeline_id:
+        return None
+    try:
+        r = sb.table("pipelines").select("owner_user_id").eq("id", pipeline_id).limit(1).execute()
+        return (r.data or [{}])[0].get("owner_user_id")
+    except Exception as exc:
+        logger.warning("_dono_do_pipeline: falha ao ler dono do funil %s: %s", pipeline_id, exc)
+        return None
+
+
+def atribuir_vendedor_ao_deal(deal: dict[str, Any] | None, vendedor_id: str | None, sb=None) -> bool:
+    """Grava `deals.assigned_to = vendedor_id` só se o card estiver sem vendedor (`is null`
+    no próprio UPDATE) e o id existir no cadastro `vendedores` (FK `deals_assigned_to_fkey`).
+    Fail-soft (b67f1c6b): erro (inclusive de FK) só loga e devolve False — o card fica."""
+    if not deal or not deal.get("id") or deal.get("assigned_to"):
+        return False
+    if not isinstance(vendedor_id, str) or not vendedor_id:
+        return False
+    try:
+        from app.vendedores.service import por_id
+        if not por_id(vendedor_id):
+            return False
+        sb = sb or get_supabase()
+        (sb.table("deals").update({"assigned_to": vendedor_id})
+         .eq("id", deal["id"]).is_("assigned_to", "null").execute())
+        deal["assigned_to"] = vendedor_id
+        return True
+    except Exception as exc:
+        logger.warning("atribuir_vendedor_ao_deal: deal %s sem vendedor %s: %s",
+                       deal.get("id"), vendedor_id, exc)
+        return False
+
+
 def move_deal_to_vendor_pipeline(
     lead_id: str, segment: str | None, title: str | None = None
 ) -> dict[str, Any] | None:
@@ -1002,7 +1037,10 @@ def move_deal_to_vendor_pipeline(
                 "move_deal_to_vendor_pipeline: card %s movido p/ '%s' por segmento '%s' (lead %s)",
                 deal["id"], dest_name, segment, lead_id,
             )
-            return res.data[0] if res.data else {**deal, **update}
+            moved = res.data[0] if res.data else {**deal, **update}
+            # Card no funil do vendedor ganha o dono do funil como responsável (se vazio).
+            atribuir_vendedor_ao_deal(moved, _dono_do_pipeline(sb, dest_pipeline_id), sb)
+            return moved
         # Sem deal aberto: cria no pipeline do vendedor.
         return create_deal(lead_id, title=title or "Handoff", pipeline_name=dest_name)
     except Exception as exc:
@@ -1300,7 +1338,12 @@ def create_deal(
         "stage_id": stage_id,
     }
     result = sb.table("deals").insert(deal).execute()
-    return result.data[0]
+    row = result.data[0]
+    # Funil com dono (vendedor): o card novo nasce atribuído a ele. Separado do INSERT para
+    # que um id fora de `vendedores` (FK) nunca derrube a criação do card.
+    if resolved_pipeline_id:
+        atribuir_vendedor_ao_deal(row, _dono_do_pipeline(sb, resolved_pipeline_id), sb)
+    return row
 
 
 # ── Resolução de stage por key (autoritativa) com fallback por label ─────────
