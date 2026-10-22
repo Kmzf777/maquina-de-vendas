@@ -524,3 +524,45 @@ async def test_resumo_informa_segmento_ao_modelo():
             [{"role": "user", "content": "oi"}],
             {"name": "Ana", "stage": "qualificando", "segmento": "private_label"}, "m")
     assert "Segmento identificado: private_label" in capt["ctx"]
+
+
+# ─────────────────────────────────────────────── qualificar_lead: score >= 5 vira qualificado
+
+def _score_snapshot(monkeypatch, reg, snapshot):
+    def _save(*a, **k):
+        reg["score"].append(k)
+        return snapshot
+    monkeypatch.setattr(tools, "save_score_evidence", _save)
+    qual = []
+    monkeypatch.setattr(tools, "registrar_qualificado", lambda **kw: qual.append(kw) or True)
+    return qual
+
+
+@pytest.mark.asyncio
+async def test_score_definitivo_5_registra_qualificado(monkeypatch):
+    reg = _qualificar_mocks(monkeypatch, {"id": "L1", "stage": "qualificando",
+                                          "segmento": "atacado", "metadata": {}})
+    qual = _score_snapshot(monkeypatch, reg, {"final_score": 5, "is_provisional": False})
+    await _qualificar(dict(SCORE))
+    assert qual == [{"lead_id": "L1", "criterio": "score", "source": "score",
+                     "b2b": True, "segmento": "atacado"}]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("snapshot", [
+    {"final_score": 4, "is_provisional": False},
+    {"final_score": 7, "is_provisional": True},
+    None,
+])
+async def test_score_baixo_ou_provisorio_nao_registra_qualificado(monkeypatch, snapshot):
+    reg = _qualificar_mocks(monkeypatch, {"id": "L1", "stage": "qualificando",
+                                          "segmento": "atacado", "metadata": {}})
+    qual = _score_snapshot(monkeypatch, reg, snapshot)
+    await _qualificar(dict(SCORE))
+    assert qual == []
+
+
+def test_score_qualifica_e_compartilhado_com_o_fluxo_de_botoes():
+    from app.button_flow import valeria_runner
+    from app.leads.qualificado import score_qualifica
+    assert valeria_runner._score_qualifica is score_qualifica

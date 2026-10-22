@@ -46,6 +46,7 @@ from app.follow_up.service import (
     find_pending_ai_return,
 )
 from app.lead_score.repository import save_score_evidence
+from app.leads.qualificado import registrar_qualificado, score_qualifica
 
 logger = logging.getLogger(__name__)
 
@@ -769,11 +770,10 @@ async def _t_qualificar_lead(ctx: ToolContext) -> str:
         "segment", "monthly_volume_kg", "supplier_reason", "purchase_timing", "purchase_intent",
     )
     _score_updates = {key: args[key] for key in _score_fields if key in args}
-    if _score_updates and (
-        segmento_do_lead(_cur) in SEGMENTOS_B2B or lead_e_b2b(lead_id)
-    ):
+    _seg_score = segmento_do_lead(_cur)
+    if _score_updates and (_seg_score in SEGMENTOS_B2B or lead_e_b2b(lead_id)):
         try:
-            save_score_evidence(
+            _snapshot = save_score_evidence(
                 lead_id,
                 updates=_score_updates,
                 evidence=_validated_score_evidence(_score_updates, args.get("evidence"), conversation_id),
@@ -781,6 +781,15 @@ async def _t_qualificar_lead(ctx: ToolContext) -> str:
             )
         except Exception as _score_exc:
             logger.error("qualificar_lead: falha ao registrar score p/ lead %s: %s", lead_id, _score_exc)
+            _snapshot = None
+        # Score definitivo >= 5 qualifica o lead (mesma regra do fluxo de botões). O
+        # dedupe é 1 por lead: repetir nos turnos seguintes não duplica. Fail-soft.
+        if score_qualifica(_snapshot):
+            try:
+                registrar_qualificado(lead_id=lead_id, criterio="score", source="score",
+                                      b2b=True, segmento=_seg_score)
+            except Exception as _qual_exc:
+                logger.error("qualificar_lead: evento qualificado do lead %s: %s", lead_id, _qual_exc)
     if _novas:
         save_message(
             lead_id, "system",

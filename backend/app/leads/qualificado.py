@@ -22,6 +22,17 @@ def motivo_qualifica(motivo: str | None) -> bool:
     return not any(m in texto for m in MOTIVOS_EXCLUIDOS)
 
 
+def score_qualifica(snapshot) -> bool:
+    """Score qualifica (D2): `final_score >= 5` e não provisório. Snapshot ausente ou
+    estranho -> False. Regra única do fluxo de botões e da tool `qualificar_lead`."""
+    if not isinstance(snapshot, dict) or snapshot.get("is_provisional") is not False:
+        return False
+    try:
+        return int(snapshot.get("final_score")) >= 5
+    except (TypeError, ValueError):
+        return False
+
+
 def _duplicado(exc: Exception) -> bool:
     s = str(exc).lower()
     return "23505" in s or "duplicate" in s

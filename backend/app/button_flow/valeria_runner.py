@@ -99,7 +99,7 @@ from app.button_flow.runner import (
 from app.conversations.service import save_message, update_conversation
 from app.db.supabase import get_supabase
 from app.lead_score.repository import save_score_evidence
-from app.leads.qualificado import registrar_qualificado
+from app.leads.qualificado import registrar_qualificado, score_qualifica
 from app.leads.segmento import SEGMENTOS_B2B, lead_e_b2b
 from app.leads.service import get_open_deal, resolve_send_target, segmento_do_lead
 from app.whatsapp.meta import extract_wamid
@@ -562,14 +562,7 @@ async def aplicar_criterios(lead_id: str, criterios: dict,
                            _LOG, lead_id, exc)
 
 
-def _score_qualifica(snapshot) -> bool:
-    """`final_score >= 5` e não provisório (D2). Snapshot ausente ou estranho -> False."""
-    if not isinstance(snapshot, dict) or snapshot.get("is_provisional") is not False:
-        return False
-    try:
-        return int(snapshot.get("final_score")) >= 5
-    except (TypeError, ValueError):
-        return False
+_score_qualifica = score_qualifica  # regra única em app.leads.qualificado
 
 
 def _ler_lead_para_score(lead_id: str) -> dict | None:
