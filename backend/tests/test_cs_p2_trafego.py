@@ -567,3 +567,23 @@ def test_campaign_leads_marca_atribuicao_manual(monkeypatch):
     assert l["atribuicao_manual"] is True and l["canal"] == "Meta Ads"
     assert (l["campanha_manual_canal"], l["campanha_manual_id"], l["campanha_manual_nome"]) == \
         ("meta", "cm_x", "Campanha X")
+
+
+# ── b67f1c6b: segmento do lead no drill-down do /trafego ─────────────────────
+
+def test_campaign_leads_devolve_segmento(monkeypatch):
+    banco = _Banco(leads=[
+        _g(1, segmento="private_label", stage="qualificando"),
+        _g(2, segmento=None, stage="atacado"),      # lead antigo: segmento ainda em stage
+        _g(3, segmento=None, stage="triagem"),
+    ])
+    monkeypatch.setattr(tr, "get_supabase", lambda: banco)
+    out = {l["lead_id"]: l for l in tr.campaign_leads("Google Ads", "black", period="all")}
+    assert out["l1"]["segmento"] == "private_label"
+    assert out["l2"]["segmento"] == "atacado"
+    assert out["l3"]["segmento"] is None
+
+
+def test_lead_cols_traz_segmento():
+    cols = tr._lead_cols()
+    assert "segmento" in cols and " stage" in cols

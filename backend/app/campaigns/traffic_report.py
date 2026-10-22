@@ -13,6 +13,7 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 from app.db.supabase import get_supabase
+from app.leads.segmento import normalizar_segmento
 
 # Fuso de negócio: o dia do relatório é o dia de Brasília, do começo ao fim. A janela
 # (_resolve_window), o gráfico (_local_day) e o recorte do gasto por data usam ESTE relógio —
@@ -481,7 +482,10 @@ def build_report_summary(report: dict[str, Any], leads: list[dict[str, Any]],
 
 _PERIOD_DAYS = {"7d": 7, "30d": 30, "90d": 90}
 _LEAD_COLS = ("id, name, phone, created_at, gclid, gbraid, wbraid, fbclid, ctwa_clid, "
-              "utm_source, utm_medium, utm_campaign, traffic_type, origem_cadastro")
+              "utm_source, utm_medium, utm_campaign, traffic_type, origem_cadastro, "
+              # b67f1c6b: segmento do lead (leads.segmento; `stage` é a reserva do lead
+              # ainda não migrado) — mesma migration-par de origem_cadastro.
+              "segmento, stage")
 
 
 class _MetaAdCol:
@@ -1023,6 +1027,8 @@ def campaign_leads(channel: str, campaign: str, period: str = "30d", mode: str =
                 "utm_medium": l.get("utm_medium"), "utm_campaign": l.get("utm_campaign"),
                 "traffic_type": l.get("traffic_type"), "conversou": lid in conversed,
                 "stage": furthest_stage.get(lid),
+                # mesma regra de leads.service.segmento_do_lead: segmento, senão o stage antigo
+                "segmento": normalizar_segmento(l.get("segmento")) or normalizar_segmento(l.get("stage")),
                 "comprou": bool(sale), "valor": float(sale["value"]) if sale else 0.0,
                 "sold_at": sale.get("last_sold_at") if sale else None,
                 "canal": lead_channel(l),
