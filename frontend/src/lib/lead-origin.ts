@@ -34,10 +34,12 @@ export interface LeadOriginInput {
   meta_ad_id: string | null;
   channel: string | null;
   metadata: Record<string, unknown> | null;
+  /** b67f1c6b: inbound | manual | bling_import | reativacao_import | csv_import. */
+  origem_cadastro?: string | null;
 }
 
 export const LEAD_ORIGIN_COLUMNS =
-  "traffic_type, utm_source, utm_medium, utm_campaign, gclid, gbraid, wbraid, fbclid, ctwa_clid, meta_ad_id, channel, metadata";
+  "traffic_type, utm_source, utm_medium, utm_campaign, gclid, gbraid, wbraid, fbclid, ctwa_clid, meta_ad_id, channel, metadata, origem_cadastro";
 
 // Mesmas listas do backend (traffic_report.py). 'instagram'/'facebook' crus são orgânico.
 const META_AD_SOURCES = new Set(["metaads", "meta_ads", "meta-ads", "meta", "facebook_ads", "facebookads", "fb_ads"]);
@@ -98,13 +100,22 @@ export function describeLeadOrigin(lead: LeadOriginInput, campaignName: string |
     return { kind: "pago", channel: capitalize(source) || "Anúncio", detail: utmCampaign || UNRESOLVED, funnel };
   }
 
-  if (origem === "reativacao_bling") {
+  // b67f1c6b: leads.origem_cadastro, quando existe, diz como o lead entrou no CRM. Vem depois
+  // do pago, como a regra "Bling" do fn_lead_canal vem depois dos click-ids.
+  const origemCadastro = s(lead.origem_cadastro).toLowerCase();
+  if (origemCadastro === "reativacao_import" || origem === "reativacao_bling") {
     const lote = metadata?.lote;
     const hasLote = lote !== undefined && lote !== null && String(lote).trim() !== "";
     return { kind: "importado", channel: "Reativação Bling", detail: hasLote ? `Lote ${lote}` : null, funnel: null };
   }
-  if (channel === "bling" || origem === "bling_webhook") {
+  if (origemCadastro === "bling_import" || channel === "bling" || origem === "bling_webhook") {
     return { kind: "importado", channel: "Bling", detail: null, funnel: null };
+  }
+  if (origemCadastro === "csv_import") {
+    return { kind: "importado", channel: "Importação CSV", detail: null, funnel: null };
+  }
+  if (origemCadastro === "manual") {
+    return { kind: "importado", channel: "Cadastro manual", detail: null, funnel: null };
   }
 
   if (source === "instagram" || source === "facebook") {

@@ -4,6 +4,7 @@ import { buildLeadSearchOrFilter } from "@/lib/search";
 import { CONTACT_SEARCH_MIN_LEN } from "@/lib/contact-search";
 import { normalizePhoneBR } from "@/lib/phone";
 import { findLeadByPhoneVariants } from "@/lib/lead-phone-lookup";
+import { resolverSegmentoFase } from "@/lib/segmento";
 
 /** Teto da busca `?q=`: o seletor mostra uma lista curta, não a base. */
 const BUSCA_LIMITE_MAX = 30;
@@ -149,6 +150,13 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: phoneError }, { status: 422 });
   }
 
+  // b67f1c6b: `stage` é só fase. O kanban de qualificação manda o segmento em `stage`
+  // (vira segmento + fase qualificando); sem stage, o lead nasce em triagem.
+  const faseSeg = resolverSegmentoFase({ stage: body.stage || "triagem" });
+  if (!faseSeg.ok) {
+    return NextResponse.json({ error: faseSeg.erro }, { status: 422 });
+  }
+
   // Acha o lead mesmo gravado em formato antigo (sem 9 / sem 55).
   let existing;
   try {
@@ -172,10 +180,12 @@ export async function POST(request: NextRequest) {
       instagram: body.instagram || null,
       company: body.company || null,
       cnpj: body.cnpj || null,
-      stage: body.stage || "secretaria",
+      ...faseSeg.campos,
       channel: body.channel || "manual",
       human_control: body.human_control === true,
       status: "active",
+      // cadastrado na tela: não é lead de marketing (D1) nem ganha entrada "Orgânico"
+      origem_cadastro: "manual",
     })
     .select()
     .single();

@@ -144,3 +144,31 @@ describe("resolveGoogleCampaignName", () => {
     expect(resolveGoogleCampaignName("atacado", null, [])).toBeNull();
   });
 });
+
+describe("describeLeadOrigin — origem_cadastro (b67f1c6b)", () => {
+  it("LEAD_ORIGIN_COLUMNS busca origem_cadastro", () => {
+    expect(LEAD_ORIGIN_COLUMNS.split(",").map((c) => c.trim())).toContain("origem_cadastro");
+  });
+  it("bling_import → importado Bling, mesmo sem channel/metadata", () => {
+    expect(describeLeadOrigin(lead({ origem_cadastro: "bling_import" }), null))
+      .toEqual({ kind: "importado", channel: "Bling", detail: null, funnel: null });
+  });
+  it("reativacao_import → Reativação Bling, com o lote quando houver", () => {
+    expect(describeLeadOrigin(lead({ origem_cadastro: "reativacao_import", metadata: { lote: 3 } }), null))
+      .toEqual({ kind: "importado", channel: "Reativação Bling", detail: "Lote 3", funnel: null });
+  });
+  it("manual e csv_import vencem o channel", () => {
+    expect(describeLeadOrigin(lead({ origem_cadastro: "manual", channel: "whatsapp" }), null))
+      .toMatchObject({ kind: "importado", channel: "Cadastro manual" });
+    expect(describeLeadOrigin(lead({ origem_cadastro: "csv_import", channel: "manual" }), null))
+      .toMatchObject({ kind: "importado", channel: "Importação CSV" });
+  });
+  it("importado com click-id continua pago (mesma ordem do fn_lead_canal)", () => {
+    expect(describeLeadOrigin(lead({ origem_cadastro: "bling_import", gclid: "g" }), null))
+      .toMatchObject({ kind: "pago", channel: "Google Ads" });
+  });
+  it("inbound segue as regras de antes", () => {
+    expect(describeLeadOrigin(lead({ origem_cadastro: "inbound", channel: "whatsapp" }), null))
+      .toMatchObject({ kind: "organico", channel: "WhatsApp direto" });
+  });
+});

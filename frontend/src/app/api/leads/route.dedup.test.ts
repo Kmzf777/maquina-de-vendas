@@ -101,7 +101,9 @@ describe("POST /api/leads — dedupe por telefone", () => {
     expect(insert?.args[0]).toMatchObject({
       phone: "5549999170363",
       human_control: true,
-      stage: "secretaria",
+      // b67f1c6b: "secretaria" deixou de ser fase; vira triagem
+      stage: "triagem",
+      origem_cadastro: "manual",
     });
   });
 
@@ -116,6 +118,41 @@ describe("POST /api/leads — dedupe por telefone", () => {
     const chamadas = instalar([new Error("boom")]);
     const res = await postar({ phone: "49999170363" });
     expect(res.status).toBe(500);
+    expect(chamadas.some((c) => c.metodo === "insert")).toBe(false);
+  });
+});
+
+describe("POST /api/leads — origem e fase (b67f1c6b)", () => {
+  it("sem stage: fase triagem e origem_cadastro manual", async () => {
+    const chamadas = instalar([[], { id: "novo" }]);
+    const res = await postar({ phone: "49999170363" });
+    expect(res.status).toBe(201);
+    const insert = chamadas.find((c) => c.metodo === "insert");
+    expect(insert?.args[0]).toMatchObject({ stage: "triagem", origem_cadastro: "manual" });
+    expect(insert?.args[0]).not.toHaveProperty("segmento");
+  });
+
+  it("segmento no stage (kanban de qualificação) vira segmento + fase qualificando", async () => {
+    const chamadas = instalar([[], { id: "novo" }]);
+    await postar({ phone: "49999170363", stage: "private_label" });
+    const insert = chamadas.find((c) => c.metodo === "insert");
+    expect(insert?.args[0]).toMatchObject({
+      stage: "qualificando",
+      segmento: "private_label",
+      origem_cadastro: "manual",
+    });
+  });
+
+  it("fase válida passa como veio", async () => {
+    const chamadas = instalar([[], { id: "novo" }]);
+    await postar({ phone: "49999170363", stage: "novo" });
+    expect(chamadas.find((c) => c.metodo === "insert")?.args[0]).toMatchObject({ stage: "novo" });
+  });
+
+  it("stage fora de fase e de segmento devolve 422 sem insert", async () => {
+    const chamadas = instalar([[]]);
+    const res = await postar({ phone: "49999170363", stage: "xyz" });
+    expect(res.status).toBe(422);
     expect(chamadas.some((c) => c.metodo === "insert")).toBe(false);
   });
 });

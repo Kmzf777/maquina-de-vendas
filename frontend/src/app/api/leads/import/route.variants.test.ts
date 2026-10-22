@@ -121,3 +121,23 @@ describe("POST /api/leads/import — telefone em formato antigo", () => {
     expect(chamadas.some((c) => c.metodo === "insert")).toBe(false);
   });
 });
+
+describe("POST /api/leads/import — origem e fase (b67f1c6b)", () => {
+  it("insere com origem_cadastro csv_import e fase triagem por padrão", async () => {
+    const chamadas = instalar([ok([]), ok()]);
+    await importar({
+      leads: [
+        { phone: "3183016991" },
+        { phone: "3183016992", stage: "secretaria" },
+        { phone: "3183016993", stage: "Atacado" },
+        { phone: "3183016994", stage: "qualquer coisa" },
+      ],
+      skipDuplicates: false,
+    });
+    const rows = chamadas.find((c) => c.metodo === "insert")?.args[0] as Record<string, unknown>[];
+    expect(rows.map((r) => r.origem_cadastro)).toEqual(["csv_import", "csv_import", "csv_import", "csv_import"]);
+    expect(rows.map((r) => r.stage)).toEqual(["triagem", "triagem", "qualificando", "triagem"]);
+    expect(rows[2].segmento).toBe("atacado");
+    expect(rows[0].segmento ?? null).toBeNull();
+  });
+});

@@ -4,6 +4,13 @@ import { buildImportDeals, type ImportDealLead } from "@/lib/import-deals";
 import { dedupeByPhone } from "@/lib/dedupe-leads";
 import { normalizePhoneBR } from "@/lib/phone";
 import { findLeadsByPhoneVariants, type LeadPorTelefone } from "@/lib/lead-phone-lookup";
+import { resolverSegmentoFase } from "@/lib/segmento";
+
+/** b67f1c6b: stage do CSV -> fase (+ segmento). Valor que não é fase nem segmento -> triagem. */
+function faseDoCsv(stage: string | undefined) {
+  const r = resolverSegmentoFase({ stage: stage || "triagem" });
+  return r.ok ? r.campos : { stage: "triagem" as const };
+}
 
 interface ImportLead {
   phone: string;
@@ -84,9 +91,10 @@ export async function POST(request: NextRequest) {
       nome_fantasia: l.nome_fantasia || null,
       endereco: l.endereco || null,
       telefone_comercial: l.telefone_comercial || null,
-      stage: l.stage || "secretaria",
+      ...faseDoCsv(l.stage),
       channel: "manual" as const,
       status: "active" as const,
+      origem_cadastro: "csv_import" as const,
     }));
     const { error } = await supabase.from("leads").insert(rows);
     if (error) {
