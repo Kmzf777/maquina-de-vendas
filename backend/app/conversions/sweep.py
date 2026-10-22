@@ -19,6 +19,7 @@ from app.conversions.eligibility import (
 )
 from app.db.paginacao import paginar
 from app.db.supabase import get_supabase
+from app.leads.service import segmento_do_lead
 
 logger = logging.getLogger(__name__)
 
@@ -137,7 +138,7 @@ def build_candidates(*, lead: dict[str, Any], entradas: list[dict[str, Any]], sa
     clicks += clicks_from_lead_fallback(lead, clicks)
     # Ordem cronológica: o mesmo ID repetido em duas entradas fica com a hora do 1º clique.
     clicks = sorted((_aware(c) for c in clicks), key=lambda c: c.click_at)
-    segment = segment_for(lead.get("stage"))
+    segment = segment_for(segmento_do_lead(lead))
     ja_cliente = lead.get("ja_era_cliente")
 
     # (stage, event_at, value, sale_id)
@@ -220,7 +221,7 @@ def _blocos(sb, now: datetime, backfill: timedelta, stats: dict[str, int] | None
         stats["leads"] = len(lead_ids)
     for bloco in _chunks(lead_ids):
         leads = paginar(lambda: sb.table("leads").select(
-            "id,stage,ja_era_cliente,metadata,created_at,ctwa_clid,gclid,gbraid,wbraid"
+            "id,stage,segmento,ja_era_cliente,metadata,created_at,ctwa_clid,gclid,gbraid,wbraid"
         ).in_("id", bloco).order("id"))
         # Todas as entradas do lead, sem corte de data: o clique atribuído é o mais recente
         # ANTES do evento, e o filtro de janela é do build_candidates.

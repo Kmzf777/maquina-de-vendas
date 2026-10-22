@@ -511,3 +511,30 @@ def test_run_sweep_dry_run_nao_grava(monkeypatch):
     monkeypatch.setattr(sweep_mod, "get_supabase", lambda: _fake_sb_dry(_tables_dry(), upserts, log))
     n = sweep_mod.run_sweep(now=NOW, dry_run=True)
     assert upserts == [] and n == 2
+
+
+# ── segmento do lead (b67f1c6b): leads.segmento, stage antigo como reserva ────
+
+def _handoff_lead(**kw):
+    return _lead(metadata={"handoff": {"at": (CLICK + timedelta(hours=1)).isoformat(), "motivo": "ok"}}, **kw)
+
+
+def test_segmento_vem_de_leads_segmento_e_nao_da_fase():
+    rows = build_candidates(lead=_handoff_lead(stage="qualificando", segmento="atacado"), entradas=ENTRADAS,
+                            sales=[], opportunity_at=None, values=VALUES, now=NOW)
+    assert rows and rows[0]["segment"] == "atacado" and rows[0]["value"] == 80.0
+
+
+def test_lead_antigo_com_segmento_no_stage_continua_valendo():
+    rows = build_candidates(lead=_handoff_lead(stage="atacado", segmento=None), entradas=ENTRADAS,
+                            sales=[], opportunity_at=None, values=VALUES, now=NOW)
+    assert rows and rows[0]["segment"] == "atacado"
+
+
+def test_run_sweep_seleciona_segmento(monkeypatch):
+    tables = {"ad_conversion_values": [], "lead_events": [], "leads": [_lead()], "sales": [], "quotes": []}
+    upserts, log = [], []
+    monkeypatch.setattr(sweep_mod, "get_supabase", lambda: _fake_sb(tables, upserts, log))
+    sweep_mod.run_sweep(now=NOW)
+    sel = [a[0] for (t, attr, a, _k) in log if t == "leads" and attr == "select" and "stage" in a[0]]
+    assert sel and "segmento" in sel[0].split(",")
