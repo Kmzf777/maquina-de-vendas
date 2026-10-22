@@ -312,7 +312,10 @@ def _eval_condition(cfg: dict, lead: dict, enrollment: dict, now: datetime) -> s
         return "yes" if msgs.data else "no"
 
     if cond == "in_stage":
-        return "yes" if lead.get("stage") == cfg.get("stage") else "no"
+        # Mesma regra do motor (`engine.casa_fase_ou_segmento`): fase ou segmento (b67f1c6b).
+        from app.automation.engine import casa_fase_ou_segmento
+        ok = casa_fase_ou_segmento(cfg.get("stage"), stage=lead.get("stage"), segmento=lead.get("segmento"))
+        return "yes" if ok else "no"
 
     if cond == "has_deal":
         rows = sb.table("deals").select("id").eq("lead_id", enrollment["lead_id"]).limit(1).execute()

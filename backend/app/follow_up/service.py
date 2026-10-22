@@ -8,6 +8,7 @@ from zoneinfo import ZoneInfo
 
 from app.config import get_settings
 from app.db.supabase import get_supabase
+from app.leads.segmento import SEGMENTOS_B2B
 from app.events.bus import emit_event
 from app.channels.service import get_channel_by_provider_config
 from app.conversations.service import get_or_create_conversation
@@ -692,7 +693,7 @@ def find_pending_ai_return(conversation_id: str) -> dict[str, Any] | None:
 
 # Rede de segurança (backstop) pós-catálogo: segmentos em que "já viu o catálogo e sumiu"
 # significa lead qualificado o bastante para não ficar preso na cadência genérica.
-_PROACTIVE_HANDOFF_STAGES = {"atacado", "private_label"}
+_PROACTIVE_HANDOFF_STAGES = set(SEGMENTOS_B2B)
 
 
 def should_proactive_handoff(lead: dict[str, Any] | None) -> bool:
@@ -700,7 +701,7 @@ def should_proactive_handoff(lead: dict[str, Any] | None) -> bool:
     em vez de receber o próximo toque genérico da cadência de follow-up.
 
     Elegível quando, simultaneamente:
-    - `lead.stage` está em {atacado, private_label} (segmentos com catálogo/preço reais,
+    - o segmento do lead (`segmento_do_lead`) está em {atacado, private_label} (segmentos com catálogo/preço reais,
       onde "sumir depois do catálogo" é o sinal mais forte de intenção que o funil produz);
     - `lead.metadata.catalog_shown` é verdadeiro (a IA já apresentou o catálogo via a tool
       `enviar_fotos` — carimbo de outro workstream, ver `metadata.catalog_shown_at`);
@@ -714,7 +715,9 @@ def should_proactive_handoff(lead: dict[str, Any] | None) -> bool:
     """
     if not lead:
         return False
-    if lead.get("stage") not in _PROACTIVE_HANDOFF_STAGES:
+    # Segmento em `leads.segmento` (b67f1c6b; `stage` virou FASE), `stage` antigo como reserva.
+    from app.leads.service import segmento_do_lead
+    if segmento_do_lead(lead) not in _PROACTIVE_HANDOFF_STAGES:
         return False
     metadata = lead.get("metadata") or {}
     if not metadata.get("catalog_shown"):

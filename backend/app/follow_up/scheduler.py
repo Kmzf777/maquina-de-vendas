@@ -1133,7 +1133,7 @@ def _fetch_lead_for_backstop(lead_id: str) -> dict | None:
         sb = get_supabase()
         res = (
             sb.table("leads")
-            .select("id, phone, stage, opt_out, ai_enabled, metadata")
+            .select("id, phone, stage, segmento, opt_out, ai_enabled, metadata")
             .eq("id", lead_id)
             .single()
             .execute()

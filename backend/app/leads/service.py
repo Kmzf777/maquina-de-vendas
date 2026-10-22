@@ -1675,7 +1675,8 @@ def move_lead_deals_to_perdido(lead_id: str, reason: str) -> None:
             )
         else:
             lead = get_lead(lead_id) or {}
-            category = lead.get("stage")
+            # `stage` aqui já é a FASE 'perdido' (quem chama grava antes): o funil vem do segmento.
+            category = segmento_do_lead(lead)
             lead_name = lead.get("name") or lead.get("phone") or "Lead"
             pipeline_id, stage_id = _perdido_target_for_category(sb, category)
             sb.table("deals").insert({
