@@ -77,6 +77,7 @@ export interface Deal {
   stage: string;
   category: string | null;
   expected_close_date: string | null;
+  /** uuid de `public.vendedores` (FK desde o cartão b67f1c6b); null = sem vendedor. */
   assigned_to: string | null;
   closed_at: string | null;
   lost_reason: string | null;

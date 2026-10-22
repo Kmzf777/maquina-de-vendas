@@ -16,6 +16,7 @@ import {
 } from "@/lib/quote-modal-state";
 import { LeadOriginBlock } from "@/components/leads/lead-origin-block";
 import { docDigits, formatDocument } from "@/lib/documento";
+import { VendedorSelect } from "@/components/vendedor-select";
 
 const ENDERECO_CAMPOS = [
   { field: "cep", label: "CEP" },
@@ -252,7 +253,15 @@ export function CrmPerfilTab({
           onSave={(v) => onSaveField("instagram", v)}
           placeholder="@usuario"
         />
-        <EditableField label="Atribuido a" value={lead.assigned_to} onSave={(v) => onSaveField("assigned_to", v)} placeholder="Ninguem" />
+        <div>
+          <span className="text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] mb-1 block">Atribuido a</span>
+          <VendedorSelect
+            value={lead.assigned_to}
+            onChange={(id) => void onSaveField("assigned_to", id)}
+            aria-label="Atribuido a"
+            className="w-full text-[14px] text-[#111111] bg-transparent border border-transparent hover:border-[#dedbd6] rounded-[4px] px-2 py-0.5 outline-none cursor-pointer"
+          />
+        </div>
       </div>
 
       <div className="border-t border-[#dedbd6] pt-4 space-y-3">

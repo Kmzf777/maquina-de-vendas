@@ -7,6 +7,7 @@ import { DEAL_CATEGORIES } from "@/lib/constants";
 import { SaleCreateModal } from "@/components/sales/sale-create-modal";
 import { StageTargetPicker } from "@/components/deals/stage-target-picker";
 import { useCurrentUserEmail } from "@/hooks/use-current-user";
+import { VendedorSelect, nomeDoVendedor, useVendedores } from "@/components/vendedor-select";
 
 function formatCurrency(value: number): string {
   if (value === 0) return "R$ 0";
@@ -29,6 +30,7 @@ export function DealDetailSidebar({ deal, stages, pipelines, onClose, onUpdate, 
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const currentUserEmail = useCurrentUserEmail();
+  const vendedores = useVendedores();
   const [form, setForm] = useState({
     title: deal.title,
     value: deal.value,
@@ -206,7 +208,7 @@ export function DealDetailSidebar({ deal, stages, pipelines, onClose, onUpdate, 
             </div>
             <div>
               <label className="text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] block mb-1">Responsavel</label>
-              <input value={form.assigned_to} onChange={(e) => setForm({ ...form, assigned_to: e.target.value })} placeholder="Nome do vendedor" className="bg-white border border-[#dedbd6] rounded-[6px] px-3 py-2 text-[14px] text-[#111111] placeholder:text-[#7b7b78] focus:border-[#111111] focus:outline-none w-full" />
+              <VendedorSelect value={form.assigned_to} onChange={(id) => setForm({ ...form, assigned_to: id ?? "" })} aria-label="Responsavel" />
             </div>
             <div>
               <label className="text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] block mb-1">Previsao de fechamento</label>
@@ -263,7 +265,7 @@ export function DealDetailSidebar({ deal, stages, pipelines, onClose, onUpdate, 
           <span className="text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] block mb-2">Detalhes</span>
           <div className="flex justify-between">
             <span className="text-[12px] text-[#7b7b78]">Responsavel</span>
-            <span className="text-[13px] text-[#111111]">{deal.assigned_to || "—"}</span>
+            <span className="text-[13px] text-[#111111]">{nomeDoVendedor(vendedores, deal.assigned_to) || "—"}</span>
           </div>
           <div className="flex justify-between">
             <span className="text-[12px] text-[#7b7b78]">Previsao</span>

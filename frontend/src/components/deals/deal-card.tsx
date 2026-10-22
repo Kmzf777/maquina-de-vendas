@@ -1,5 +1,6 @@
 import type { Deal } from "@/lib/types";
 import { DEAL_CATEGORIES } from "@/lib/constants";
+import { nomeDoVendedor, useVendedores } from "@/components/vendedor-select";
 
 function formatCurrency(value: number): string {
   if (value === 0) return "";
@@ -24,7 +25,9 @@ export function DealCard({ deal, onClick, selectable = false, selected = false }
   const initial = displayName[0]?.toUpperCase() || "?";
   const categoryInfo = DEAL_CATEGORIES.find((c) => c.key === deal.category);
   const days = daysInStage(deal.updated_at);
-  const assignedInitial = deal.assigned_to?.[0]?.toUpperCase();
+  // assigned_to é o id de `vendedores` (b67f1c6b): a inicial vem do nome cadastrado.
+  const assignedName = nomeDoVendedor(useVendedores(), deal.assigned_to);
+  const assignedInitial = assignedName?.[0]?.toUpperCase();
 
   return (
     <button
@@ -78,7 +81,7 @@ export function DealCard({ deal, onClick, selectable = false, selected = false }
           </span>
         )}
         {assignedInitial && (
-          <span className="ml-auto w-5 h-5 rounded-[4px] bg-[#faf9f6] border border-[#dedbd6] flex items-center justify-center text-[9px] text-[#111111]">
+          <span title={assignedName ?? undefined} className="ml-auto w-5 h-5 rounded-[4px] bg-[#faf9f6] border border-[#dedbd6] flex items-center justify-center text-[9px] text-[#111111]">
             {assignedInitial}
           </span>
         )}

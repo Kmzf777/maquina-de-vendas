@@ -16,6 +16,7 @@ import { AGENT_STAGES, LEAD_CHANNELS } from "@/lib/constants";
 import { LeadOriginBlock } from "@/components/leads/lead-origin-block";
 import { LeadAddressFields } from "@/components/leads/lead-address-fields";
 import { mensagemBlingEndereco, type BlingEnderecoResultado } from "@/lib/lead-address";
+import { VendedorSelect } from "@/components/vendedor-select";
 
 interface LeadDetailModalProps {
   lead: Lead;
@@ -153,7 +154,7 @@ export function LeadDetailModal({
     });
   }, [lead.id]);
 
-  function updateField(field: string, value: string | number) {
+  function updateField(field: string, value: string | number | null) {
     setForm((prev) => ({ ...prev, [field]: value }));
     setDirty(true);
     setStatusBling(null);
@@ -481,11 +482,11 @@ export function LeadDetailModal({
                   </div>
                   <div className="bg-[#faf9f6] border border-[#dedbd6] rounded-[6px] p-3">
                     <label className="block text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] mb-1">Atribuido a</label>
-                    <input
-                      value={(form.assigned_to as string) || ""}
-                      onChange={(e) => updateField("assigned_to", e.target.value)}
-                      placeholder="Ninguem"
-                      className="w-full text-[13px] font-medium text-[#111111] bg-transparent outline-none placeholder:text-[#7b7b78]"
+                    <VendedorSelect
+                      value={form.assigned_to as string | null}
+                      onChange={(id) => updateField("assigned_to", id)}
+                      aria-label="Atribuido a"
+                      className="w-full text-[13px] font-medium text-[#111111] bg-transparent outline-none cursor-pointer"
                     />
                   </div>
                 </div>
