@@ -6,6 +6,7 @@ from typing import Any
 
 from app.conversations.service import render_history_content
 from app.db.supabase import get_supabase, run_with_retry
+from app.leads.segmento import normalizar_segmento
 
 logger = logging.getLogger(__name__)
 
@@ -828,11 +829,16 @@ def record_dispatch_note(
 
 
 def reset_lead(lead_id: str) -> None:
-    """Reset lead: delete message history and reset stage to secretaria on both lead and conversations."""
+    """Reset lead: apaga o histórico e volta ao começo.
+
+    `leads.stage` é FASE (b67f1c6b): volta para 'triagem' e o segmento é esquecido.
+    `conversations.stage` continua no vocabulário do agente ('secretaria').
+    """
     sb = get_supabase()
     sb.table("messages").delete().eq("lead_id", lead_id).execute()
     sb.table("leads").update({
-        "stage": "secretaria",
+        "stage": "triagem",
+        "segmento": None,
         "status": "active",
     }).eq("id", lead_id).execute()
     sb.table("conversations").update({
@@ -900,7 +906,18 @@ def save_message(lead_id: str, role: str, content: str, stage: str | None = None
     return result.data[0]
 
 
-# Categoria (stage do lead) → NOME REAL do pipeline (verificado em prod, `pipelines`).
+def segmento_do_lead(lead: dict[str, Any] | None) -> str | None:
+    """Segmento canônico do lead: `leads.segmento`; se vazio, o `stage` antigo.
+
+    A reserva no `stage` é de transição (b67f1c6b): lead que ainda não passou pelo backfill
+    F2 guarda o segmento em `stage`. Fase ('triagem', 'pending', ...) ou 'secretaria' -> None.
+    """
+    if not lead:
+        return None
+    return normalizar_segmento(lead.get("segmento")) or normalizar_segmento(lead.get("stage"))
+
+
+# Segmento do lead (`leads.segmento`, normalizado) → NOME REAL do pipeline (verificado em prod, `pipelines`).
 # Antes apontava para nomes curtos ('Atacado', 'Private Label', ...) que NÃO existem —
 # create_deal caía sempre no fallback (1º pipeline por order_index). Corrigido para os
 # nomes reais dos funis de produto da Valéria/Arthur.
@@ -938,13 +955,14 @@ def move_deal_to_vendor_pipeline(
 ) -> dict[str, Any] | None:
     """Move o deal ABERTO do lead (qualquer origem) para o pipeline do vendedor do segmento.
 
-    Resolve o destino por SEGMENTO (lead.stage) via SEGMENT_HANDOFF_PIPELINE, move o card
+    Resolve o destino por SEGMENTO (normalizado; quem chama passa `lead.segmento`) via SEGMENT_HANDOFF_PIPELINE, move o card
     aberto para a 1ª coluna não-protegida do destino (e atualiza o título), ou cria um card
     lá se o lead ainda não tiver deal aberto. Retorna None quando o segmento não tem pipeline
     de vendedor mapeado (ex.: consumo/secretaria) — o chamador então usa o fallback.
     Fail-soft: erro é logado e retorna None (nunca derruba o handoff).
     """
-    dest_name = SEGMENT_HANDOFF_PIPELINE.get((segment or "").strip())
+    segment = normalizar_segmento(segment)
+    dest_name = SEGMENT_HANDOFF_PIPELINE.get(segment or "")
     if not dest_name:
         return None
     try:
@@ -1223,7 +1241,7 @@ def create_deal(
 
     # (3) pipeline derivado da categoria
     if not resolved_pipeline_id:
-        cat_pipeline_name = CATEGORY_PIPELINE_NAMES.get(category or "")
+        cat_pipeline_name = CATEGORY_PIPELINE_NAMES.get(normalizar_segmento(category) or "")
         if cat_pipeline_name:
             p = sb.table("pipelines").select("id").eq("name", cat_pipeline_name).limit(1).execute()
             if p.data:
@@ -1426,6 +1444,7 @@ def ensure_segment_deal(
     levanta. Retorna True só quando cria o card.
     """
     try:
+        segment = normalizar_segmento(segment)
         if not segment or segment not in CATEGORY_PIPELINE_NAMES:
             return False
         if get_open_deal(lead_id):
@@ -1460,7 +1479,7 @@ def mark_deal_qualificado(lead_id: str, segment: str | None = None) -> bool:
     """
     try:
         if not get_open_deal(lead_id):
-            ensure_segment_deal(lead_id, segment)
+            ensure_segment_deal(lead_id, normalizar_segmento(segment))
         return move_deal_to_stage_key(lead_id, COLD_QUALIFICADO_KEY, "Qualificado")
     except Exception as exc:
         logger.error(
@@ -1617,7 +1636,7 @@ def _perdido_stage_id(sb, pipeline_id: str | None) -> str | None:
 def _perdido_target_for_category(sb, category: str | None) -> tuple[str | None, str | None]:
     """(pipeline_id, stage_id) do 'Perdido' para a categoria do lead — mesma resolucao de create_deal."""
     pipeline_id: str | None = None
-    pipeline_name = CATEGORY_PIPELINE_NAMES.get(category or "")
+    pipeline_name = CATEGORY_PIPELINE_NAMES.get(normalizar_segmento(category) or "")
     if pipeline_name:
         p = sb.table("pipelines").select("id").eq("name", pipeline_name).limit(1).execute()
         if p.data:
