@@ -482,6 +482,23 @@ async def _execute_send_text(enrollment: dict, node: dict, lead: dict, now: date
     logger.info("[AUTOMATION] send_text → %s", lead["phone"])
 
 
+def casa_fase_ou_segmento(alvo: str | None, *, stage: str | None, segmento: str | None) -> bool:
+    """`stage_enter` / `in_stage` (cartão b67f1c6b): o valor configurado pode ser FASE ou SEGMENTO.
+
+    Segmento compara com `leads.segmento` (reserva: o `stage` antigo, lead que ainda não passou
+    pelo backfill). Fase — ou valor legado desconhecido — compara literalmente com `stage`; a
+    fase 'triagem' também casa com o 'secretaria' antigo durante a transição.
+    """
+    from app.leads.segmento import normalizar_segmento
+
+    if not alvo:
+        return False
+    seg_alvo = normalizar_segmento(alvo)
+    if seg_alvo:
+        return seg_alvo == (normalizar_segmento(segmento) or normalizar_segmento(stage))
+    return stage == alvo or (alvo == "triagem" and stage == "secretaria")
+
+
 def _execute_condition(enrollment: dict, node: dict, lead: dict, now: datetime) -> None:
     sb = get_supabase()
     cfg = node.get("config") or {}
@@ -494,8 +511,9 @@ def _execute_condition(enrollment: dict, node: dict, lead: dict, now: datetime) 
         result = len(msgs.data) > 0
 
     elif cond == "in_stage":
-        fresh = sb.table("leads").select("stage").eq("id", enrollment["lead_id"]).single().execute().data
-        result = (fresh or {}).get("stage") == cfg.get("stage")
+        fresh = sb.table("leads").select("stage, segmento").eq("id", enrollment["lead_id"]).single().execute().data or {}
+        result = casa_fase_ou_segmento(
+            cfg.get("stage"), stage=fresh.get("stage"), segmento=fresh.get("segmento"))
 
     elif cond == "has_deal":
         result = bool(sb.table("deals").select("id").eq("lead_id", enrollment["lead_id"]).limit(1).execute().data)
@@ -574,9 +592,17 @@ def _execute_action(enrollment: dict, node: dict, lead: dict) -> bool:
     agiu = False
 
     if action_type == "move_stage":
-        # Move the LEAD in the lead-Kanban (leads.stage is a TEXT name, not a UUID).
+        # Move a FASE do lead (leads.stage, texto). Desde o cartão b67f1c6b o segmento mora
+        # em leads.segmento: valor que não é fase (segmento, 'secretaria', rótulo de coluna)
+        # é ignorado — loga e não grava, para não furar o CHECK de fase.
+        from app.leads.segmento import fase_valida
         stage_name = cfg.get("stage") or cfg.get("stage_name")
-        if stage_name:
+        if stage_name and not fase_valida(stage_name):
+            logger.warning(
+                "[AUTOMATION] move_stage: '%s' não é fase do lead — ignorado (lead %s)",
+                stage_name, enrollment["lead_id"],
+            )
+        elif stage_name:
             from app.leads.service import update_lead
             update_lead(enrollment["lead_id"], stage=stage_name)
             agiu = True

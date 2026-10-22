@@ -179,7 +179,14 @@ async def fire_trigger(event_type: str, lead_id: str, data: dict | None = None) 
 
 
 def _passes_filter(event_type: str, cfg: dict, data: dict) -> bool:
-    if event_type in ("stage_enter", "deal_stage_enter"):
+    if event_type == "stage_enter":
+        # Fase ou segmento (b67f1c6b): quem emite manda só o que mudou — `segmento` ou
+        # `stage` — e cada filtro olha o seu campo.
+        stage_filter = cfg.get("stage_filter")
+        return not stage_filter or _engine.casa_fase_ou_segmento(
+            stage_filter, stage=data.get("stage"), segmento=data.get("segmento"))
+
+    if event_type == "deal_stage_enter":
         stage_filter = cfg.get("stage_filter")
         return not stage_filter or data.get("stage") == stage_filter
 

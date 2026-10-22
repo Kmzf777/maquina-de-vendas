@@ -97,7 +97,8 @@ def test_regressao_stage_filter_stage_stagnation_e_segmento_lead_deal_stage_ente
         entrada = next(e for e in body["tipos"] if e["tipo"] == tipo and e["subtipo"] == subtipo)
         return next(c for c in entrada["campos"] if c["chave"] == "stage_filter")
 
-    assert campo_stage_filter("trigger", "stage_stagnation")["vocab"] == "segmento_lead"
+    # b67f1c6b: leads.stage passou a guardar so a FASE do lead.
+    assert campo_stage_filter("trigger", "stage_stagnation")["vocab"] == "fase_lead"
     assert campo_stage_filter("trigger", "deal_stage_enter")["vocab"] == "etapa_key"
 
 

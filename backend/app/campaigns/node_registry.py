@@ -61,8 +61,12 @@ from typing import Any
 # `deal_stage_enter` tem o mesmo NOME e vocabularios incompativeis, e so declarando
 # isso da para a tela oferecer a lista certa em cada um.
 #
-# Os tres que mais importam:
-#   segmento_lead — `leads.stage`. Valores em VALORES_FIXOS["segmento_lead"].
+# Os que mais importam:
+#   fase_lead     — `leads.stage`, que desde o cartao b67f1c6b guarda so a FASE
+#                   (pending/novo/triagem/qualificando/perdido).
+#   segmento_lead — `leads.segmento` (atacado/private_label/consumo/exportacao).
+#   fase_ou_segmento_lead — `stage_enter` e `in_stage` aceitam os dois: valor de
+#                   segmento compara com `leads.segmento`, fase com `leads.stage`.
 #   etapa_key     — `pipeline_stages.key` ('novo', 'respondeu', 'fechado_ganho'...).
 #                   NUNCA o rotulo da coluna; o rotulo e editavel pelo dono do funil.
 #   etapa_id      — `pipeline_stages.id` (uuid). O motor le `stage_id` SEM fallback
@@ -70,7 +74,7 @@ from typing import Any
 #                   id: mandar key ali nao move card nenhum.
 VOCABULARIOS = {
     "texto", "texto_longo", "numero", "booleano",
-    "segmento_lead", "etapa_key", "etapa_id", "funil_id", "canal_id",
+    "fase_lead", "segmento_lead", "fase_ou_segmento_lead", "etapa_key", "etapa_id", "funil_id", "canal_id",
     "template", "tag", "usuario_id", "lista_usuario_id", "lista_texto",
     "operador", "politica_resposta", "severidade",
     # Tres vocabularios ALEM da lista original do plano, todos pela mesma razao: sem
@@ -103,22 +107,35 @@ VOCABULARIOS = {
     "mapa", "falante", "mapa_botoes",
 }
 
+# Dado puro, sem importar `app.leads.segmento` (que importa o cliente do banco): o
+# teste `test_automacao_segmento_b67f` amarra as duas listas ao contrato.
+_FASE_LEAD: tuple[tuple[str, str], ...] = (
+    ("pending", "Pendente (importado, sem triagem)"),
+    ("novo", "Novo"),
+    ("triagem", "Em triagem"),
+    ("qualificando", "Qualificando"),
+    ("perdido", "Perdido"),
+)
+_SEGMENTO_LEAD: tuple[tuple[str, str], ...] = (
+    ("atacado", "Atacado"),
+    ("private_label", "Private Label"),
+    ("consumo", "Consumo"),
+    ("exportacao", "Exportacao"),
+)
+
 # Valores aceitos dos vocabularios FECHADOS — os que nao vem do banco. A tela monta o
 # <select> daqui; a validacao de ativacao recusa valor fora da lista. Formato:
 # (valor_gravado, rotulo_humano).
 VALORES_FIXOS: dict[str, tuple[tuple[str, str], ...]] = {
-    # `leads.stage`. 'pending' e 'secretaria' sao estados de TRIAGEM (o lead ainda nao
-    # foi classificado) e por isso nao costumam ser alvo de acao — mas existem no
-    # banco e um gatilho pode legitimamente filtrar por eles, entao estao aqui.
+    # `leads.stage` = FASE (cartao b67f1c6b; mesma ordem de `app.leads.segmento.FASES`,
+    # amarrada por teste). "secretaria" deixou de existir: virou a fase 'triagem'.
     # 'perdido' e escrito por `registrar_sem_interesse_atual` (agent/tools.py).
-    "segmento_lead": (
-        ("secretaria", "Secretaria (triagem)"),
-        ("atacado", "Atacado"),
-        ("private_label", "Private Label"),
-        ("exportacao", "Exportacao"),
-        ("consumo", "Consumo"),
-        ("pending", "Pendente (importado, sem triagem)"),
-        ("perdido", "Perdido"),
+    "fase_lead": _FASE_LEAD,
+    # `leads.segmento` (mesma ordem de `app.leads.segmento.SEGMENTOS`).
+    "segmento_lead": _SEGMENTO_LEAD,
+    "fase_ou_segmento_lead": (
+        *((v, f"Segmento: {r}") for v, r in _SEGMENTO_LEAD),
+        *((v, f"Fase: {r}") for v, r in _FASE_LEAD),
     ),
     # engine `_compare`. Qualquer outro operador devolve False em TODA comparacao —
     # a condicao vira um "nao" permanente sem erro nenhum.
@@ -223,45 +240,46 @@ _GATILHOS: tuple[TipoDeNo, ...] = (
             # bloco de "Filtro de stage" cobre stage_stagnation/stage_enter/
             # no_sale_in_stage/deal_stage_enter e deixa este de fora. Nao e
             # obrigatorio — aqui `if not stage` NAO pula o gatilho, so nao filtra.
-            Campo("stage_filter", "segmento_lead", "Segmento do lead (opcional)",
-                  ajuda="Vazio = qualquer segmento. Compara com `leads.stage`, NAO "
+            Campo("stage_filter", "fase_lead", "Fase do lead (opcional)",
+                  ajuda="Vazio = qualquer fase. Compara com `leads.stage` (a FASE), NAO "
                         "com a coluna do Kanban."),
         ),
     ),
     TipoDeNo(
-        tipo="trigger", subtipo="stage_stagnation", rotulo="Parado no segmento", icone="🕐",
+        tipo="trigger", subtipo="stage_stagnation", rotulo="Parado na fase", icone="🕐",
         campos=(
             # OBRIGATORIO por causa do `if not stage: continue` em
             # triggers.check_polling_triggers — sem ele o gatilho e pulado inteiro,
             # todo tick, sem uma linha de log.
-            Campo("stage_filter", "segmento_lead", "Segmento do lead", obrigatorio=True,
+            Campo("stage_filter", "fase_lead", "Fase do lead", obrigatorio=True,
                   ajuda="Sem este campo o motor PULA o gatilho inteiro, em silencio. "
-                        "Compara com `leads.stage`."),
-            Campo("days", "numero", "Dias parado no segmento", default=7,
+                        "Compara com `leads.stage` (a FASE)."),
+            Campo("days", "numero", "Dias parado na fase", default=7,
                   ajuda="Compara com `leads.entered_stage_at`. O motor assume 7 na "
                         "ausencia da chave; o inspector cria o no com 30 (o default "
                         "generico de gatilho)."),
         ),
     ),
     TipoDeNo(
-        tipo="trigger", subtipo="no_sale_in_stage", rotulo="Sem venda no segmento", icone="📉",
+        tipo="trigger", subtipo="no_sale_in_stage", rotulo="Sem venda na fase", icone="📉",
         campos=(
             # Mesmo `if not stage: continue` do stage_stagnation.
-            Campo("stage_filter", "segmento_lead", "Segmento do lead", obrigatorio=True,
+            Campo("stage_filter", "fase_lead", "Fase do lead", obrigatorio=True,
                   ajuda="Sem este campo o motor PULA o gatilho inteiro, em silencio. "
-                        "Vai como `p_stage` para a RPC get_leads_no_sale_in_stage."),
-            Campo("days", "numero", "Dias no segmento sem venda", default=7,
+                        "Vai como `p_stage` para a RPC get_leads_no_sale_in_stage "
+                        "(compara com `leads.stage`, a FASE)."),
+            Campo("days", "numero", "Dias na fase sem venda", default=7,
                   ajuda="Mesma divergencia do stage_stagnation: motor assume 7, "
                         "inspector cria o no com 30."),
         ),
     ),
     TipoDeNo(
-        tipo="trigger", subtipo="stage_enter", rotulo="Entrou em segmento", icone="⚡",
+        tipo="trigger", subtipo="stage_enter", rotulo="Entrou em fase ou segmento", icone="⚡",
         campos=(
-            Campo("stage_filter", "segmento_lead", "Segmento do lead (opcional)",
+            Campo("stage_filter", "fase_ou_segmento_lead", "Fase ou segmento do lead (opcional)",
                   ajuda="Disparado por api/leads/[id]/route.ts via POST "
-                        "/api/automation/trigger. Vazio = qualquer segmento; "
-                        "compara com `data['stage']`, que carrega o SEGMENTO do lead."),
+                        "/api/automation/trigger. Vazio = qualquer mudanca. Valor de "
+                        "segmento compara com `data['segmento']`; fase, com `data['stage']`."),
         ),
     ),
     TipoDeNo(
@@ -362,13 +380,14 @@ _GATILHOS: tuple[TipoDeNo, ...] = (
 
 _ACOES: tuple[TipoDeNo, ...] = (
     TipoDeNo(
-        tipo="action", subtipo="move_stage", rotulo="Mover segmento do lead", icone="📋",
+        tipo="action", subtipo="move_stage", rotulo="Mover fase", icone="📋",
         campos=(
             # Sem `stage`, engine `_execute_action` nao faz nada e devolve False (log
-            # "skipped"). Obrigatorio para ativar.
-            Campo("stage", "segmento_lead", "Segmento de destino", obrigatorio=True,
-                  ajuda="Grava em `leads.stage`. O motor tambem aceita a chave legada "
-                        "`stage_name`, que a tela nunca deve escrever."),
+            # "skipped"). Obrigatorio para ativar. Valor que nao e fase tambem e
+            # ignorado pelo motor (b67f1c6b): segmento nao se grava por aqui.
+            Campo("stage", "fase_lead", "Fase de destino", obrigatorio=True,
+                  ajuda="Grava a FASE em `leads.stage`. O motor tambem aceita a chave "
+                        "legada `stage_name`, que a tela nunca deve escrever."),
         ),
     ),
     TipoDeNo(
@@ -506,14 +525,14 @@ _CONDICOES: tuple[TipoDeNo, ...] = (
         ),
     ),
     TipoDeNo(
-        tipo="condition", subtipo="in_stage", rotulo="Esta no segmento", icone="📋",
+        tipo="condition", subtipo="in_stage", rotulo="Esta na fase ou segmento", icone="📋",
         campos=(
             # MESMO bug do `stage_filter`: o inspector oferece as colunas de Kanban e
             # grava o rotulo, enquanto o motor compara com `leads.stage`. Esta e a
             # SEXTA ocorrencia do bug (as outras cinco sao gatilhos).
-            Campo("stage", "segmento_lead", "Segmento",
-                  ajuda="Compara com `leads.stage`. Vazio = a condicao responde NAO "
-                        "sempre."),
+            Campo("stage", "fase_ou_segmento_lead", "Fase ou segmento",
+                  ajuda="Segmento compara com `leads.segmento`; fase, com `leads.stage`. "
+                        "Vazio = a condicao responde NAO sempre."),
         ),
     ),
     TipoDeNo(

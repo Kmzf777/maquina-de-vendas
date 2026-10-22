@@ -26,8 +26,9 @@ def test_toda_chave_lida_pelo_motor_esta_no_registro():
 
 def test_vocabulario_de_stage_filter_por_gatilho():
     esperado = {
-        "no_message": "segmento_lead", "stage_stagnation": "segmento_lead",
-        "no_sale_in_stage": "segmento_lead", "stage_enter": "segmento_lead",
+        # b67f1c6b: leads.stage guarda so a FASE; stage_enter aceita fase ou segmento.
+        "no_message": "fase_lead", "stage_stagnation": "fase_lead",
+        "no_sale_in_stage": "fase_lead", "stage_enter": "fase_ou_segmento_lead",
         "deal_stage_enter": "etapa_key",
     }
     for sub, vocab in esperado.items():
