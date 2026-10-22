@@ -158,6 +158,10 @@ def test_proximo_estado_de_lixo_nao_estoura():
 
 
 # ── O score, que é o objetivo do ramo de atacado ──────────────────────────
+# Desde b67f1c6b o score só é gravado para lead B2B (ver
+# test_valeria_runner_qualificado_b67f.py); aqui o lead já é atacado.
+_LEAD_B2B = {"id": "lead-1", "segmento": "atacado", "stage": "qualificando"}
+
 @pytest.mark.asyncio
 async def test_criterios_do_clique_viram_snapshot_de_score(monkeypatch):
     """Sem isto o ramo de atacado roda inteiro e não qualifica ninguém — que é
@@ -165,7 +169,7 @@ async def test_criterios_do_clique_viram_snapshot_de_score(monkeypatch):
     gravados = []
     monkeypatch.setattr(runner, "save_score_evidence",
                         lambda **kw: gravados.append(kw))
-    await runner.aplicar_criterios("lead-1", {"segment": "cafeteria"})
+    await runner.aplicar_criterios("lead-1", {"segment": "cafeteria"}, lead=_LEAD_B2B)
     assert gravados, "save_score_evidence não foi chamado"
     assert gravados[0]["lead_id"] == "lead-1"
     assert gravados[0]["updates"] == {"segment": "cafeteria"}
@@ -189,7 +193,7 @@ async def test_falha_do_score_nao_derruba_o_turno(monkeypatch):
     def explode(**_kw):
         raise RuntimeError("conflito de CAS")
     monkeypatch.setattr(runner, "save_score_evidence", explode)
-    await runner.aplicar_criterios("lead-1", {"segment": "cafeteria"})
+    await runner.aplicar_criterios("lead-1", {"segment": "cafeteria"}, lead=_LEAD_B2B)
 
 
 @pytest.mark.asyncio
@@ -199,7 +203,7 @@ async def test_rotulo_do_clique_vira_evidencia_do_criterio(monkeypatch):
     monkeypatch.setattr(runner, "save_score_evidence",
                         lambda **kw: gravados.append(kw))
     await runner.aplicar_criterios("lead-1", {"segment": "cafeteria"},
-                                   rotulo="Cafeteria")
+                                   rotulo="Cafeteria", lead=_LEAD_B2B)
     assert gravados[0]["evidence"] == {"segment": {"text": "Cafeteria"}}
 
 
@@ -210,7 +214,7 @@ async def test_sem_rotulo_grava_o_criterio_sem_evidencia(monkeypatch):
     gravados = []
     monkeypatch.setattr(runner, "save_score_evidence",
                         lambda **kw: gravados.append(kw))
-    await runner.aplicar_criterios("lead-1", {"segment": "cafeteria"}, rotulo="")
+    await runner.aplicar_criterios("lead-1", {"segment": "cafeteria"}, rotulo="", lead=_LEAD_B2B)
     assert gravados[0]["evidence"] is None
     assert gravados[0]["updates"] == {"segment": "cafeteria"}
 
@@ -228,7 +232,8 @@ def turno(monkeypatch):
     registro = {"efeitos": [], "score": [], "mensagens": [], "notas": []}
     conversa = {"id": "C1", "stage": "atacado", "flow_state": None}
     lead = {"id": "L1", "phone": "5534988861441", "wa_id": "5534988861441",
-            "name": "Roner", "human_control": False, "metadata": {}}
+            "name": "Roner", "human_control": False, "metadata": {},
+            "segmento": "atacado", "stage": "qualificando"}
 
     def _gravar_estado(_cid, **kw):
         estado["valor"] = kw["flow_state"]

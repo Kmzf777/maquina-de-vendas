@@ -99,7 +99,9 @@ from app.button_flow.runner import (
 from app.conversations.service import save_message, update_conversation
 from app.db.supabase import get_supabase
 from app.lead_score.repository import save_score_evidence
-from app.leads.service import get_open_deal, resolve_send_target
+from app.leads.qualificado import registrar_qualificado
+from app.leads.segmento import SEGMENTOS_B2B, lead_e_b2b
+from app.leads.service import get_open_deal, resolve_send_target, segmento_do_lead
 from app.whatsapp.meta import extract_wamid
 
 logger = logging.getLogger(__name__)
@@ -494,7 +496,7 @@ async def _persistir_estado(conversation: dict, estado, campos: dict) -> None:
 
 # ── O score (o objetivo do ramo de atacado) ─────────────────────────────────
 async def aplicar_criterios(lead_id: str, criterios: dict,
-                            *, rotulo: str = "") -> None:
+                            *, rotulo: str = "", lead: dict | None = None) -> None:
     """Grava o snapshot de score que o clique revelou. Fail-soft.
 
     Sem isto o ramo de atacado roda inteiro e não qualifica ninguém — que é
@@ -513,14 +515,31 @@ async def aplicar_criterios(lead_id: str, criterios: dict,
 
     Fail-soft, inclusive para `ScoreWriteConflictError`: perder um ponto de score
     é menos grave que deixar o lead sem a próxima tela.
+
+    Só lead B2B ganha score (b67f1c6b, D9): segmento atacado/private_label
+    (`segmento_do_lead`, que cai no `stage` antigo antes do backfill) ou
+    `fn_lead_b2b` verdadeiro (deal em funil Atacado/PL, CNPJ no Bling). Ter score
+    não torna ninguém B2B. `lead` é o dict que o turno já tem; sem ele (chamador
+    antigo, como o v2) o runner lê `segmento`/`stage` do banco.
+
+    Quando o snapshot fecha `final_score >= 5` definitivo, grava o evento
+    `qualificado` (criterio='score'). O dedupe_key é 1 por lead, então repetir a
+    chamada nos turnos seguintes não duplica nada.
     """
     if not criterios or not lead_id:
+        return
+    if lead is None:
+        lead = await asyncio.to_thread(_ler_lead_para_score, lead_id)
+    segmento = segmento_do_lead(lead)
+    if segmento not in SEGMENTOS_B2B and not await asyncio.to_thread(lead_e_b2b, lead_id):
+        logger.info("%s score não gravado p/ lead %s: não é B2B (segmento=%s)",
+                    _LOG, lead_id, segmento)
         return
     evidencia = None
     if rotulo and rotulo.strip():
         evidencia = {campo: {"text": rotulo} for campo in criterios}
     try:
-        await asyncio.to_thread(
+        snapshot = await asyncio.to_thread(
             lambda: save_score_evidence(
                 lead_id=lead_id, updates=dict(criterios),
                 evidence=evidencia, source="live",
@@ -529,6 +548,39 @@ async def aplicar_criterios(lead_id: str, criterios: dict,
     except Exception as exc:
         logger.warning("%s score não gravado p/ lead %s (%s): %s",
                        _LOG, lead_id, criterios, exc)
+        return
+    if _score_qualifica(snapshot):
+        try:
+            await asyncio.to_thread(
+                lambda: registrar_qualificado(
+                    lead_id=lead_id, criterio="score", source="score",
+                    b2b=True, segmento=segmento,
+                )
+            )
+        except Exception as exc:
+            logger.warning("%s evento qualificado não gravado p/ lead %s: %s",
+                           _LOG, lead_id, exc)
+
+
+def _score_qualifica(snapshot) -> bool:
+    """`final_score >= 5` e não provisório (D2). Snapshot ausente ou estranho -> False."""
+    if not isinstance(snapshot, dict) or snapshot.get("is_provisional") is not False:
+        return False
+    try:
+        return int(snapshot.get("final_score")) >= 5
+    except (TypeError, ValueError):
+        return False
+
+
+def _ler_lead_para_score(lead_id: str) -> dict | None:
+    """`segmento`/`stage` do lead, para o portão B2B do score. Erro -> None (fail-soft)."""
+    try:
+        res = (get_supabase().table("leads").select("id, segmento, stage")
+               .eq("id", lead_id).limit(1).execute())
+        return (res.data or [None])[0]
+    except Exception as exc:
+        logger.warning("%s lead %s não lido para o score: %s", _LOG, lead_id, exc)
+        return None
 
 
 # ── Ponto de entrada ────────────────────────────────────────────────────────
@@ -1034,7 +1086,7 @@ async def _executar_turno(
                   provider=provider, nos=nos, terminais=terminais,
                   rotulo_lista=rotulo_lista)
     await aplicar_criterios(lead_id, decisao.criterios,
-                            rotulo=_rotulo_clicado(evento))
+                            rotulo=_rotulo_clicado(evento), lead=lead)
 
     campos = proximo_estado(estado, decisao.proximo_no,
                             marcar_nudge=decisao.marcar_nudge)
