@@ -4,6 +4,7 @@ import { useEffect, useRef, useState, useCallback, useMemo } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { onResubscribe } from "@/lib/realtime-resync";
 import type { Lead, Message } from "@/lib/types";
+import { rotuloDoLead } from "@/lib/segmento";
 
 interface ChatPanelProps {
   lead: Lead;
@@ -60,7 +61,7 @@ export function ChatPanel({ lead, onClose }: ChatPanelProps) {
           )}
           <div className="flex items-center gap-2 mt-1 flex-wrap">
             <span className="text-[11px] px-2 py-0.5 rounded-[4px] bg-[#dedbd6]/60 text-[#7b7b78]">
-              {lead.stage}
+              {rotuloDoLead(lead)}
             </span>
             {lead.human_control && (
               <span

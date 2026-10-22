@@ -39,7 +39,7 @@ export function LeadCreateModal({ pipelines, onClose, onCreate }: LeadCreateModa
     instagram: "",
     company: "",
     cnpj: "",
-    stage: "secretaria",
+    stage: "triagem",
     channel: "manual",
   });
   const [pipelineId, setPipelineId] = useState("");

@@ -2,7 +2,7 @@
 
 import type { Lead, Tag } from "@/lib/types";
 import { getTemperature, TEMPERATURE_CONFIG } from "@/lib/temperature";
-import { AGENT_STAGES } from "@/lib/constants";
+import { agentStageKeyDoLead, rotuloDoLead } from "@/lib/segmento";
 
 function timeAgo(dateStr: string | null): string {
   if (!dateStr) return "Nunca";
@@ -25,7 +25,9 @@ interface LeadGridCardProps {
 export function LeadGridCard({ lead, tags, onClick }: LeadGridCardProps) {
   const temp = getTemperature(lead.last_msg_at);
   const tempConfig = TEMPERATURE_CONFIG[temp];
-  const stageInfo = AGENT_STAGES.find((s) => s.key === lead.stage);
+  // Badge: o segmento (mesmo em "qualificando"); "Em triagem" se ainda está em triagem.
+  const temBadge = agentStageKeyDoLead(lead) !== null;
+  const rotulo = rotuloDoLead(lead);
   const initials = (lead.name || lead.phone)
     .split(" ")
     .slice(0, 2)
@@ -65,9 +67,9 @@ export function LeadGridCard({ lead, tags, onClick }: LeadGridCardProps) {
 
       {/* Tags */}
       <div className="flex gap-1.5 flex-wrap mb-2.5">
-        {stageInfo && (
+        {temBadge && (
           <span className="bg-white border border-[#dedbd6] px-2 py-0.5 rounded-[4px] text-[11px] text-[#7b7b78]">
-            {stageInfo.label}
+            {rotulo}
           </span>
         )}
         {lead.channel === "bling" && (
@@ -101,7 +103,7 @@ export function LeadGridCard({ lead, tags, onClick }: LeadGridCardProps) {
       {/* Footer */}
       <div className="flex justify-between text-[11px] text-[#7b7b78] mt-2 pt-2 border-t border-[#dedbd6]">
         <span>
-          {stageInfo?.label || lead.stage}
+          {rotulo}
         </span>
         <span>Ultima msg: {timeAgo(lead.last_msg_at)}</span>
       </div>

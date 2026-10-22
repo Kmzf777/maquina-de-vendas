@@ -89,6 +89,24 @@ export function rotuloDoLead(lead: LeadSegmentoLike | null | undefined): string 
   return FASE_LABELS[stage] ?? stage;
 }
 
+/**
+ * Campos a gravar quando a tela escolhe uma chave de AGENT_STAGES para o lead.
+ * "triagem" -> sem segmento, fase triagem. Segmento -> grava `segmento`; a fase só
+ * avança para `qualificando` se o lead ainda não passou dela (qualificando/perdido
+ * ficam como estão). Chave desconhecida -> {} (nada muda).
+ */
+export function camposAoEscolherAgentStage(
+  chave: string,
+  lead: LeadSegmentoLike,
+): { segmento?: Segmento | null; stage?: Fase } {
+  if (chave === "triagem") return { segmento: null, stage: "triagem" };
+  const seg = normalizarSegmento(chave);
+  if (!seg) return {};
+  const fase = lead.stage;
+  if (fase === "qualificando" || fase === "perdido") return { segmento: seg };
+  return { segmento: seg, stage: "qualificando" };
+}
+
 export type ResultadoSegmentoFase =
   | { ok: true; campos: { stage?: Fase; segmento?: Segmento | null } }
   | { ok: false; erro: string };

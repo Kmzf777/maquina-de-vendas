@@ -1,5 +1,6 @@
 import type { Lead, Tag } from "@/lib/types";
 import { getTemperature } from "@/lib/temperature";
+import { rotuloDoLead } from "@/lib/segmento";
 
 function timeAgo(dateStr: string | null): string {
   if (!dateStr) return "";
@@ -81,7 +82,7 @@ export function LeadCard({
           ))}
           {showAgentStage && (
             <span className="text-[9px] font-medium text-[#7b7b78] bg-[#faf9f6] border border-[#dedbd6] px-2 py-0.5 rounded-[4px]">
-              {lead.stage}
+              {rotuloDoLead(lead)}
             </span>
           )}
           {tags.length > 3 && (
@@ -93,7 +94,7 @@ export function LeadCard({
       {showAgentStage && (!tags || tags.length === 0) && (
         <div className="flex flex-wrap gap-1 mb-1.5">
           <span className="text-[9px] font-medium text-[#7b7b78] bg-[#faf9f6] border border-[#dedbd6] px-2 py-0.5 rounded-[4px]">
-            {lead.stage}
+            {rotuloDoLead(lead)}
           </span>
         </div>
       )}

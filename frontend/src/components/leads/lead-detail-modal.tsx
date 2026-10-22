@@ -17,6 +17,7 @@ import { LeadOriginBlock } from "@/components/leads/lead-origin-block";
 import { LeadAddressFields } from "@/components/leads/lead-address-fields";
 import { mensagemBlingEndereco, type BlingEnderecoResultado } from "@/lib/lead-address";
 import { VendedorSelect } from "@/components/vendedor-select";
+import { FASE_LABELS, agentStageKeyDoLead, camposAoEscolherAgentStage } from "@/lib/segmento";
 
 interface LeadDetailModalProps {
   lead: Lead;
@@ -156,6 +157,15 @@ export function LeadDetailModal({
 
   function updateField(field: string, value: string | number | null) {
     setForm((prev) => ({ ...prev, [field]: value }));
+    setDirty(true);
+    setStatusBling(null);
+  }
+
+  /** Segmento escolhido no select: grava `segmento` (e a fase, quando avança) — nunca o segmento em `stage`. */
+  function escolherAgentStage(chave: string) {
+    const campos = camposAoEscolherAgentStage(chave, form);
+    if (Object.keys(campos).length === 0) return;
+    setForm((prev) => ({ ...prev, ...campos }));
     setDirty(true);
     setStatusBling(null);
   }
@@ -469,12 +479,18 @@ export function LeadDetailModal({
                 <p className="block text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] mb-3">Status no CRM</p>
                 <div className="grid grid-cols-2 gap-3">
                   <div className="bg-[#faf9f6] border border-[#dedbd6] rounded-[6px] p-3">
-                    <label className="block text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] mb-1">Stage (IA)</label>
+                    <label className="block text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] mb-1">Segmento (IA)</label>
                     <select
-                      value={form.stage}
-                      onChange={(e) => updateField("stage", e.target.value)}
+                      value={agentStageKeyDoLead(form) ?? ""}
+                      onChange={(e) => escolherAgentStage(e.target.value)}
+                      aria-label="Segmento"
                       className="w-full text-[13px] font-medium text-[#111111] bg-transparent outline-none cursor-pointer"
                     >
+                      {agentStageKeyDoLead(form) === null && (
+                        <option value="" disabled>
+                          {FASE_LABELS[form.stage] ?? form.stage ?? "Sem segmento"}
+                        </option>
+                      )}
                       {AGENT_STAGES.map((s) => (
                         <option key={s.key} value={s.key}>{s.label}</option>
                       ))}

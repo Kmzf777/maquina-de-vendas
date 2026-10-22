@@ -3,6 +3,7 @@ import {
   FASES,
   SEGMENTOS,
   agentStageKeyDoLead,
+  camposAoEscolherAgentStage,
   faseValida,
   leadCasaAgentStage,
   normalizarSegmento,
@@ -109,5 +110,48 @@ describe("resolverSegmentoFase — PATCH de lead", () => {
   it("recusa stage desconhecido", () => {
     const r = resolverSegmentoFase({ stage: "Em conversa" });
     expect(r.ok).toBe(false);
+  });
+});
+
+describe("camposAoEscolherAgentStage — select de segmento das telas", () => {
+  it("'triagem' limpa o segmento e põe a fase triagem", () => {
+    expect(camposAoEscolherAgentStage("triagem", { stage: "qualificando", segmento: "atacado" })).toEqual({
+      segmento: null,
+      stage: "triagem",
+    });
+  });
+
+  it("segmento a partir de triagem/novo/pending vira qualificando", () => {
+    for (const stage of ["triagem", "secretaria", "novo", "pending"]) {
+      expect(camposAoEscolherAgentStage("atacado", { stage })).toEqual({ segmento: "atacado", stage: "qualificando" });
+    }
+  });
+
+  it("segmento em lead qualificando ou perdido não mexe na fase", () => {
+    expect(camposAoEscolherAgentStage("consumo", { stage: "qualificando", segmento: "atacado" })).toEqual({ segmento: "consumo" });
+    expect(camposAoEscolherAgentStage("consumo", { stage: "perdido" })).toEqual({ segmento: "consumo" });
+  });
+
+  it("lead antigo com o segmento em stage passa a qualificando", () => {
+    expect(camposAoEscolherAgentStage("exportacao", { stage: "atacado" })).toEqual({
+      segmento: "exportacao",
+      stage: "qualificando",
+    });
+  });
+
+  it("chave vazia ou desconhecida não muda nada", () => {
+    expect(camposAoEscolherAgentStage("", { stage: "novo" })).toEqual({});
+    expect(camposAoEscolherAgentStage("xyz", { stage: "novo" })).toEqual({});
+  });
+});
+
+describe("agentStageKeyDoLead/rotuloDoLead — badge das telas", () => {
+  it("qualificando com segmento mostra o segmento", () => {
+    expect(agentStageKeyDoLead({ stage: "qualificando", segmento: "private_label" })).toBe("private_label");
+    expect(rotuloDoLead({ stage: "qualificando", segmento: "private_label" })).toBe("Private Label");
+  });
+  it("triagem e secretaria mostram Em triagem", () => {
+    expect(rotuloDoLead({ stage: "triagem" })).toBe("Em triagem");
+    expect(rotuloDoLead({ stage: "secretaria" })).toBe("Em triagem");
   });
 });

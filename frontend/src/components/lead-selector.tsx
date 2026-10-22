@@ -3,6 +3,7 @@
 import { useState, useEffect, useMemo } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { AGENT_STAGES } from "@/lib/constants";
+import { agentStageKeyDoLead, leadCasaAgentStage } from "@/lib/segmento";
 import type { Lead, Tag } from "@/lib/types";
 
 interface LeadSelectorProps {
@@ -52,7 +53,7 @@ export function LeadSelector({ selectedIds, onSelectionChange }: LeadSelectorPro
 
   const filtered = useMemo(() => {
     return leads.filter((l) => {
-      if (stageFilter.length > 0 && !stageFilter.includes(l.stage)) return false;
+      if (stageFilter.length > 0 && !stageFilter.some((k) => leadCasaAgentStage(l, k))) return false;
       if (tagFilter.length > 0) {
         const lt = leadTagsMap[l.id] || [];
         if (!tagFilter.some((tid) => lt.some((t) => t.id === tid))) return false;
@@ -145,7 +146,7 @@ export function LeadSelector({ selectedIds, onSelectionChange }: LeadSelectorPro
           </thead>
           <tbody>
             {filtered.map((l) => {
-              const stageInfo = AGENT_STAGES.find((s) => s.key === l.stage);
+              const stageInfo = AGENT_STAGES.find((s) => s.key === agentStageKeyDoLead(l));
               const lt = leadTagsMap[l.id] || [];
 
               return (

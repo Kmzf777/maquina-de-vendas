@@ -88,7 +88,7 @@ export function LeadsFilterBar({
           onChange={(e) => update({ stage: e.target.value })}
           className="bg-white border border-[#dedbd6] rounded-[6px] px-3 py-2 text-[14px] text-[#111111] focus:border-[#111111] focus:outline-none cursor-pointer"
         >
-          <option value="">Stage</option>
+          <option value="">Segmento</option>
           {AGENT_STAGES.map((s) => (
             <option key={s.key} value={s.key}>{s.label}</option>
           ))}

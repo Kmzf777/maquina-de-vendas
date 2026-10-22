@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from "react";
 import type { Lead } from "@/lib/types";
+import { rotuloDoLead } from "@/lib/segmento";
 import { createClient } from "@/lib/supabase/client";
 import { LeadBroadcastHistory } from "./leads/lead-broadcast-history";
 
@@ -39,7 +40,7 @@ export function LeadDetailSidebar({ lead, onClose }: LeadDetailSidebarProps) {
     { label: "NOME", value: lead.name || "\u2014" },
     { label: "TELEFONE", value: lead.phone },
     { label: "EMPRESA", value: lead.company || "\u2014" },
-    { label: "STAGE (AGENTE)", value: lead.stage },
+    { label: "SEGMENTO", value: rotuloDoLead(lead) },
     { label: "CANAL", value: lead.channel },
     {
       label: "CRIADO EM",
