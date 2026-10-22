@@ -11,6 +11,13 @@ import pytest
 from app.leads import repasse
 
 
+@pytest.fixture(autouse=True)
+def _qualificado_sem_rede(monkeypatch):
+    """registrar_repasse agora grava também o evento `qualificado` (b67f1c6b), por
+    outro módulo; sem isto os testes do helper bateriam na URL fake do Supabase."""
+    monkeypatch.setattr("app.leads.qualificado.get_supabase", lambda: MagicMock())
+
+
 def _sb_ok():
     sb = MagicMock()
     sb.table.return_value.insert.return_value.execute.return_value = MagicMock(data=[{}])

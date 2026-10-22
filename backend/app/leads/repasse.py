@@ -32,10 +32,17 @@ def registrar_repasse(*, lead_id: str, conversation_id: str | None, message_id: 
         evento["occurred_at"] = occurred_at
     try:
         get_supabase().table("lead_events").insert(evento).execute()
-        return True
     except Exception as exc:  # inclui violação do dedupe_key (repetição) — idempotente
         logger.error("registrar_repasse: evento do lead %s não gravado: %s", lead_id, exc)
         return False
+    # Evento `qualificado` (b67f1c6b): só quando o repasse gravou; o dedupe por lead já
+    # garante um só. Import tardio evita ciclo; registrar_qualificado nunca levanta.
+    from app.leads import qualificado
+    if qualificado.motivo_qualifica(motivo):
+        qualificado.registrar_qualificado(lead_id=lead_id, criterio="repasse", source=source,
+                                          occurred_at=occurred_at, segmento=segmento, motivo=motivo,
+                                          vendedor_id=vendedor_id, b2b=None)
+    return True
 
 
 def marcador_id_e_data(marcador: Any) -> tuple[str | None, str | None]:
