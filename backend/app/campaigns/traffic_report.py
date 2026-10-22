@@ -115,6 +115,9 @@ _PAID_CHANNEL_MEDIUMS: frozenset[str] = frozenset(
     {"cpc", "ppc", "pmax", "performance_max", "paid", "paid_search", "paidsearch",
      "display", "cpm", "paid_social", "paidsocial"}
 )
+# leads.origem_cadastro de quem foi IMPORTADO (b67f1c6b): não é lead de marketing. Canal "Bling"
+# (fn_lead_canal da 20261022c) e fora do "Leads" do relatório (D1).
+_ORIGENS_IMPORTADAS: frozenset[str] = frozenset({"bling_import", "reativacao_import"})
 
 
 def derive_channel(lead: dict[str, Any]) -> str:
@@ -129,13 +132,17 @@ def derive_channel(lead: dict[str, Any]) -> str:
     Meta e Google são detectados TAMBÉM por utm_source (a gestora tagueia 'metaads'/'google'),
     porque nem todo lead pago traz click-id (Meta→WhatsApp sem fbclid, PMAX sem gclid). Google
     exige um meio pago (cpc/pmax/…) para não confundir com SEO orgânico; 'metaads' é inequívoco.
-    Retorna Google Ads/Meta Ads/Orgânico/Sem rastreio.
+    Lead importado (origem_cadastro bling_import/reativacao_import) sem click-id é "Bling"
+    (b67f1c6b): o UTM que ele tenha não diz de onde veio. Espelha fn_lead_canal (20261022c).
+    Retorna Google Ads/Meta Ads/Bling/Orgânico/Sem rastreio.
     """
     # gbraid/wbraid: cliques de iOS do Google (sem gclid); mesma regra do gclid.
     if _s(lead.get("gclid")) or _s(lead.get("gbraid")) or _s(lead.get("wbraid")):
         return "Google Ads"
     if _s(lead.get("fbclid")) or _s(lead.get("ctwa_clid")) or _s(lead.get("meta_ad_id")):
         return "Meta Ads"
+    if _s(lead.get("origem_cadastro")).lower() in _ORIGENS_IMPORTADAS:
+        return "Bling"
     source = _s(lead.get("utm_source")).lower()
     medium = _s(lead.get("utm_medium")).lower()
     if source in _META_AD_SOURCES:
@@ -353,7 +360,7 @@ def build_campaign_report(
 
 # --- Relatório geral (bloco acima da tabela) -------------------------------------------
 _PAID_CHANNELS = ("Google Ads", "Meta Ads")
-_CHANNEL_ORDER = ("Google Ads", "Meta Ads", "Orgânico", "Sem rastreio")
+_CHANNEL_ORDER = ("Google Ads", "Meta Ads", "Orgânico", "Bling", "Sem rastreio")
 _FUNNEL_STAGES = ("conversa", "closer", "cliente")
 _COUNT_KEYS = ("leads", "conversas", "closer", "clientes")
 
@@ -474,7 +481,7 @@ def build_report_summary(report: dict[str, Any], leads: list[dict[str, Any]],
 
 _PERIOD_DAYS = {"7d": 7, "30d": 30, "90d": 90}
 _LEAD_COLS = ("id, name, phone, created_at, gclid, gbraid, wbraid, fbclid, ctwa_clid, "
-              "utm_source, utm_medium, utm_campaign, traffic_type")
+              "utm_source, utm_medium, utm_campaign, traffic_type, origem_cadastro")
 
 
 class _MetaAdCol:
@@ -606,7 +613,12 @@ def _select_leads(fetch) -> list[dict[str, Any]]:
         raise
 
 
-def _fetch_leads(sb, mode: str, lo: str | None, hi: str | None) -> list[dict[str, Any]]:
+def _fetch_leads(sb, mode: str, lo: str | None, hi: str | None, *,
+                 incluir_clientes: bool = False) -> list[dict[str, Any]]:
+    """Leads da janela (modo lead) ou compradores da janela (modo venda).
+
+    Modo lead = D1 (b67f1c6b): sem importados e sem quem já era cliente. `incluir_clientes`
+    mantém quem já era cliente (o drill-down mostra a coluna "já era cliente")."""
     if mode == "sale":
         def _sales_q():
             q = sb.table("sales").select("lead_id, status")
@@ -634,7 +646,15 @@ def _fetch_leads(sb, mode: str, lo: str | None, hi: str | None) -> list[dict[str
                 q = q.lte("created_at", hi)
             return q
         return _fetch_all(_q)
-    return _select_leads(_por_janela)
+    return [l for l in _select_leads(_por_janela) if _lead_de_marketing(l, incluir_clientes)]
+
+
+def _lead_de_marketing(lead: dict[str, Any], incluir_clientes: bool = False) -> bool:
+    """D1 (b67f1c6b): importado e quem já era cliente não são "Leads" do relatório. Só no modo
+    lead — no modo venda a venda deles continua sendo venda."""
+    if _s(lead.get("origem_cadastro")).lower() in _ORIGENS_IMPORTADAS:
+        return False
+    return incluir_clientes or lead.get("ja_era_cliente") is not True
 
 
 def _conversed_ids(sb, lead_ids: list[str]) -> set[str]:
@@ -960,7 +980,7 @@ def campaign_leads(channel: str, campaign: str, period: str = "30d", mode: str =
     try:
         sb = get_supabase()
         lo, hi = _resolve_window(period, date_from, date_to)
-        leads = _fetch_leads(sb, mode, lo, hi)
+        leads = _fetch_leads(sb, mode, lo, hi, incluir_clientes=True)
         campaigns = _index_campaigns(_spend_by_channel(sb, lo, hi).get(channel))
         selected = select_campaign_leads(leads, channel, campaign, campaigns,
                                          _meta_campaign_by_lead(sb, leads))

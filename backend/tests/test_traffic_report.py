@@ -667,3 +667,52 @@ def test_drilldown_non_paid_channel_still_matches_raw_utm():
              _lead("b", utm_source="instagram", utm_campaign="outra")]
     got = tr.select_campaign_leads(leads, "Orgânico", "bio", {})
     assert [l["id"] for l in got] == ["a"]
+
+
+# --- b67f1c6b (B8): origem do cadastro --------------------------------------------------
+def test_derive_channel_bling_para_importado_depois_dos_click_ids():
+    # espelha fn_lead_canal(..., p_origem) da 20261022c_origem_cadastro.sql
+    assert derive_channel({"origem_cadastro": "bling_import"}) == "Bling"
+    assert derive_channel({"origem_cadastro": "reativacao_import"}) == "Bling"
+    assert derive_channel({"origem_cadastro": "bling_import", "utm_source": "metaads"}) == "Bling"
+    assert derive_channel({"origem_cadastro": "bling_import", "gclid": "g"}) == "Google Ads"
+    assert derive_channel({"origem_cadastro": "bling_import", "meta_ad_id": "1"}) == "Meta Ads"
+    assert derive_channel({"origem_cadastro": "inbound"}) == "Sem rastreio"
+    assert derive_channel({"origem_cadastro": "manual", "utm_source": "instagram"}) == "Orgânico"
+
+
+def test_lead_cols_traz_origem_cadastro():
+    assert "origem_cadastro" in tr._lead_cols()
+
+
+def _leads_d1():
+    return [
+        {"id": "inb", "created_at": "2026-08-01T00:00:00Z", "origem_cadastro": "inbound"},
+        {"id": "bling", "created_at": "2026-08-01T00:00:00Z", "origem_cadastro": "bling_import"},
+        {"id": "reat", "created_at": "2026-08-01T00:00:00Z", "origem_cadastro": "reativacao_import"},
+        {"id": "cli", "created_at": "2026-08-01T00:00:00Z", "origem_cadastro": "inbound",
+         "ja_era_cliente": True},
+        {"id": "nao_cli", "created_at": "2026-08-01T00:00:00Z", "origem_cadastro": "manual",
+         "ja_era_cliente": False},
+        {"id": "sem_col", "created_at": "2026-08-01T00:00:00Z"},
+    ]
+
+
+def test_fetch_leads_modo_lead_tira_importados_e_quem_ja_era_cliente():
+    sb = _FakeSupabase({"leads": _leads_d1()})
+    out = tr._fetch_leads(sb, "lead", None, None)
+    assert [l["id"] for l in out] == ["inb", "nao_cli", "sem_col"]
+
+
+def test_fetch_leads_modo_venda_mantem_todos_os_compradores():
+    # Venda do importado/cliente antigo continua sendo venda (receita do relatório).
+    sb = _FakeSupabase({"leads": _leads_d1(),
+                        "sales": [{"lead_id": l["id"], "status": "registrada"} for l in _leads_d1()]})
+    out = tr._fetch_leads(sb, "sale", None, None)
+    assert sorted(l["id"] for l in out) == sorted(l["id"] for l in _leads_d1())
+
+
+def test_fetch_leads_drilldown_mantem_quem_ja_era_cliente_mas_nao_importado():
+    sb = _FakeSupabase({"leads": _leads_d1()})
+    out = tr._fetch_leads(sb, "lead", None, None, incluir_clientes=True)
+    assert [l["id"] for l in out] == ["inb", "cli", "nao_cli", "sem_col"]

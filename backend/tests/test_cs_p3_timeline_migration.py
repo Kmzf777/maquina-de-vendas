@@ -228,3 +228,62 @@ def test_venda_so_reescreve_o_evento_quando_algo_muda():
     trecho = corpo.split("update public.lead_events e")[1].split(";")[0]
     assert "e.metadata is distinct from coalesce(e.metadata, '{}'::jsonb) || v_meta" in trecho
     assert "e.new_value is distinct from new.value::text" in trecho
+
+
+# --- b67f1c6b: 20261022c_origem_cadastro.sql passa a ser a fn_lead_canal vigente ----------
+SQL_ORIGEM = (
+    Path(__file__).resolve().parents[2]
+    / "supabase" / "migrations" / "20261022c_origem_cadastro.sql"
+).read_text(encoding="utf-8")
+
+
+def _corpo_canal_origem() -> str:
+    return SQL_ORIGEM.split("function public.fn_lead_canal(")[1].split("$$;")[0]
+
+
+@pytest.mark.parametrize(
+    "marcador, constante",
+    [
+        ("_META_AD_SOURCES", tr._META_AD_SOURCES),
+        ("_GOOGLE_AD_SOURCES", tr._GOOGLE_AD_SOURCES),
+        ("_PAID_CHANNEL_MEDIUMS", tr._PAID_CHANNEL_MEDIUMS),
+        ("_ORIGENS_IMPORTADAS", tr._ORIGENS_IMPORTADAS),
+    ],
+)
+def test_canal_sql_20261022c_usa_as_mesmas_listas_do_derive_channel(marcador, constante):
+    m = re.search(r"array\[([^\]]*)\]\)\s*--\s*" + marcador + r"\b", _corpo_canal_origem())
+    assert m, marcador
+    assert {s.strip().strip("'") for s in m.group(1).split(",")} == set(constante)
+
+
+def test_canal_sql_20261022c_bling_vem_logo_depois_dos_click_ids():
+    corpo = _corpo_canal_origem()
+    assert "p_origem text default null" in SQL_ORIGEM.split("function public.fn_lead_canal(")[1].split(")\nreturns")[0]
+    i_meta_click = corpo.index("fn_lead_txt(p_meta_ad_id) <> '' then 'Meta Ads'")
+    i_bling = corpo.index("then 'Bling'")
+    i_utm = corpo.index("_META_AD_SOURCES")
+    assert i_meta_click < i_bling < i_utm
+    for rotulo in ("'Google Ads'", "'Meta Ads'", "'Bling'", "'Orgânico'", "'Sem rastreio'"):
+        assert rotulo in corpo
+    # o Python segue a mesma ordem
+    for origem in tr._ORIGENS_IMPORTADAS:
+        assert tr.derive_channel({"origem_cadastro": origem}) == "Bling"
+        assert tr.derive_channel({"origem_cadastro": origem, "ctwa_clid": "c"}) == "Meta Ads"
+        assert tr.derive_channel({"origem_cadastro": origem, "utm_source": "metaads"}) == "Bling"
+
+
+def test_entrada_20261022c_continua_segura_e_numa_transacao():
+    corpo = SQL_ORIGEM.split("function public.fn_lead_events_leads_entrada()")[1].split("end $$;")[0]
+    assert re.search(r"returns trigger language plpgsql security definer set search_path = public, pg_temp as \$\$",
+                     corpo)
+    assert "exception when others then" in corpo
+    assert "raise warning 'fn_lead_events_leads_entrada: %', sqlerrm" in corpo
+    assert "revoke execute on function public.fn_lead_events_leads_entrada() from public, anon, authenticated;" in SQL_ORIGEM
+    # D1b: só inbound sem rastreio ganha "Orgânico", com a dedupe da entrada inicial
+    assert "coalesce(new.origem_cadastro, 'inbound') <> 'inbound'" in corpo
+    assert "'entrada:lead:' || new.id || ':inicial'" in corpo
+    # a fusão de 30 min continua
+    assert "interval '30 minutes'" in corpo
+    codigo = [ln for ln in SQL_ORIGEM.splitlines() if ln.strip() and not ln.lstrip().startswith("--")]
+    assert codigo[0] == "BEGIN;" and codigo[-1] == "COMMIT;"
+    assert "lock_timeout = '5s'" in SQL_ORIGEM
