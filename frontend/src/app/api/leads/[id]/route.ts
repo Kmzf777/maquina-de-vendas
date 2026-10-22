@@ -4,6 +4,7 @@ import { normalizePhoneBR } from "@/lib/phone";
 import { findLeadByPhoneVariants } from "@/lib/lead-phone-lookup";
 import { cepDigits } from "@/lib/bling-contact-form";
 import { resolverSegmentoFase } from "@/lib/segmento";
+import { FK_VIOLATION, validarVendedorId } from "@/lib/vendedor-id";
 import {
   ADDRESS_FIELDS,
   formatAddress,
@@ -59,6 +60,13 @@ export async function PATCH(
   const { id } = await params;
   const supabase = await getServiceSupabase();
   const body = await request.json();
+
+  // `assigned_to` é o uuid de `public.vendedores` (b67f1c6b): nome digitado vira 400.
+  if ("assigned_to" in body) {
+    const vendedor = validarVendedorId(body.assigned_to);
+    if (!vendedor.ok) return NextResponse.json({ error: vendedor.error }, { status: 400 });
+    body.assigned_to = vendedor.value;
+  }
 
   const { data: currentLead } = await supabase
     .from("leads")
@@ -128,6 +136,9 @@ export async function PATCH(
     .select()
     .single();
 
+  if (error?.code === FK_VIOLATION && body.assigned_to) {
+    return NextResponse.json({ error: "Vendedor não cadastrado." }, { status: 400 });
+  }
   if (error) {
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
