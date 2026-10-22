@@ -115,9 +115,23 @@ def test_vendor_user_id_for_segment_le_vendedores(tabela):
     assert vendor_user_id_for_segment(None) is None
 
 
-def test_vendor_user_id_for_segment_tabela_vazia_devolve_none(tabela_vazia):
-    from app.leads.service import vendor_user_id_for_segment
-    assert vendor_user_id_for_segment("atacado") is None
+def test_vendor_user_id_for_segment_tabela_vazia_cai_no_joao(tabela_vazia, caplog):
+    """Cadastro vazio/indisponível: atacado/private_label caem no João (como antes do
+    cadastro), com warning. Exportação e consumo continuam sem reserva."""
+    from app.leads.service import JOAO_USER_ID, vendor_user_id_for_segment
+    with caplog.at_level("WARNING"):
+        assert vendor_user_id_for_segment("atacado") == JOAO_USER_ID
+        assert vendor_user_id_for_segment("private_label") == JOAO_USER_ID
+    assert "JOAO_USER_ID" in caplog.text
+    assert vendor_user_id_for_segment("exportacao") is None
+    assert vendor_user_id_for_segment("consumo") is None
+
+
+def test_vendor_user_id_for_segment_erro_no_cadastro_cai_no_joao(monkeypatch):
+    from app.leads.service import JOAO_USER_ID, vendor_user_id_for_segment
+    monkeypatch.setattr(vendedores, "vendedor_do_segmento",
+                        lambda seg: (_ for _ in ()).throw(RuntimeError("db down")))
+    assert vendor_user_id_for_segment("atacado") == JOAO_USER_ID
 
 
 # ─────────────────────────────────────────────── encaminhar_humano
@@ -246,10 +260,13 @@ async def test_atacado_continua_mandando_o_joao(monkeypatch, tabela):
 
 @pytest.mark.asyncio
 async def test_atacado_tabela_vazia_mantem_rotulo_do_llm(monkeypatch, tabela_vazia):
+    from app.leads.service import JOAO_USER_ID
     reg = _mocks_handoff(monkeypatch, LEAD_ATACADO)
     res = await _encaminhar()
+    # sem cadastro o lead não fica órfão: cai no João (id fixo de antes do cadastro).
+    assert _desligou(reg)["assigned_to"] == JOAO_USER_ID
     carimbo = _carimbo(reg)
-    assert carimbo["vendedor_id"] is None
+    assert carimbo["vendedor_id"] == JOAO_USER_ID
     assert carimbo["vendedor"] == "Joao Bras"
     assert res == "Lead encaminhado para Joao Bras"
 

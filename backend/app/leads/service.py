@@ -6,7 +6,7 @@ from typing import Any
 
 from app.conversations.service import render_history_content
 from app.db.supabase import get_supabase, run_with_retry
-from app.leads.segmento import normalizar_segmento
+from app.leads.segmento import SEGMENTOS_B2B, normalizar_segmento
 
 logger = logging.getLogger(__name__)
 
@@ -1013,6 +1013,11 @@ def move_deal_to_vendor_pipeline(
         return None
 
 
+# Reserva de transição (b67f1c6b): João é o dono de atacado/private_label. Usado só quando o
+# cadastro `vendedores` não devolve ninguém (vazio/indisponível) — o repasse nunca fica órfão.
+JOAO_USER_ID = "1c3c78ed-ef47-4dca-9a63-2052f28e8fd6"
+
+
 def vendor_user_id_for_segment(segment: str | None) -> str | None:
     """id do vendedor responsável por um segmento de handoff (cadastro `vendedores`).
 
@@ -1020,18 +1025,25 @@ def vendor_user_id_for_segment(segment: str | None) -> str | None:
     vendedor ATIVO que atende o segmento. Só os segmentos com funil de vendedor
     (SEGMENT_HANDOFF_PIPELINE: atacado/private_label → João, exportacao → Arthur) resolvem;
     consumo, "secretaria", fase ou None → None (o lead fica sem responsável atribuído).
-    Sem reserva no código: tabela vazia/indisponível também devolve None. Fail-soft.
+    Cadastro vazio/indisponível: atacado/private_label caem em `JOAO_USER_ID` (como antes do
+    cadastro), com warning; exportação fica None (o cartão do Arthur sai pelo fixo). Fail-soft.
     """
     seg = normalizar_segmento(segment)
     if seg not in SEGMENT_HANDOFF_PIPELINE:
         return None
     try:
         from app.vendedores.service import vendedor_do_segmento
-        row = vendedor_do_segmento(seg)
+        vid = (vendedor_do_segmento(seg) or {}).get("id")
     except Exception as exc:
         logger.error("vendor_user_id_for_segment: falha ao resolver vendedor p/ segmento %s: %s", seg, exc)
-        return None
-    return (row or {}).get("id")
+        vid = None
+    if not vid and seg in SEGMENTOS_B2B:
+        logger.warning(
+            "vendor_user_id_for_segment: cadastro de vendedores sem vendedor p/ %s — "
+            "usando JOAO_USER_ID como reserva", seg,
+        )
+        return JOAO_USER_ID
+    return vid
 
 
 # ── Tags (etiquetas de CRM aplicadas pela IA) ───────────────────────────────

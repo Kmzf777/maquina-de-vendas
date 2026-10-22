@@ -144,12 +144,13 @@ def test_vendor_user_id_for_segment_le_o_cadastro_vendedores(monkeypatch):
         vendedores.limpar_cache()
 
 
-def test_vendor_user_id_for_segment_sem_cadastro_nao_inventa(monkeypatch):
-    """Cadastro vazio/indisponível → None (sem a antiga reserva JOAO_USER_ID)."""
+def test_vendor_user_id_for_segment_sem_cadastro_cai_no_joao(monkeypatch):
+    """Cadastro vazio/indisponível → reserva JOAO_USER_ID para atacado/private_label
+    (revisão b67f1c6b: o repasse não pode ficar sem responsável)."""
     from app.leads import service as svc
     from app.vendedores import service as vendedores
 
     vendedores.limpar_cache()
     monkeypatch.setattr(vendedores, "_carregar", lambda: [])
-    assert svc.vendor_user_id_for_segment("private_label") is None
-    assert not hasattr(svc, "JOAO_USER_ID")
+    assert svc.vendor_user_id_for_segment("private_label") == svc.JOAO_USER_ID
+    assert svc.vendor_user_id_for_segment("exportacao") is None
