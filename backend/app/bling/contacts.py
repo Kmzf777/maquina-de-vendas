@@ -384,18 +384,26 @@ async def link(lead_id: str, contact_id: int,
     `resolve` devolveu para ele. Sem isto o clique estourava sempre e o pedido
     montado ficava preso (caso Primordium, 21/10). O lead antigo so perde o
     vinculo NESTA conta; a proxima venda dele volta a resolucao por documento."""
+    await asyncio.to_thread(_link_transferindo, lead_id, contact_id, account)
+    await asyncio.to_thread(_preencher_pelo_espelho, lead_id, contact_id, account)
+
+
+def _link_transferindo(lead_id: str, contact_id: int, account: str) -> None:
+    """`_link` para vinculo decidido pelo vendedor: se o contato ja e de outro
+    lead NESTA conta, o vinculo passa para este. So para os caminhos em que o
+    humano identificou o contato ("E este cliente" ou o CNPJ digitado no
+    cadastro); a resolucao automatica continua devolvendo `ambiguous`."""
     try:
-        await asyncio.to_thread(_link, lead_id, contact_id, account)
+        _link(lead_id, contact_id, account)
     except Exception as exc:
         if not _e_violacao_de_unicidade(exc):
             raise
-        antigos = await asyncio.to_thread(_soltar_contato, contact_id, account)
+        antigos = _soltar_contato(contact_id, account)
         logger.warning(
-            "[BLING] contato %s (conta %s) transferido para o lead %s por confirmacao "
+            "[BLING] contato %s (conta %s) transferido para o lead %s por decisao "
             "do vendedor; era do(s) lead(s) %s", contact_id, account, lead_id, antigos,
         )
-        await asyncio.to_thread(_link, lead_id, contact_id, account)
-    await asyncio.to_thread(_preencher_pelo_espelho, lead_id, contact_id, account)
+        _link(lead_id, contact_id, account)
 
 
 def _soltar_contato(contact_id: int, account: str) -> list[str]:
@@ -776,22 +784,10 @@ async def create_contact(client, lead: dict, dados: dict,
     como sempre rodou.
     """
     async def _vincular(contact_id: int) -> None:
-        try:
-            await asyncio.to_thread(_link, lead["id"], contact_id, account)
-        except Exception as exc:
-            if not _e_violacao_de_unicidade(exc):
-                raise
-            # Sem isto o vendedor entra num laco de falha permanente: o contato ja
-            # existe no Bling, entao cada nova tentativa refaz GET → acha → 500.
-            raise BlingValidationError(
-                "este contato do Bling ja esta vinculado a outro lead",
-                type_="CONFLICT",
-                description=(
-                    f"O contato {contact_id} pertence a outro lead do CRM. "
-                    "Abra o lead existente ou desfaca o vinculo antes de continuar."
-                ),
-                status=409,
-            ) from exc
+        # Contato de outro lead nesta conta: o CNPJ digitado identifica o
+        # cliente, entao o vinculo passa para este lead (caso Jessica/Vinicius,
+        # 22/10). Antes era 409 "abra o lead existente" e o pedido ficava preso.
+        await asyncio.to_thread(_link_transferindo, lead["id"], contact_id, account)
         await asyncio.to_thread(_preencher_lead_com_contato, lead["id"], {
             "doc_digits": doc_digits(dados.get("numeroDocumento")),
             "nome": dados.get("nome"), "email": dados.get("email"),
