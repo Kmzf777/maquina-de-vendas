@@ -2,6 +2,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { getServiceSupabase } from "@/lib/supabase/api";
 import { assertCanWriteDealsInPipeline, getAllowedPipelineIds } from "@/lib/supabase/pipeline-access";
 import { resolveEffectivePipelineId } from "@/lib/deal-patch-guard";
+import { FK_VIOLATION, validarVendedorId } from "@/lib/vendedor-id";
 
 export async function GET(
   _request: NextRequest,
@@ -43,6 +44,11 @@ export async function PATCH(
   const supabase = await getServiceSupabase();
 
   const updates: Record<string, unknown> = { ...body, updated_at: new Date().toISOString() };
+  if ("assigned_to" in body) {
+    const vendedor = validarVendedorId(body.assigned_to);
+    if (!vendedor.ok) return NextResponse.json({ error: vendedor.error }, { status: 400 });
+    updates.assigned_to = vendedor.value;
+  }
 
   // Capture current stage_id before update to detect stage changes
   const { data: currentDeal } = await supabase
@@ -101,6 +107,9 @@ export async function PATCH(
     .select("*, leads(id, name, company, phone, nome_fantasia, notes), pipeline_stages(id, label, key, dot_color, order_index, is_protected)")
     .single();
 
+  if (error?.code === FK_VIOLATION && updates.assigned_to) {
+    return NextResponse.json({ error: "Vendedor não cadastrado." }, { status: 400 });
+  }
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 
   // Fire automation triggers if stage changed (fire-and-forget)

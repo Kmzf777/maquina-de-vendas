@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { getServiceSupabase } from "@/lib/supabase/api";
 import { assertCanWriteDealsInPipeline, getAllowedPipelineIds } from "@/lib/supabase/pipeline-access";
+import { FK_VIOLATION, validarVendedorId } from "@/lib/vendedor-id";
 
 export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url);
@@ -33,6 +34,8 @@ export async function POST(request: NextRequest) {
 
   if (!body.pipeline_id) return NextResponse.json({ error: "pipeline_id é obrigatório" }, { status: 400 });
   if (!body.lead_id || !body.title?.trim()) return NextResponse.json({ error: "lead_id e title são obrigatórios" }, { status: 400 });
+  const vendedor = validarVendedorId(body.assigned_to);
+  if (!vendedor.ok) return NextResponse.json({ error: vendedor.error }, { status: 400 });
 
   const guard = await assertCanWriteDealsInPipeline(supabase, body.pipeline_id);
   if (!guard.ok) return NextResponse.json({ error: guard.error }, { status: guard.status });
@@ -77,11 +80,14 @@ export async function POST(request: NextRequest) {
       stage: "novo",
       category: body.category || null,
       expected_close_date: body.expected_close_date || null,
-      assigned_to: body.assigned_to || null,
+      assigned_to: vendedor.value,
     })
     .select("*, leads(id, name, company, phone, nome_fantasia), pipeline_stages(id, label, key, dot_color, order_index, is_protected)")
     .single();
 
+  if (error?.code === FK_VIOLATION && vendedor.value) {
+    return NextResponse.json({ error: "Vendedor não cadastrado." }, { status: 400 });
+  }
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
   return NextResponse.json(data, { status: 201 });
 }
