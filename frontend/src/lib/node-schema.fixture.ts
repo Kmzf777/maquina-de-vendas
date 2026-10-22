@@ -52,34 +52,34 @@ export const NODE_SCHEMA_FIXTURE: NodeSchema = {
       na_paleta: true, requer_um_de: [],
       campos: [
         campo("days", "numero", "Dias em silencio", { default: 30 }),
-        campo("stage_filter", "segmento_lead", "Segmento do lead (opcional)", {
-          ajuda: "Vazio = qualquer segmento. Compara com `leads.stage`, NAO com a coluna do Kanban.",
+        campo("stage_filter", "fase_lead", "Fase do lead (opcional)", {
+          ajuda: "Vazio = qualquer fase. Compara com `leads.stage` (a FASE), NAO com a coluna do Kanban.",
         }),
       ],
     },
     {
-      tipo: "trigger", subtipo: "stage_stagnation", rotulo: "Parado no segmento", icone: "🕐",
+      tipo: "trigger", subtipo: "stage_stagnation", rotulo: "Parado na fase", icone: "🕐",
       na_paleta: true, requer_um_de: [],
       campos: [
-        campo("stage_filter", "segmento_lead", "Segmento do lead", {
+        campo("stage_filter", "fase_lead", "Fase do lead", {
           obrigatorio: true,
           ajuda: "Sem este campo o motor PULA o gatilho inteiro, em silencio.",
         }),
-        campo("days", "numero", "Dias parado no segmento", { default: 7 }),
+        campo("days", "numero", "Dias parado na fase", { default: 7 }),
       ],
     },
     {
-      tipo: "trigger", subtipo: "no_sale_in_stage", rotulo: "Sem venda no segmento", icone: "📉",
+      tipo: "trigger", subtipo: "no_sale_in_stage", rotulo: "Sem venda na fase", icone: "📉",
       na_paleta: true, requer_um_de: [],
       campos: [
-        campo("stage_filter", "segmento_lead", "Segmento do lead", { obrigatorio: true }),
-        campo("days", "numero", "Dias no segmento sem venda", { default: 7 }),
+        campo("stage_filter", "fase_lead", "Fase do lead", { obrigatorio: true }),
+        campo("days", "numero", "Dias na fase sem venda", { default: 7 }),
       ],
     },
     {
-      tipo: "trigger", subtipo: "stage_enter", rotulo: "Entrou em segmento", icone: "⚡",
+      tipo: "trigger", subtipo: "stage_enter", rotulo: "Entrou em fase ou segmento", icone: "⚡",
       na_paleta: true, requer_um_de: [],
-      campos: [campo("stage_filter", "segmento_lead", "Segmento do lead (opcional)")],
+      campos: [campo("stage_filter", "fase_ou_segmento_lead", "Fase ou segmento do lead (opcional)")],
     },
     {
       tipo: "trigger", subtipo: "deal_stage_enter", rotulo: "Card entrou em etapa", icone: "🤝",
@@ -141,9 +141,9 @@ export const NODE_SCHEMA_FIXTURE: NodeSchema = {
 
     // ─── Ações ─────────────────────────────────────────────────────────────────
     {
-      tipo: "action", subtipo: "move_stage", rotulo: "Mover segmento do lead", icone: "📋",
+      tipo: "action", subtipo: "move_stage", rotulo: "Mover fase", icone: "📋",
       na_paleta: true, requer_um_de: [],
-      campos: [campo("stage", "segmento_lead", "Segmento de destino", { obrigatorio: true })],
+      campos: [campo("stage", "fase_lead", "Fase de destino", { obrigatorio: true })],
     },
     {
       tipo: "action", subtipo: "move_deal_stage", rotulo: "Mover card de etapa", icone: "🔀",
@@ -227,9 +227,11 @@ export const NODE_SCHEMA_FIXTURE: NodeSchema = {
       campos: [campo("days", "numero", "Nos ultimos X dias", { default: 5 })],
     },
     {
-      tipo: "condition", subtipo: "in_stage", rotulo: "Esta no segmento", icone: "📋",
+      tipo: "condition", subtipo: "in_stage", rotulo: "Esta na fase ou segmento", icone: "📋",
       na_paleta: true, requer_um_de: [],
-      campos: [campo("stage", "segmento_lead", "Segmento", { ajuda: "Compara com `leads.stage`." })],
+      campos: [campo("stage", "fase_ou_segmento_lead", "Fase ou segmento", {
+        ajuda: "Segmento compara com `leads.segmento`; fase, com `leads.stage`.",
+      })],
     },
     {
       tipo: "condition", subtipo: "has_deal", rotulo: "Tem card no CRM", icone: "💼",
@@ -332,14 +334,29 @@ export const NODE_SCHEMA_FIXTURE: NodeSchema = {
     },
   ],
   valores_fixos: {
+    fase_lead: [
+      ["pending", "Pendente (importado, sem triagem)"],
+      ["novo", "Novo"],
+      ["triagem", "Em triagem"],
+      ["qualificando", "Qualificando"],
+      ["perdido", "Perdido"],
+    ],
     segmento_lead: [
-      ["secretaria", "Secretaria (triagem)"],
       ["atacado", "Atacado"],
       ["private_label", "Private Label"],
-      ["exportacao", "Exportacao"],
       ["consumo", "Consumo"],
-      ["pending", "Pendente (importado, sem triagem)"],
-      ["perdido", "Perdido"],
+      ["exportacao", "Exportacao"],
+    ],
+    fase_ou_segmento_lead: [
+      ["atacado", "Segmento: Atacado"],
+      ["private_label", "Segmento: Private Label"],
+      ["consumo", "Segmento: Consumo"],
+      ["exportacao", "Segmento: Exportacao"],
+      ["pending", "Fase: Pendente (importado, sem triagem)"],
+      ["novo", "Fase: Novo"],
+      ["triagem", "Fase: Em triagem"],
+      ["qualificando", "Fase: Qualificando"],
+      ["perdido", "Fase: Perdido"],
     ],
     operador: [
       ["gte", ">= (maior ou igual)"],

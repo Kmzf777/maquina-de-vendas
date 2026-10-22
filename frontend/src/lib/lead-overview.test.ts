@@ -92,7 +92,10 @@ describe("stageLabel", () => {
   });
 
   it("traduz etapa do agente (leads.stage)", () => {
-    expect(stageLabel("secretaria")).toBe("Secretaria");
+    // b67f1c6b: "Secretaria" aparece como "Em triagem".
+    expect(stageLabel("secretaria")).toBe("Em triagem");
+    expect(stageLabel("triagem")).toBe("Em triagem");
+    expect(stageLabel("qualificando")).toBe("Qualificando");
     expect(stageLabel("private_label")).toBe("Private Label");
   });
 
@@ -131,7 +134,7 @@ describe("formatEventText", () => {
   it("stage_change mostra os rótulos, não os slugs", () => {
     expect(
       formatEventText({ event_type: "stage_change", old_value: "secretaria", new_value: "atacado" }),
-    ).toBe("Etapa do agente: Secretaria → Atacado");
+    ).toBe("Etapa do agente: Em triagem → Atacado");
   });
 
   it("eventos de funil e de cadência ganham texto em PT", () => {

@@ -9,6 +9,7 @@
 // zero, nunca vira 1970. Um "R$ 0,00" mente; um "—" diz a verdade.
 
 import { AGENT_STAGES, DEAL_STAGES } from "@/lib/constants";
+import { FASE_LABELS } from "@/lib/segmento";
 import type { OverviewRepasse } from "@/lib/repasse-resposta";
 
 const DASH = "—";
@@ -172,7 +173,10 @@ export function humanDuration(ms: number | null): string {
   return `${Math.floor(ms / DAY)} d`;
 }
 
+// Fases do lead (b67f1c6b) entram primeiro: "novo"/"perdido" do funil continuam
+// vencendo. "secretaria" (legado) aparece como "Em triagem".
 const STAGE_LABELS: Record<string, string> = {
+  ...FASE_LABELS,
   ...Object.fromEntries(DEAL_STAGES.map((s) => [s.key, s.label])),
   ...Object.fromEntries(AGENT_STAGES.map((s) => [s.key, s.label])),
 };

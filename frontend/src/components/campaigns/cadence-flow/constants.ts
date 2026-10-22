@@ -48,13 +48,13 @@ export const STATUS_COLORS: Record<string, { bg: string; color: string; border: 
 // COMPORTAMENTO — são texto e emoji do canvas; as listas que viram valor gravado
 // saem todas do schema, no inspector.
 export const TRIGGER_LABELS: Record<string, string> = {
-  no_message: "Sem mensagem", stage_stagnation: "Estagnação", stage_enter: "Entrada em stage", post_broadcast: "Pós-disparo",
-  sale_created: "Venda criada", repurchase_window: "Janela de recompra", no_sale_in_stage: "Sem venda no stage",
+  no_message: "Sem mensagem", stage_stagnation: "Parado na fase", stage_enter: "Entrou em fase ou segmento", post_broadcast: "Pós-disparo",
+  sale_created: "Venda criada", repurchase_window: "Janela de recompra", no_sale_in_stage: "Sem venda na fase",
   tag_added: "Tag adicionada", deal_stage_enter: "Entrou em stage (deal)", deal_closed_lost: "Deal perdido",
   keyword_received: "Palavra-chave recebida", deal_stage_stagnation: "Card parado no funil",
 };
 export const ACTION_LABELS: Record<string, string> = {
-  move_stage: "Mover stage do lead",
+  move_stage: "Mover fase",
   activate_agent: "Ativar agente",
   deactivate_agent: "Desativar agente",
   add_tag: "Adicionar tag",
@@ -73,7 +73,7 @@ export const ACTION_LABELS: Record<string, string> = {
 // <select> escondido no inspector.
 export const CONDITION_LABELS: Record<string, string> = {
   replied_recently: "Respondeu recentemente",
-  in_stage: "Está em stage",
+  in_stage: "Está na fase ou segmento",
   has_deal: "Tem deal ativo",
   has_tag: "Possui tag",
   sale_count: "Número de vendas",
@@ -127,7 +127,7 @@ export const QUICK_ADD_ITEMS: { type: CampaignNodeType; subtype: string; icon: s
   { type: "send_text", subtype: "",                  icon: "💬", label: "Enviar texto" },
   { type: "wait",      subtype: "",                  icon: "⏱",  label: "Aguardar" },
   { type: "condition", subtype: "replied_recently",  icon: "🔀", label: "Condição" },
-  { type: "action",    subtype: "move_stage",        icon: "📋", label: "Mover stage do lead" },
+  { type: "action",    subtype: "move_stage",        icon: "📋", label: "Mover fase" },
   { type: "action",    subtype: "move_deal_stage",   icon: "🔀", label: "Mover deal de estágio" },
   { type: "action",    subtype: "mark_deal_won",     icon: "🏆", label: "Marcar deal ganho" },
   { type: "action",    subtype: "mark_deal_lost",    icon: "💔", label: "Marcar deal perdido" },
@@ -155,13 +155,13 @@ export const QUICK_ADD_ITEMS: { type: CampaignNodeType; subtype: string; icon: s
  *  decide comportamento e o registro não tem campo para ele. Tipo ausente daqui
  *  continua aparecendo na paleta — só ganha uma descrição derivada dos campos. */
 const PALETTE_DESC: Record<string, string> = {
-  "trigger:stage_enter": "Lead entra em segmento",
-  "trigger:stage_stagnation": "Parado X dias no segmento",
+  "trigger:stage_enter": "Lead entra em fase ou segmento",
+  "trigger:stage_stagnation": "Parado X dias na fase",
   "trigger:no_message": "Silêncio X dias",
   "trigger:post_broadcast": "Após broadcast",
   "trigger:sale_created": "Nova venda registrada",
   "trigger:repurchase_window": "X dias desde última compra",
-  "trigger:no_sale_in_stage": "Segmento sem venda",
+  "trigger:no_sale_in_stage": "Fase sem venda",
   "trigger:tag_added": "Lead recebeu uma tag",
   "trigger:deal_stage_enter": "Card mudou de etapa",
   "trigger:deal_closed_lost": "Card marcado como perdido",
@@ -171,7 +171,7 @@ const PALETTE_DESC: Record<string, string> = {
   "send_text:": "Texto livre (24h)",
   "wait:": "Delay em dias/horas",
   "end:": "Fim da campanha",
-  "action:move_stage": "Atualiza leads.stage",
+  "action:move_stage": "Atualiza a fase (leads.stage)",
   "action:move_deal_stage": "Pipeline de deals",
   "action:mark_deal_won": "Etapa de ganho",
   "action:mark_deal_lost": "Etapa de perdido",
@@ -185,7 +185,7 @@ const PALETTE_DESC: Record<string, string> = {
   "action:assign_round_robin": "Rodízio entre vendedores",
   "action:alert_seller": "Alerta + nota no card",
   "condition:replied_recently": "Respondeu nos últimos dias",
-  "condition:in_stage": "Segmento do lead",
+  "condition:in_stage": "Fase ou segmento do lead",
   "condition:has_deal": "Card aberto no CRM",
   "condition:has_tag": "Lead tem a tag",
   "condition:sale_count": "Quantas vendas já fez",
@@ -227,13 +227,13 @@ export function buildPaletteFromSchema(schema: NodeSchema): { triggers: PaletteI
 }
 
 export const PALETTE_TRIGGERS: PaletteItem[] = [
-  { type: "trigger", subtype: "stage_enter",       icon: "⚡", label: "Entrada em stage",       desc: "Lead entra em stage" },
-  { type: "trigger", subtype: "stage_stagnation",  icon: "🕐", label: "Estagnação",              desc: "Parado X dias" },
+  { type: "trigger", subtype: "stage_enter",       icon: "⚡", label: "Entrou em fase ou segmento", desc: "Lead entra em fase ou segmento" },
+  { type: "trigger", subtype: "stage_stagnation",  icon: "🕐", label: "Parado na fase",          desc: "Parado X dias na fase" },
   { type: "trigger", subtype: "no_message",        icon: "💤", label: "Sem mensagem",            desc: "Silêncio X dias" },
   { type: "trigger", subtype: "post_broadcast",    icon: "📡", label: "Pós-disparo",             desc: "Após broadcast" },
   { type: "trigger", subtype: "sale_created",      icon: "💰", label: "Venda criada",            desc: "Nova venda registrada" },
   { type: "trigger", subtype: "repurchase_window", icon: "🔄", label: "Janela de recompra",      desc: "X dias desde última compra" },
-  { type: "trigger", subtype: "no_sale_in_stage",  icon: "📉", label: "Sem venda no stage",      desc: "Stage avançado sem venda" },
+  { type: "trigger", subtype: "no_sale_in_stage",  icon: "📉", label: "Sem venda na fase",       desc: "Fase sem venda" },
   { type: "trigger", subtype: "tag_added",         icon: "🏷️", label: "Tag adicionada",          desc: "Lead recebeu uma tag" },
   { type: "trigger", subtype: "deal_stage_enter",  icon: "🤝", label: "Entrou em stage (deal)",  desc: "Deal mudou de stage" },
   { type: "trigger", subtype: "deal_closed_lost",  icon: "❌", label: "Deal perdido",             desc: "Deal marcado como perdido" },
@@ -245,7 +245,7 @@ export const PALETTE_ACTIONS: PaletteItem[] = [
   { type: "send_text", subtype: "",                  icon: "💬", label: "Enviar texto",          desc: "Texto livre (24h)" },
   { type: "wait",      subtype: "",                  icon: "⏱",  label: "Aguardar",              desc: "Delay em dias" },
   { type: "condition", subtype: "replied_recently",  icon: "🔀", label: "Condição",              desc: "Ramificação lógica" },
-  { type: "action",    subtype: "move_stage",        icon: "📋", label: "Mover stage do lead",   desc: "Atualiza leads.stage" },
+  { type: "action",    subtype: "move_stage",        icon: "📋", label: "Mover fase",            desc: "Atualiza a fase (leads.stage)" },
   { type: "action",    subtype: "move_deal_stage",   icon: "🔀", label: "Mover deal estágio",    desc: "Pipeline de deals" },
   { type: "action",    subtype: "mark_deal_won",     icon: "🏆", label: "Marcar deal ganho",     desc: "Stage de ganho" },
   { type: "action",    subtype: "mark_deal_lost",    icon: "💔", label: "Marcar deal perdido",   desc: "Stage de perdido" },

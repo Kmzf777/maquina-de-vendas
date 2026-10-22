@@ -74,7 +74,7 @@ describe("nodeDetail", () => {
   });
 
   it("action usa o label conhecido do action_type", () => {
-    expect(nodeDetail("action", { action_type: "move_stage" })).toBe("Mover stage do lead");
+    expect(nodeDetail("action", { action_type: "move_stage" })).toBe("Mover fase");
     expect(nodeDetail("action", { action_type: "custom_y" })).toBe("custom_y");
   });
 
@@ -177,7 +177,7 @@ describe("paleta montada do schema", () => {
   it("os 12 gatilhos viram itens de paleta com ícone e rótulo do registro", () => {
     expect(paleta.triggers).toHaveLength(12);
     const stagnation = paleta.triggers.find(i => i.subtype === "stage_stagnation");
-    expect(stagnation).toMatchObject({ type: "trigger", icon: "🕐", label: "Parado no segmento" });
+    expect(stagnation).toMatchObject({ type: "trigger", icon: "🕐", label: "Parado na fase" });
     for (const item of [...paleta.triggers, ...paleta.actions]) {
       expect(item.icon, `ícone de ${item.type}/${item.subtype}`).toBeTruthy();
       expect(item.label, `rótulo de ${item.type}/${item.subtype}`).toBeTruthy();

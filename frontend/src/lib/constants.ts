@@ -1,5 +1,9 @@
+// Colunas/abas/filtros do agente (cartão b67f1c6b): os SEGMENTOS do lead
+// (`leads.segmento`) mais a coluna "Em triagem" (fase `leads.stage='triagem'`, o antigo
+// "secretaria"). Para saber em qual delas o lead está, use `agentStageKeyDoLead` /
+// `leadCasaAgentStage` de `lib/segmento.ts` — nunca `lead.stage === key`.
 export const AGENT_STAGES = [
-  { key: "secretaria", label: "Secretaria", color: "bg-[#f4f4f0]", dotColor: "#c8cc8e", tintColor: "#f2f3eb", avatarColor: "#c8cc8e" },
+  { key: "triagem", label: "Em triagem", color: "bg-[#f4f4f0]", dotColor: "#c8cc8e", tintColor: "#f2f3eb", avatarColor: "#c8cc8e" },
   { key: "atacado", label: "Atacado", color: "bg-[#dce8f0]", dotColor: "#5b8aad", tintColor: "#eef2f6", avatarColor: "#5aad65" },
   { key: "private_label", label: "Private Label", color: "bg-[#e8dff0]", dotColor: "#9b7abf", tintColor: "#f0edf4", avatarColor: "#9b7abf" },
   { key: "exportacao", label: "Exportacao", color: "bg-[#d8f0dc]", dotColor: "#5aad65", tintColor: "#edf4ef", avatarColor: "#e8d44d" },

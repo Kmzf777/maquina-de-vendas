@@ -111,13 +111,26 @@ afterEach(() => {
 });
 
 describe("cada vocabulário recebe a sua lista", () => {
-  it("segmento_lead recebe SEGMENTOS DE LEAD, e grava a key do segmento", async () => {
+  it("fase_lead recebe FASES DO LEAD, e grava a key da fase", async () => {
     const { container } = renderInspector(node({ config: { trigger_type: "stage_stagnation" } }));
     expect(opcoes(container, "stage_filter")).toEqual([
-      "secretaria", "atacado", "private_label", "exportacao", "consumo", "pending", "perdido",
+      "pending", "novo", "triagem", "qualificando", "perdido",
     ]);
     // O rótulo da coluna de Kanban era o que se gravava antes — não pode voltar.
     expect(opcoes(container, "stage_filter")).not.toContain("Em conversa");
+  });
+
+  it("Mover fase oferece só fases (b67f1c6b)", () => {
+    const { container } = renderInspector(node({ type: "action", config: { action_type: "move_stage" } }));
+    expect(opcoes(container, "stage")).toEqual(["pending", "novo", "triagem", "qualificando", "perdido"]);
+  });
+
+  it("stage_enter oferece segmentos e fases", () => {
+    const { container } = renderInspector(node({ config: { trigger_type: "stage_enter" } }));
+    expect(opcoes(container, "stage_filter")).toEqual([
+      "atacado", "private_label", "consumo", "exportacao",
+      "pending", "novo", "triagem", "qualificando", "perdido",
+    ]);
   });
 
   it("etapa_key recebe KEYS de coluna, sem duplicar key repetida entre funis", () => {
@@ -171,24 +184,26 @@ describe("REGRESSÃO: stage_filter é a mesma chave com dois vocabulários", () 
     const deal = renderInspector(node({ config: { trigger_type: "deal_stage_enter" } }));
     const listaDeDeal = opcoes(deal.container, "stage_filter");
 
+    // b67f1c6b: o gatilho por leads.stage passou a oferecer FASES do lead.
     expect(listaDeLead).not.toEqual(listaDeDeal);
-    expect(listaDeLead).toContain("atacado");
-    expect(listaDeLead).not.toContain("novo");
-    expect(listaDeDeal).toContain("novo");
-    expect(listaDeDeal).not.toContain("atacado");
+    expect(listaDeLead).toContain("triagem");
+    expect(listaDeLead).not.toContain("respondeu");
+    expect(listaDeDeal).toContain("respondeu");
+    expect(listaDeDeal).not.toContain("triagem");
   });
 
-  it("in_stage (condição) é a sexta ocorrência do bug e também usa segmento", () => {
+  it("in_stage (condição) é a sexta ocorrência do bug e aceita segmento ou fase", () => {
     const { container } = renderInspector(
       node({ type: "condition", config: { condition_type: "in_stage" } }),
     );
     expect(opcoes(container, "stage")).toContain("private_label");
+    expect(opcoes(container, "stage")).toContain("triagem");
     expect(opcoes(container, "stage")).not.toContain("Em conversa");
   });
 
-  it("no_message ganha o filtro de segmento que o inspector nunca ofereceu", () => {
+  it("no_message ganha o filtro de fase que o inspector nunca ofereceu", () => {
     const { container } = renderInspector(node({ config: { trigger_type: "no_message" } }));
-    expect(opcoes(container, "stage_filter")).toContain("consumo");
+    expect(opcoes(container, "stage_filter")).toContain("qualificando");
   });
 });
 
@@ -425,7 +440,7 @@ describe("o seletor de subtipo também sai do schema", () => {
 
   it("trocar de subtipo troca os campos renderizados", () => {
     const { container } = renderInspector(node({ config: { trigger_type: "stage_stagnation" } }));
-    expect(opcoes(container, "stage_filter")).toContain("atacado");
+    expect(opcoes(container, "stage_filter")).toContain("triagem");
 
     const select = container.querySelector('[data-campo="trigger_type"] select') as HTMLSelectElement;
     fireEvent.change(select, { target: { value: "deal_stage_enter" } });

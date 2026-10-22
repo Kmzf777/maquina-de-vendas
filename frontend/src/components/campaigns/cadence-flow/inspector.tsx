@@ -254,7 +254,9 @@ export function Inspector({ node, saving, data, onSave, onDelete, onClose }: Ins
   // aqui com a mesma chave (`stage_filter`) e saem com listas diferentes.
   const opcoesDoVocab = (vocab: string): { value: string; label: string }[] | null => {
     switch (vocab) {
+      case "fase_lead":
       case "segmento_lead":
+      case "fase_ou_segmento_lead":
       case "operador":
       case "politica_resposta":
       case "severidade":

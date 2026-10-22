@@ -57,7 +57,7 @@ describe("helpers de leitura do schema", () => {
   const schema = NODE_SCHEMA_FIXTURE;
 
   it("acha o tipo por (tipo, subtipo)", () => {
-    expect(findNodeType(schema, "trigger", "stage_stagnation")?.rotulo).toBe("Parado no segmento");
+    expect(findNodeType(schema, "trigger", "stage_stagnation")?.rotulo).toBe("Parado na fase");
     expect(findNodeType(schema, "action", "create_deal")?.rotulo).toBe("Criar card");
   });
 
@@ -77,7 +77,7 @@ describe("helpers de leitura do schema", () => {
   it("mesma CHAVE, vocabulários diferentes — é o bug que o registro existe para matar", () => {
     const leadStage = fieldsOf(schema, "trigger", "stage_stagnation").find(c => c.chave === "stage_filter");
     const dealStage = fieldsOf(schema, "trigger", "deal_stage_enter").find(c => c.chave === "stage_filter");
-    expect(leadStage?.vocab).toBe("segmento_lead");
+    expect(leadStage?.vocab).toBe("fase_lead");
     expect(dealStage?.vocab).toBe("etapa_key");
   });
 
