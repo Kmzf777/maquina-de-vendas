@@ -123,43 +123,33 @@ async def test_qualificar_lead_ancoras_completas_dispara_handoff(monkeypatch):
     assert "encaminhado" in (result or "").lower()
 
 
-def test_vendor_user_id_for_segment_resolve_owner(monkeypatch):
-    """owner_user_id do pipeline é a fonte de verdade."""
+def test_vendor_user_id_for_segment_le_o_cadastro_vendedores(monkeypatch):
+    """b67f1c6b: a fonte de verdade é `vendedores.segmentos` (não mais o owner do pipeline
+    nem o uuid do João escrito no código)."""
     from app.leads import service as svc
+    from app.vendedores import service as vendedores
 
-    class _Resp:
-        data = [{"owner_user_id": "owner-xyz"}]
+    vendedores.limpar_cache()
+    monkeypatch.setattr(vendedores, "_carregar", lambda: [
+        {"id": JOAO, "nome": "João Brás", "segmentos": ["atacado", "private_label"], "ativo": True},
+        {"id": "u-arthur", "nome": "Arthur", "segmentos": ["exportacao"], "ativo": True},
+    ])
+    try:
+        assert svc.vendor_user_id_for_segment("atacado") == JOAO
+        assert svc.vendor_user_id_for_segment("private_label") == JOAO
+        assert svc.vendor_user_id_for_segment("exportacao") == "u-arthur"
+        assert svc.vendor_user_id_for_segment("consumo") is None
+        assert svc.vendor_user_id_for_segment(None) is None
+    finally:
+        vendedores.limpar_cache()
 
-    class _Q:
-        def select(self, *a, **k): return self
-        def eq(self, *a, **k): return self
-        def limit(self, *a, **k): return self
-        def execute(self): return _Resp()
 
-    class _SB:
-        def table(self, *a, **k): return _Q()
-
-    monkeypatch.setattr(svc, "get_supabase", lambda: _SB())
-    assert svc.vendor_user_id_for_segment("atacado") == "owner-xyz"
-
-
-def test_vendor_user_id_for_segment_fallback_e_none(monkeypatch):
-    """owner nulo → fallback João em atacado; segmento sem vendedor → None."""
+def test_vendor_user_id_for_segment_sem_cadastro_nao_inventa(monkeypatch):
+    """Cadastro vazio/indisponível → None (sem a antiga reserva JOAO_USER_ID)."""
     from app.leads import service as svc
+    from app.vendedores import service as vendedores
 
-    class _Resp:
-        data = [{"owner_user_id": None}]
-
-    class _Q:
-        def select(self, *a, **k): return self
-        def eq(self, *a, **k): return self
-        def limit(self, *a, **k): return self
-        def execute(self): return _Resp()
-
-    class _SB:
-        def table(self, *a, **k): return _Q()
-
-    monkeypatch.setattr(svc, "get_supabase", lambda: _SB())
-    assert svc.vendor_user_id_for_segment("private_label") == svc.JOAO_USER_ID
-    assert svc.vendor_user_id_for_segment("consumo") is None
-    assert svc.vendor_user_id_for_segment(None) is None
+    vendedores.limpar_cache()
+    monkeypatch.setattr(vendedores, "_carregar", lambda: [])
+    assert svc.vendor_user_id_for_segment("private_label") is None
+    assert not hasattr(svc, "JOAO_USER_ID")

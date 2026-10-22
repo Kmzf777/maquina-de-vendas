@@ -63,6 +63,13 @@ _FALLBACK_MAX_MSGS = 6
 _FALLBACK_MAX_CHARS = 280
 
 
+def _segmento(lead: dict[str, Any]) -> str | None:
+    """Segmento do lead para o dossiê (b67f1c6b): `leads.segmento`, com o `stage` antigo
+    como reserva. A fase ('qualificando', 'triagem'...) não é interesse do lead."""
+    from app.leads.service import segmento_do_lead
+    return segmento_do_lead(lead)
+
+
 def _fallback_briefing(
     history: list[dict[str, Any]],
     lead: dict[str, Any],
@@ -85,7 +92,7 @@ def _fallback_briefing(
     """
     nome = lead.get("name") or "Não informado"
     empresa = lead.get("company") or "Não informado"
-    segmento = lead.get("stage") or "Não informado"
+    segmento = _segmento(lead) or "Não informado"
 
     inbounds = [
         (m.get("content") or "").strip()
@@ -149,7 +156,7 @@ async def generate_qualification_summary(
         return "## NOVO LEAD QUALIFICADO PELA VALÉRIA\n\n*Histórico sem mensagens relevantes.*"
 
     lead_name = lead.get("name") or "não informado"
-    lead_stage = lead.get("stage") or "não identificado"
+    lead_stage = _segmento(lead) or "não identificado"
     lead_company = lead.get("company") or "não informada"
     history_text = "\n".join(lines)
     context = (

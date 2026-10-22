@@ -138,7 +138,8 @@ async def test_handoff_roteia_por_segmento_atacado():
 
 @pytest.mark.asyncio
 async def test_handoff_consumo_cai_no_fallback():
-    """Sem pipeline de vendedor (consumo) → usa o fallback (LP/create)."""
+    """Sem pipeline de vendedor (consumo) → o card não muda de funil (b67f1c6b: consumo
+    não vai para vendedor, nem pela rota de LP): só o create com dedupe."""
     with patch.object(tools, "update_lead"), \
          patch.object(tools, "get_lead", return_value={"id": "L2", "stage": "consumo", "name": "Bia"}), \
          patch.object(tools, "move_deal_to_vendor_pipeline", return_value=None) as mock_seg, \
@@ -151,9 +152,11 @@ async def test_handoff_consumo_cai_no_fallback():
             {"vendedor": "Joao Bras", "motivo": "consumo"},
             "L2", "5511888", "conv-2",
         )
-    mock_seg.assert_called_once()
-    mock_lp.assert_called_once()       # fallback acionado
-    mock_create.assert_called_once()   # e o create final
+    mock_seg.assert_not_called()
+    mock_lp.assert_not_called()
+    mock_create.assert_called_once()
+    assert mock_create.call_args.kwargs["category"] == "consumo"
+    assert mock_create.call_args.kwargs["dedupe_open"] is True
 
 
 # --- prompt ---------------------------------------------------------------

@@ -66,7 +66,8 @@ def test_apply_stage_transition_grava_marcador_e_retorna_true():
 
     assert applied is True
     m_uconv.assert_called_once_with("C1", stage="private_label")
-    m_ulead.assert_called_once_with("L1", stage="private_label")
+    # b67f1c6b: o segmento vai para leads.segmento e a fase vira 'qualificando'.
+    m_ulead.assert_called_once_with("L1", segmento="private_label", stage="qualificando")
     m_deal.assert_called_once_with("L1", "private_label")
     # Marcador system idêntico ao do executor mudar_stage (a transcrição realimenta o prompt).
     m_save.assert_called_once_with(
@@ -76,7 +77,8 @@ def test_apply_stage_transition_grava_marcador_e_retorna_true():
 
 def test_apply_stage_transition_idempotente_no_op():
     from app.agent import tools
-    with patch.object(tools, "get_lead", return_value={"stage": "atacado"}), \
+    # b67f1c6b: "já no destino" = lead com segmento atacado na fase qualificando.
+    with patch.object(tools, "get_lead", return_value={"stage": "qualificando", "segmento": "atacado"}), \
          patch.object(tools, "get_conversation", return_value={"stage": "atacado"}), \
          patch.object(tools, "update_conversation") as m_uconv, \
          patch.object(tools, "update_lead") as m_ulead, \

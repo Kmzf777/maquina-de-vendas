@@ -23,6 +23,7 @@ from app.leads.service import (
     get_open_deal,
     move_deal_to_stage_key,
     save_message,
+    segmento_do_lead,
     update_lead,
 )
 
@@ -500,6 +501,16 @@ def _aplicar_handoff(lead: dict, conversation_id: str, *,
     lead_id = lead["id"]
     vendedor = vendedor or SUPERVISOR_NAME
     motivo = _motivo_handoff(fluxo)
+    segmento = segmento_do_lead(lead)
+    # b67f1c6b: o vendedor vira chave do cadastro `vendedores`. Aqui quem decide é o FLUXO
+    # (o terminal do Arthur ou do João), então o nome manda; o João é reserva só quando é
+    # ele quem recebe (o cartão enviado é o dele). Rótulo = `vendedores.nome`; cadastro
+    # vazio mantém o nome de hoje e o id fica None — nunca derruba o handoff.
+    from app.leads.repasse import vendedor_do_repasse
+    vendedor_id, vendedor = vendedor_do_repasse(
+        segmento=None, vendedor=vendedor,
+        reserva_joao="arthur" not in vendedor.lower(),
+    )
     # Os dois campos no MESMO update: eles descrevem o mesmo fato (um humano assumiu),
     # e gravá-los em momentos diferentes abriria uma janela em que o lead está mudo e
     # ninguém consta como responsável — é nela que a ponte recusaria o lead como
@@ -530,7 +541,9 @@ def _aplicar_handoff(lead: dict, conversation_id: str, *,
                        conversation_id, exc)
     atualizar_metadata(lead, {
         "handoff": {
+            "vendedor_id": vendedor_id,
             "vendedor": vendedor,
+            "segmento": segmento,
             "motivo": motivo,
             # BRT, igual a `encaminhar_humano` (tools._TZ_BR). ISO com offset nos dois.
             "at": datetime.now(_TZ_BR).isoformat(),
@@ -544,8 +557,8 @@ def _aplicar_handoff(lead: dict, conversation_id: str, *,
         _marker_id, _marker_at = marcador_id_e_data(_marker)
         registrar_repasse(lead_id=lead_id, conversation_id=conversation_id,
                           message_id=_marker_id, occurred_at=_marker_at,
-                          source="button_flow", vendedor_id=None, vendedor=vendedor,
-                          segmento=lead.get("stage"), motivo=motivo)
+                          source="button_flow", vendedor_id=vendedor_id, vendedor=vendedor,
+                          segmento=segmento, motivo=motivo)
     except Exception as exc:
         logger.error("[BUTTON FLOW] evento repasse do lead %s não gravado: %s", lead_id, exc)
     _mover_deal(lead_id, *STAGE_QUER_REPOR)

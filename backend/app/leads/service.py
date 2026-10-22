@@ -1002,39 +1002,25 @@ def move_deal_to_vendor_pipeline(
         return None
 
 
-# Fallback conhecido: João é dono dos pipelines de atacado/private_label. Usado quando o
-# owner_user_id do pipeline de destino vier nulo (fonte de verdade continua sendo o pipeline).
-JOAO_USER_ID = "1c3c78ed-ef47-4dca-9a63-2052f28e8fd6"
-
-
 def vendor_user_id_for_segment(segment: str | None) -> str | None:
-    """Resolve o user_id do vendedor responsável por um segmento de handoff.
+    """id do vendedor responsável por um segmento de handoff (cadastro `vendedores`).
 
-    Fonte de verdade: `pipelines.owner_user_id` do destino mapeado em SEGMENT_HANDOFF_PIPELINE
-    (mesma origem que roteia o card). Fallback para o ID conhecido do João em atacado/
-    private_label quando o owner vier nulo. Retorna None para segmentos sem vendedor dedicado
-    (consumo/secretaria) — o lead permanece self-service, sem responsável atribuído.
-    Fail-soft: erro é logado e cai no fallback/None (nunca derruba o handoff).
+    Fonte de verdade (b67f1c6b): `vendedores.segmentos`, via `vendedor_do_segmento` — o 1º
+    vendedor ATIVO que atende o segmento. Só os segmentos com funil de vendedor
+    (SEGMENT_HANDOFF_PIPELINE: atacado/private_label → João, exportacao → Arthur) resolvem;
+    consumo, "secretaria", fase ou None → None (o lead fica sem responsável atribuído).
+    Sem reserva no código: tabela vazia/indisponível também devolve None. Fail-soft.
     """
-    seg = (segment or "").strip()
-    dest_name = SEGMENT_HANDOFF_PIPELINE.get(seg)
-    if not dest_name:
+    seg = normalizar_segmento(segment)
+    if seg not in SEGMENT_HANDOFF_PIPELINE:
         return None
     try:
-        sb = get_supabase()
-        row = (
-            sb.table("pipelines").select("owner_user_id").eq("name", dest_name).limit(1).execute()
-        )
-        owner = (row.data[0].get("owner_user_id") if row.data else None)
-        if owner:
-            return owner
+        from app.vendedores.service import vendedor_do_segmento
+        row = vendedor_do_segmento(seg)
     except Exception as exc:
-        logger.error(
-            "vendor_user_id_for_segment: falha ao resolver owner p/ segmento %s: %s", seg, exc
-        )
-    if seg in ("atacado", "private_label"):
-        return JOAO_USER_ID
-    return None
+        logger.error("vendor_user_id_for_segment: falha ao resolver vendedor p/ segmento %s: %s", seg, exc)
+        return None
+    return (row or {}).get("id")
 
 
 # ── Tags (etiquetas de CRM aplicadas pela IA) ───────────────────────────────

@@ -224,7 +224,9 @@ class TestARecuperacaoNaoMuda:
         #    resolve o vendedor. Forma COMPLETA: um campo a mais ou a menos aqui muda
         #    o contrato de dois consumidores.
         carimbo = lead["metadata"]["handoff"]
-        assert set(carimbo) == {"vendedor", "motivo", "at", "origem"}
+        # b67f1c6b: + `vendedor_id` (chave do cadastro `vendedores`, lida pela ponte) e
+        # `segmento`, iguais aos do carimbo de `encaminhar_humano`.
+        assert set(carimbo) == {"vendedor_id", "vendedor", "segmento", "motivo", "at", "origem"}
         assert carimbo["vendedor"] == SUPERVISOR_NAME
         assert carimbo["motivo"] == MOTIVO_RECUPERACAO
         assert carimbo["origem"] == "button_flow"

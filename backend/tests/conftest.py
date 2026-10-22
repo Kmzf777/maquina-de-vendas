@@ -185,3 +185,23 @@ class FakeRedis:
 @pytest.fixture
 def fake_redis():
     return FakeRedis()
+
+
+@pytest.fixture(autouse=True)
+def _vendedores_sem_banco(monkeypatch):
+    """Cadastro `vendedores` vazio por padrão (cartão b67f1c6b).
+
+    Todo repasse (encaminhar_humano, fluxo de botões, ponte) passa a consultar o cadastro
+    único de vendedores. Sem este stub, cada teste de handoff faria uma chamada de rede à
+    URL fake do conftest (lenta, e o erro não fica em cache). Vazio = comportamento de
+    "cadastro indisponível": o rótulo de hoje e `vendedor_id` None. Testes que precisam de
+    linhas trocam `service._carregar` (ou `service.get_supabase`) no próprio corpo.
+    """
+    from app.vendedores import service as vendedores_service
+
+    sb = MagicMock()
+    sb.table.return_value.select.return_value.execute.return_value.data = []
+    vendedores_service.limpar_cache()
+    monkeypatch.setattr(vendedores_service, "get_supabase", lambda: sb)
+    yield
+    vendedores_service.limpar_cache()

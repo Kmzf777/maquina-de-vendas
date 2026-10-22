@@ -35,7 +35,8 @@ def test_flap_dentro_da_janela_loga_warning_e_aplica_transicao(caplog):
     # A transição prossegue mesmo sinalizando flap (sem bloqueio).
     assert result == "Stage alterado para: private_label"
     m_uconv.assert_called_once_with("C1", stage="private_label")
-    m_ulead.assert_called_once_with("L1", stage="private_label")
+    # b67f1c6b: o segmento vai para leads.segmento e a fase vira 'qualificando'.
+    m_ulead.assert_called_once_with("L1", segmento="private_label", stage="qualificando")
     m_save.assert_called_once()
 
 

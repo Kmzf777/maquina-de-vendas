@@ -12,6 +12,45 @@ from app.db.supabase import get_supabase
 logger = logging.getLogger(__name__)
 
 
+# Reserva do repasse sem vendedor resolvido (b67f1c6b): é a regra de hoje — quem recebe o
+# lead sem segmento é o João. Por e-mail, a chave estável do cadastro `vendedores`.
+JOAO_EMAIL = "joao@cafecanastra.com"
+# Rótulo da exportação quando o cadastro está vazio/indisponível: o cartão enviado é o do
+# Arthur (tools.EXPORTACAO_NAME) e o carimbo tem de dizer o mesmo nome.
+ROTULO_EXPORTACAO = "Arthur"
+
+
+def vendedor_do_repasse(*, segmento: str | None, vendedor: str | None,
+                        vendedor_id: str | None = None,
+                        reserva_joao: bool = True) -> tuple[str | None, str]:
+    """(vendedor_id, rótulo) de quem recebe o repasse. Nunca levanta.
+
+    - `vendedor_id` já resolvido pelo segmento (atacado/private_label/exportacao) manda;
+    - senão, o nome indicado (`vendedor`, texto do LLM ou do fluxo de botões) passa pelo
+      resolvedor; não resolvendo, o João (`JOAO_EMAIL`) quando `reserva_joao`.
+      Exportação nunca cai no João: o cartão enviado é o do Arthur.
+    - Rótulo = `vendedores.nome`. Cadastro vazio/indisponível: mantém o nome de hoje
+      (o do LLM; "Arthur" na exportação) e o id pode ser None — o repasse não cai.
+    """
+    from app.leads.segmento import normalizar_segmento
+    seg = normalizar_segmento(segmento)
+    rotulo = (vendedor or "").strip() or "Vendedor"
+    if seg == "exportacao":
+        rotulo = ROTULO_EXPORTACAO
+    vid = vendedor_id
+    try:
+        from app.vendedores import service as vendedores
+        if not vid and seg != "exportacao":
+            vid = vendedores.resolver_vendedor(vendedor)
+            if not vid and reserva_joao:
+                vid = vendedores.resolver_vendedor(JOAO_EMAIL)
+        nome = (vendedores.por_id(vid) or {}).get("nome")
+    except Exception as exc:
+        logger.error("vendedor_do_repasse: cadastro de vendedores indisponível: %s", exc)
+        nome = None
+    return vid, (nome or rotulo)
+
+
 def registrar_repasse(*, lead_id: str, conversation_id: str | None, message_id: str | None,
                       occurred_at: str | None, source: str, vendedor_id: str | None = None,
                       vendedor: str | None = None, segmento: str | None = None,

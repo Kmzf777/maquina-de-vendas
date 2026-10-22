@@ -926,6 +926,24 @@ def _vendedor_da_ponte(lead: dict) -> tuple[str, str, str]:
     """
     meta = lead.get("metadata") if isinstance(lead, dict) else None
     carimbo = meta.get("handoff") if isinstance(meta, dict) else None
+    # b67f1c6b: a chave é `metadata.handoff.vendedor_id` (cadastro `vendedores`): quem
+    # atende exportação (o Arthur) recebe a ponte do fixo, o resto a do João. O nome fica
+    # como reserva — carimbo antigo, sem id, ou id que o cadastro não conhece.
+    vendedor_id = carimbo.get("vendedor_id") if isinstance(carimbo, dict) else None
+    if isinstance(vendedor_id, str) and vendedor_id:
+        try:
+            from app.vendedores.service import por_id
+            linha = por_id(vendedor_id)
+        except Exception as exc:  # fail-open: cai no nome
+            logger.warning("[BRIDGE] vendedor %s não resolvido pelo id: %s", vendedor_id, exc)
+            linha = None
+        if linha:
+            nome, telefone = (
+                (EXPORTACAO_NAME, EXPORTACAO_PHONE)
+                if "exportacao" in (linha.get("segmentos") or [])
+                else (SUPERVISOR_NAME, SUPERVISOR_PHONE)
+            )
+            return nome, telefone, _primeiro_nome_do_cartao(nome)
     registrado = carimbo.get("vendedor") if isinstance(carimbo, dict) else None
     nome, telefone = _PONTE_POR_VENDEDOR.get(
         _token_de_vendedor(registrado if isinstance(registrado, str) else None),

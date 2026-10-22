@@ -12,9 +12,11 @@ from app.leads.service import (
     apply_optout_side_effects, append_lead_observation, move_lead_deals_to_perdido,
     move_open_deal_for_handoff, resolve_send_target, lead_has_active_relationship,
     add_tags_to_lead, move_deal_to_vendor_pipeline, vendor_user_id_for_segment,
+    SEGMENT_HANDOFF_PIPELINE,
     ensure_segment_deal, mark_deal_qualificado,
-    get_relationship_summary, sanitize_display_name,
+    get_relationship_summary, sanitize_display_name, segmento_do_lead,
 )
+from app.leads.segmento import SEGMENTOS_B2B, fase_valida, lead_e_b2b, normalizar_segmento
 from pydantic import ValidationError as _PydanticValidationError
 from app.agent.adherence import normalize_proper_nouns
 from app.agent.catalog import _fetch_active_products, _normalize as _normalize_catalog
@@ -487,29 +489,60 @@ async def _send_despedida_descarte(
         )
 
 
+def _campos_do_lead_para(new_stage: str) -> dict[str, Any] | None:
+    """O que `leads` recebe quando a conversa vai para `new_stage` (b67f1c6b).
+
+    Espelho de `frontend/src/lib/segmento.ts:resolverSegmentoFase`:
+    segmento → `segmento` + fase 'qualificando'; 'secretaria' → fase 'triagem' sem segmento;
+    fase válida → só a fase. Qualquer outra coisa → None (não grava lixo em `leads`).
+    """
+    seg = normalizar_segmento(new_stage)
+    if seg:
+        return {"segmento": seg, "stage": "qualificando"}
+    if new_stage == "secretaria":
+        return {"stage": "triagem", "segmento": None}
+    if fase_valida(new_stage):
+        return {"stage": new_stage}
+    return None
+
+
 def apply_stage_transition(lead_id: str, conversation_id: str, new_stage: str) -> bool:
     """Efeito CANÔNICO de uma troca de stage — extraído do executor `mudar_stage` para ser
     reusado pelo gatilho determinístico de prefill (Trilha B, auditoria 10/07). Retorna True
     quando a transição foi aplicada, False no no-op idempotente.
 
+    Segmento separado da fase (b67f1c6b): `conversations.stage` continua recebendo o valor
+    de hoje (é ele que escolhe o prompt da Valéria); `leads` recebe `segmento` + a fase
+    'qualificando' quando há segmento, e 'secretaria' vira a fase 'triagem' sem segmento
+    (ver `_campos_do_lead_para`).
+
     Idempotência (auditoria 10/07, caso Marisete): só é no-op quando lead E conversa já estão
-    no stage pedido — divergência ainda re-sincroniza. O marcador system duplicado
-    realimentaria o prompt e geraria writes redundantes. Fail-open: erro no fetch segue o
-    caminho normal (aplica). `ensure_segment_deal` é fail-soft: nunca derruba a troca de stage.
+    no destino — divergência ainda re-sincroniza (inclusive o lead antigo que guarda o
+    segmento em `stage`). O marcador system duplicado realimentaria o prompt e geraria
+    writes redundantes. Fail-open: erro no fetch segue o caminho normal (aplica).
+    `ensure_segment_deal` é fail-soft: nunca derruba a troca de stage.
     """
+    campos = _campos_do_lead_para(new_stage)
+    if campos is None:
+        logger.warning(
+            "apply_stage_transition: stage %r não é segmento nem fase — ignorado (lead %s)",
+            new_stage, lead_id,
+        )
+        return False
     try:
-        _lead_stage = (get_lead(lead_id) or {}).get("stage")
+        _lead = get_lead(lead_id) or {}
         _conv_stage = (
             (get_conversation(conversation_id) or {}).get("stage")
-            if conversation_id else _lead_stage
+            if conversation_id else new_stage
         )
-        if _lead_stage == new_stage and _conv_stage == new_stage:
+        _lead_ok = all(_lead.get(k) == v for k, v in campos.items())
+        if _lead_ok and _conv_stage == new_stage:
             return False
     except Exception:
         pass
     if conversation_id:
         update_conversation(conversation_id, stage=new_stage)
-    update_lead(lead_id, stage=new_stage)
+    update_lead(lead_id, **campos)
     # CRIAÇÃO ADIADA: ao classificar o segmento, o lead inbound (que não tinha card) ganha um
     # no funil correspondente. No-op p/ stage não-segmento ('pending'/'secretaria') ou se já
     # houver card. Fail-soft: nunca derruba a troca de stage.
@@ -700,26 +733,38 @@ async def _t_qualificar_lead(ctx: ToolContext) -> str:
         "urgencia": (args.get("urgencia") or "").strip(),
     }
     _cur = {}
+    # Âncora NOVA (b67f1c6b): valor não vazio e diferente do já gravado em
+    # metadata.qualificacao. Sem nenhuma, o marcador [qualificar_lead] não é gravado —
+    # ele conta como sinal de qualificação e repetia a mesma âncora a cada turno.
+    _novas: dict[str, str] = {}
     try:
         _cur = get_lead(lead_id) or {}
         _meta = dict(_cur.get("metadata") or {})
         _anchors = dict(_meta.get("qualificacao") or {})
         for _k, _v in _q_in.items():
             if _v:
+                if _v != (_anchors.get(_k) or "").strip():
+                    _novas[_k] = _v
                 _anchors[_k] = _v
         _meta["qualificacao"] = _anchors
-        update_lead(lead_id, metadata=_meta)
+        if _novas:
+            update_lead(lead_id, metadata=_meta)
     except Exception as _q_exc:
         logger.error("qualificar_lead: falha ao persistir âncoras p/ lead %s: %s", lead_id, _q_exc)
         _anchors = {k: v for k, v in _q_in.items() if v}
+        _novas = dict(_anchors)
 
-    # Score only applies to wholesale leads and never changes the September
-    # qualification gates below. Omitted criteria remain unknown.
+    # Score só para lead B2B (b67f1c6b, D9): segmento atacado/private_label em
+    # `leads.segmento`, ou `fn_lead_b2b` (funil Atacado/PL ou CNPJ no Bling). Mesma regra
+    # do fluxo de botões (valeria_runner). Nunca muda os portões de setembro abaixo.
+    # Critérios omitidos continuam desconhecidos.
     _score_fields = (
         "segment", "monthly_volume_kg", "supplier_reason", "purchase_timing", "purchase_intent",
     )
     _score_updates = {key: args[key] for key in _score_fields if key in args}
-    if _score_updates and _cur.get("stage") == "atacado":
+    if _score_updates and (
+        segmento_do_lead(_cur) in SEGMENTOS_B2B or lead_e_b2b(lead_id)
+    ):
         try:
             save_score_evidence(
                 lead_id,
@@ -729,12 +774,13 @@ async def _t_qualificar_lead(ctx: ToolContext) -> str:
             )
         except Exception as _score_exc:
             logger.error("qualificar_lead: falha ao registrar score p/ lead %s: %s", lead_id, _score_exc)
-    save_message(
-        lead_id, "system",
-        f"[qualificar_lead] finalidade={_anchors.get('finalidade')} "
-        f"volume={_anchors.get('volume')} urgencia={_anchors.get('urgencia')}",
-        conversation_id=conversation_id,
-    )
+    if _novas:
+        save_message(
+            lead_id, "system",
+            f"[qualificar_lead] finalidade={_anchors.get('finalidade')} "
+            f"volume={_anchors.get('volume')} urgencia={_anchors.get('urgencia')}",
+            conversation_id=conversation_id,
+        )
     # PORTÃO DO HANDOFF PROATIVO — três trincos (auditoria 09/09, ver
     # test_qualificar_lead_portao_2026_09_09). Até aqui bastava que as duas strings
     # fossem truthy, e o resultado medido em produção foi: 28 dos 30 handoffs proativos
@@ -787,21 +833,51 @@ async def _t_qualificar_lead(ctx: ToolContext) -> str:
     )
 
 
+def _cita_joao(texto: str) -> bool:
+    return bool(_re_dedup.search(r"\bjoao\b", _normalize_text(texto)))
+
+
+def _despedida_exportacao() -> str:
+    """Despedida do repasse de exportação: o mesmo texto do fluxo de botões
+    (`valeria_registry.TERMINAIS['T_HANDOFF_ARTHUR'].corpo`), uma fonte só."""
+    try:
+        from app.button_flow.valeria_registry import TERMINAIS
+        return TERMINAIS["T_HANDOFF_ARTHUR"].corpo
+    except Exception:  # registry é dado puro; reserva só para não derrubar o repasse
+        return "combinado, já passei pro Arthur\n\nele entra em contato assim que estiver disponível"
+
+
 async def _t_encaminhar_humano(ctx: ToolContext) -> str:
     args = ctx.args
     lead_id = ctx.lead_id
     phone = ctx.phone
     conversation_id = ctx.conversation_id
     motivo = args.get("motivo", "lead qualificado")
-    vendedor = args.get("vendedor", "Vendedor")
+    _vendedor_llm = args.get("vendedor", "Vendedor")
     # Item 1: resolve o responsável ANTES de desligar a IA, para gravar assigned_to no
-    # mesmo update — o lead nunca fica órfão. Fonte de verdade = owner do pipeline do
-    # segmento (consumo/secretaria → None, self-service). Fail-soft.
+    # mesmo update — o lead nunca fica órfão. Fail-soft.
+    # b67f1c6b: o segmento vem de `leads.segmento` (com o `stage` antigo como reserva) e o
+    # vendedor do cadastro `vendedores`:
+    #   - atacado/private_label/exportacao → o vendedor do segmento (João / Arthur);
+    #   - sem segmento → o vendedor indicado pelo LLM, resolvido; senão o João;
+    #   - consumo → não vai para vendedor (assigned_to fica vazio), mas o carimbo registra
+    #     quem recebeu o cartão.
+    # O rótulo (`vendedor`) passa a ser o nome da tabela; cadastro vazio mantém o de hoje.
     try:
-        _seg = (get_lead(lead_id) or {}).get("stage")
+        _seg = segmento_do_lead(get_lead(lead_id))
+    except Exception:
+        _seg = None
+    try:
         _assigned_to = vendor_user_id_for_segment(_seg)
     except Exception:
         _assigned_to = None
+    from app.leads.repasse import vendedor_do_repasse
+    _vendedor_id, vendedor = vendedor_do_repasse(
+        segmento=_seg, vendedor=_vendedor_llm, vendedor_id=_assigned_to,
+    )
+    if _seg is None:
+        _assigned_to = _vendedor_id
+    _exportacao = _seg == "exportacao"
     _disable_fields = {"status": "converted", "human_control": True, "ai_enabled": False}
     if _assigned_to:
         _disable_fields["assigned_to"] = _assigned_to
@@ -837,16 +913,20 @@ async def _t_encaminhar_humano(ctx: ToolContext) -> str:
         # resolve_send_target(lead, phone) lá embaixo estoura NameError — o que torna
         # o `if lead else` do schedule_handoff_rescue uma falsa proteção.
         lead = get_lead(lead_id)
-        lead_stage = lead.get("stage") if lead else None
         deal_title = f"{vendedor} - {motivo}"
         # P2 (auditoria 2026-06-22): roteia o card para o pipeline do VENDEDOR por SEGMENTO
-        # (lead.stage), independente da origem — corrige broadcast-qualificados que ficavam
-        # presos em 'Valeria - Importação Leads Frios'. Fallback preserva o comportamento
-        # anterior: LP (move_open_deal_for_handoff) e, por fim, create_deal por categoria.
-        # 'consumo'/'secretaria' não têm pipeline de vendedor → caem no fallback (self-service).
-        if not move_deal_to_vendor_pipeline(lead_id, lead_stage, title=deal_title):
-            if not move_open_deal_for_handoff(lead_id, title=deal_title):
-                create_deal(lead_id, title=deal_title, category=lead_stage, dedupe_open=True)
+        # (`leads.segmento`), independente da origem — corrige broadcast-qualificados que
+        # ficavam presos em 'Valeria - Importação Leads Frios'. Fallback preserva o
+        # comportamento anterior: LP (move_open_deal_for_handoff) e, por fim, create_deal
+        # por categoria.
+        # b67f1c6b: consumo e lead sem segmento NÃO mudam de funil — o card fica onde está
+        # (create_deal com dedupe reaproveita o aberto; sem card, cria um).
+        if _seg in SEGMENT_HANDOFF_PIPELINE:
+            if not move_deal_to_vendor_pipeline(lead_id, _seg, title=deal_title):
+                if not move_open_deal_for_handoff(lead_id, title=deal_title):
+                    create_deal(lead_id, title=deal_title, category=_seg, dedupe_open=True)
+        else:
+            create_deal(lead_id, title=deal_title, category=_seg, dedupe_open=True)
     except Exception as exc:
         logger.error(
             "encaminhar_humano failed to create deal for lead %s: %s",
@@ -859,7 +939,7 @@ async def _t_encaminhar_humano(ctx: ToolContext) -> str:
     try:
         _cur_meta = dict((get_lead(lead_id) or {}).get("metadata") or {})
         _cur_meta["handoff"] = {
-            "vendedor_id": _assigned_to,
+            "vendedor_id": _vendedor_id,
             "vendedor": vendedor,
             "segmento": _seg,
             "motivo": motivo,
@@ -878,7 +958,7 @@ async def _t_encaminhar_humano(ctx: ToolContext) -> str:
         _marker_id, _marker_at = marcador_id_e_data(_marker)
         registrar_repasse(lead_id=lead_id, conversation_id=conversation_id,
                           message_id=_marker_id, occurred_at=_marker_at, source="ia",
-                          vendedor_id=_assigned_to, vendedor=vendedor, segmento=_seg,
+                          vendedor_id=_vendedor_id, vendedor=vendedor, segmento=_seg,
                           motivo=motivo)
     except Exception as _ev_exc:
         logger.error("encaminhar_humano: evento repasse do lead %s: %s", lead_id, _ev_exc)
@@ -932,7 +1012,14 @@ async def _t_encaminhar_humano(ctx: ToolContext) -> str:
         provider = get_provider(channel)
         # Mensagem de despedida escrita pela IA (fallback para a estática se ausente),
         # com teto de tamanho por usabilidade no WhatsApp.
-        despedida = (args.get("mensagem_despedida") or "").strip() or _HANDOFF_MSG
+        despedida = (args.get("mensagem_despedida") or "").strip()
+        if _exportacao:
+            # D8c: exportação é do Arthur, pelo fixo. A despedida de hoje (_HANDOFF_MSG) e
+            # a escrita pelo LLM a partir do prompt nomeiam o João e o wa.me dele — só
+            # fica a do LLM que já cita o Arthur e não o João.
+            if not despedida or _cita_joao(despedida) or "arthur" not in _normalize_text(despedida):
+                despedida = _despedida_exportacao()
+        despedida = despedida or _HANDOFF_MSG
         if len(despedida) > _MAX_DESPEDIDA_LEN:
             despedida = despedida[:_MAX_DESPEDIDA_LEN].rstrip() + "…"
         # Esta bolha NÃO passa pelo _sanitize_assistant_text do orchestrator, e é
@@ -964,14 +1051,19 @@ async def _t_encaminhar_humano(ctx: ToolContext) -> str:
                     "encaminhar_humano: falha ao enviar mensagem de handoff para lead %s: %s",
                     lead_id, exc, exc_info=True,
                 )
-        # Logo após o texto, envia o cartão de contato do João (agrupamento visual).
+        # Logo após o texto, envia o cartão de contato do vendedor (agrupamento visual):
+        # o do Arthur (fixo) na exportação, o do João no resto.
+        _cartao_nome, _cartao_fone = (
+            (EXPORTACAO_NAME, EXPORTACAO_PHONE) if _exportacao
+            else (SUPERVISOR_NAME, SUPERVISOR_PHONE)
+        )
         try:
             await provider.send_contact(
-                send_to, contact_name=SUPERVISOR_NAME, contact_phone=SUPERVISOR_PHONE
+                send_to, contact_name=_cartao_nome, contact_phone=_cartao_fone
             )
             save_message(
                 lead_id, "system",
-                f"[encaminhar_humano] cartão de contato de {SUPERVISOR_NAME} enviado",
+                f"[encaminhar_humano] cartão de contato de {_cartao_nome} enviado",
                 conversation_id=conversation_id,
             )
         except Exception as exc:
@@ -979,14 +1071,17 @@ async def _t_encaminhar_humano(ctx: ToolContext) -> str:
                 "encaminhar_humano: falha ao enviar cartão de contato do supervisor para lead %s: %s",
                 lead_id, exc, exc_info=True,
             )
+        # O resgate manda o template do JOÃO pelo canal dele. O Arthur atende fora do CRM,
+        # pelo fixo (D8c): na exportação o resgate não é agendado.
         try:
-            schedule_handoff_rescue(
-                lead_id=lead_id,
-                lead_phone=phone,
-                conversation_id=conversation_id,
-                channel_id=channel["id"],
-                lead_name=(lead.get("name") or "") if lead else "",
-            )
+            if not _exportacao:
+                schedule_handoff_rescue(
+                    lead_id=lead_id,
+                    lead_phone=phone,
+                    conversation_id=conversation_id,
+                    channel_id=channel["id"],
+                    lead_name=(lead.get("name") or "") if lead else "",
+                )
         except Exception as exc:
             logger.error(
                 "encaminhar_humano: falha ao agendar rescue job para lead %s: %s",
@@ -1393,10 +1488,11 @@ async def _t_marcar_interesse(ctx: ToolContext) -> str | ToolResult:
     # Se o lead inbound ainda não tem card, cria um no funil do seu segmento e o move para
     # 'Qualificado'; se já tem, apenas move. No-op gracioso sem segmento conhecido nem card.
     # Fail-soft: nunca derruba o flag de follow-up.
+    # b67f1c6b (D2): só "quente" é qualificado e move o card; "morno"/"frio" só registram
+    # o sinal de interesse (o efeito de follow-up abaixo segue igual).
     try:
-        lead = get_lead(lead_id)
-        segment = lead.get("stage") if lead else None
-        mark_deal_qualificado(lead_id, segment)
+        if nivel == "quente":
+            mark_deal_qualificado(lead_id, segmento_do_lead(get_lead(lead_id)))
     except Exception as exc:
         logger.error(
             "marcar_interesse: falha ao qualificar card (lead %s): %s",
@@ -1864,7 +1960,7 @@ async def _retomar_contato_vendedor(
         # Lead de LP: MOVE o card do funil de ENTRADA da Valéria para o de FECHAMENTO do João
         # (mesma lógica do encaminhar_humano). Sem card de LP → cria (dedupe p/ não duplicar).
         if not move_open_deal_for_handoff(lead_id, title=deal_title):
-            create_deal(lead_id, title=deal_title, category=lead.get("stage"), dedupe_open=True)
+            create_deal(lead_id, title=deal_title, category=segmento_do_lead(lead), dedupe_open=True)
     except Exception as exc:
         logger.error(
             "retomar_contato_vendedor: falha ao criar deal para lead %s: %s", lead_id, exc, exc_info=True
