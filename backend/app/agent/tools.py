@@ -517,8 +517,8 @@ def apply_stage_transition(lead_id: str, conversation_id: str, new_stage: str) -
     (ver `_campos_do_lead_para`).
 
     Idempotência (auditoria 10/07, caso Marisete): só é no-op quando lead E conversa já estão
-    no destino — divergência ainda re-sincroniza (inclusive o lead antigo que guarda o
-    segmento em `stage`). O marcador system duplicado realimentaria o prompt e geraria
+    no destino — divergência ainda re-sincroniza. O lead antigo que guarda o mesmo segmento
+    em `stage` (conversa já no destino) ganha `segmento`/fase em silêncio e conta como no-op. O marcador system duplicado realimentaria o prompt e geraria
     writes redundantes. Fail-open: erro no fetch segue o caminho normal (aplica).
     `ensure_segment_deal` é fail-soft: nunca derruba a troca de stage.
     """
@@ -536,8 +536,15 @@ def apply_stage_transition(lead_id: str, conversation_id: str, new_stage: str) -
             if conversation_id else new_stage
         )
         _lead_ok = all(_lead.get(k) == v for k, v in campos.items())
-        if _lead_ok and _conv_stage == new_stage:
-            return False
+        if _conv_stage == new_stage:
+            if _lead_ok:
+                return False
+            # Lead antigo (segmento só em `stage`) já no mesmo segmento da conversa: é migração
+            # de dado, não troca — grava o lead em silêncio (sem marcador duplicado na
+            # transcrição nem card novo) e responde como no-op.
+            if "segmento" in campos and segmento_do_lead(_lead) == campos["segmento"]:
+                update_lead(lead_id, **campos)
+                return False
     except Exception:
         pass
     if conversation_id:

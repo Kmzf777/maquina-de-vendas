@@ -80,10 +80,22 @@ def test_noop_quando_lead_e_conversa_ja_estao_no_destino():
 
 
 def test_lead_legado_com_segmento_no_stage_ressincroniza():
-    """Lead antigo (segmento só em `stage`) ganha `segmento` na primeira transição."""
+    """Lead antigo (segmento só em `stage`) ganha `segmento` na primeira transição. Com a
+    conversa já no destino é migração silenciosa: grava o lead, sem marcador nem card."""
     ok, uc, ul, esd, sm = _ast({"id": "L1", "stage": "atacado"}, "atacado", "atacado")
+    assert ok is False
+    ul.assert_called_once_with("L1", segmento="atacado", stage="qualificando")
+    uc.assert_not_called()
+    esd.assert_not_called()
+    sm.assert_not_called()
+
+
+def test_lead_legado_com_conversa_em_outro_stage_aplica_normal():
+    ok, uc, ul, esd, sm = _ast({"id": "L1", "stage": "atacado"}, "pending", "atacado")
     assert ok is True
     ul.assert_called_once_with("L1", segmento="atacado", stage="qualificando")
+    uc.assert_called_once_with("C1", stage="atacado")
+    sm.assert_called_once()
 
 
 def test_noop_secretaria_ja_em_triagem():

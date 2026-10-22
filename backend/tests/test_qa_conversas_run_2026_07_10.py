@@ -103,10 +103,21 @@ async def test_mudar_stage_same_stage_is_informative_noop():
         result = await t.execute_tool("mudar_stage", {"stage": "consumo"}, "L1", "5511999999999", "C1")
 
     assert not up_conv.called
-    assert not up_lead.called
+    # b67f1c6b: lead antigo (segmento só em `stage`) ganha `segmento` em silêncio — é migração
+    # de dado, não troca de stage: sem marcador, sem card e a resposta continua "já está".
+    up_lead.assert_called_once_with("L1", segmento="consumo", stage="qualificando")
     assert not ensure.called
     assert not save.called, "marcador 'stage alterado' duplicado polui a transcrição"
     assert "consumo" in result and "já" in result.lower()
+
+
+@pytest.mark.asyncio
+async def test_mudar_stage_same_stage_lead_novo_formato_sem_writes():
+    from app.agent import tools as t
+    with patch.object(t, "get_lead", return_value={"id": "L1", "stage": "qualificando", "segmento": "consumo"}),          patch.object(t, "get_conversation", return_value={"id": "C1", "stage": "consumo"}),          patch.object(t, "update_conversation") as up_conv,          patch.object(t, "update_lead") as up_lead,          patch.object(t, "ensure_segment_deal") as ensure,          patch.object(t, "save_message") as save:
+        result = await t.execute_tool("mudar_stage", {"stage": "consumo"}, "L1", "5511999999999", "C1")
+    assert not (up_conv.called or up_lead.called or ensure.called or save.called)
+    assert "já" in result.lower()
 
 
 @pytest.mark.asyncio
