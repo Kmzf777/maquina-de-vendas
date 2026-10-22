@@ -9,7 +9,7 @@
 // zero, nunca vira 1970. Um "R$ 0,00" mente; um "—" diz a verdade.
 
 import { AGENT_STAGES, DEAL_STAGES } from "@/lib/constants";
-import { FASE_LABELS } from "@/lib/segmento";
+import { FASE_LABELS, rotuloDoLead, segmentoDoLead } from "@/lib/segmento";
 import type { OverviewRepasse } from "@/lib/repasse-resposta";
 
 const DASH = "—";
@@ -28,7 +28,9 @@ export interface OverviewLead {
   phone: string | null;
   company: string | null;
   email: string | null;
+  /** Fase do funil (b67f1c6b). O segmento mora em `segmento`. */
   stage: string | null;
+  segmento: string | null;
   status: string | null;
   channel: string | null;
   assigned_to: string | null;
@@ -186,6 +188,17 @@ const STAGE_LABELS: Record<string, string> = {
  * (leads.stage). Slug desconhecido volta como está: uma etapa nova criada em
  * produção precisa aparecer, não sumir atrás de um travessão.
  */
+/**
+ * Rótulo do lead no painel: o segmento (`leads.segmento`, com o `stage` antigo como
+ * reserva), senão a fase. Sem nenhum dos dois -> null (a linha some, sem travessão).
+ */
+export function rotuloDoOverviewLead(
+  lead: { segmento?: string | null; stage?: string | null } | null | undefined,
+): string | null {
+  if (!lead || (!segmentoDoLead(lead) && !lead.stage)) return null;
+  return rotuloDoLead(lead);
+}
+
 export function stageLabel(key: string | null | undefined): string {
   if (!key) return DASH;
   return STAGE_LABELS[key] ?? key;

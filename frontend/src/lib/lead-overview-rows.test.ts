@@ -238,5 +238,12 @@ describe("mapLead", () => {
     expect(l.company).toBeNull();
     expect(l.utm_campaign).toBe("atacado-brasil");
     expect(l.created_at).toBe("2026-09-01T12:00:00.000Z");
+    expect(l.segmento).toBeNull();
+  });
+
+  it("mapeia leads.segmento", () => {
+    const l = mapLead({ id: "lead-2", created_at: "2026-09-01T12:00:00.000Z", stage: "qualificando", segmento: "atacado" });
+    expect(l.segmento).toBe("atacado");
+    expect(l.stage).toBe("qualificando");
   });
 });

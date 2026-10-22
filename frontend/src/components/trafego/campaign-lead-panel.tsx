@@ -28,6 +28,7 @@ import {
   fmtDate,
   fmtDateTime,
   humanDuration,
+  rotuloDoOverviewLead,
   stageLabel,
   type Journey,
   type LeadOverview,
@@ -390,7 +391,7 @@ export function CampaignLeadPanel({
           <SheetDescription className="text-[13px] text-[#7b7b78] mt-1">
             {/* Lead sem nome já usa o telefone como título — repeti-lo aqui só
                 gastaria linha. */}
-            {[telefone === nome ? null : telefone, data?.lead.stage ? stageLabel(data.lead.stage) : null]
+            {[telefone === nome ? null : telefone, rotuloDoOverviewLead(data?.lead)]
               .filter(Boolean)
               .join(" · ") || "Detalhes do lead"}
           </SheetDescription>

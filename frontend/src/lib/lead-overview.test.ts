@@ -5,6 +5,7 @@ import {
   computeVitals,
   formatEventText,
   humanDuration,
+  rotuloDoOverviewLead,
   stageLabel,
   type LeadOverview,
 } from "./lead-overview";
@@ -24,6 +25,7 @@ function overview(patch: Partial<LeadOverview> = {}): LeadOverview {
       company: null,
       email: null,
       stage: "secretaria",
+      segmento: null,
       status: "active",
       channel: "evolution",
       assigned_to: null,
@@ -409,5 +411,21 @@ describe("buildMovements", () => {
     const venda = movs.find((m) => m.kind === "venda")!;
     expect(venda.title).toContain("1.234,50");
     expect(venda.detail).toBe("Microlote 1kg");
+  });
+});
+
+describe("rotuloDoOverviewLead", () => {
+  it("mostra o segmento de leads.segmento, não a fase", () => {
+    expect(rotuloDoOverviewLead({ segmento: "private_label", stage: "qualificando" })).toBe("Private Label");
+  });
+  it("lead antigo com o segmento no stage", () => {
+    expect(rotuloDoOverviewLead({ segmento: null, stage: "atacado" })).toBe("Atacado");
+  });
+  it("sem segmento mostra a fase", () => {
+    expect(rotuloDoOverviewLead({ segmento: null, stage: "triagem" })).toBe("Em triagem");
+  });
+  it("sem nada devolve nulo (a linha do painel some)", () => {
+    expect(rotuloDoOverviewLead({ segmento: null, stage: null })).toBeNull();
+    expect(rotuloDoOverviewLead(undefined)).toBeNull();
   });
 });

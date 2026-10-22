@@ -46,6 +46,7 @@ export function mapLead(r: Row): OverviewLead {
     company: str(r.company),
     email: str(r.email),
     stage: str(r.stage),
+    segmento: str(r.segmento),
     status: str(r.status),
     channel: str(r.channel),
     assigned_to: str(r.assigned_to),

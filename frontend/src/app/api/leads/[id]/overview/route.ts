@@ -56,7 +56,7 @@ export async function GET(
   const { data: leadRaw, error: leadError } = await sb
     .from("leads")
     .select(
-      "id, name, phone, company, email, stage, status, channel, assigned_to, created_at, " +
+      "id, name, phone, company, email, stage, segmento, status, channel, assigned_to, created_at, " +
         "last_msg_at, last_customer_message_at, first_response_at, entered_stage_at, " +
         "utm_source, utm_medium, utm_campaign, traffic_type, notes",
     )
