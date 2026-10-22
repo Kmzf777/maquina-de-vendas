@@ -276,3 +276,53 @@ def test_cfg_varias_ativas_usa_a_de_updated_at_mais_recente(monkeypatch):
     fake.tables["sla_seller_config"].reverse()
     cfg = _carregar_cfg_sla(fake, [VENDEDOR])
     assert (cfg[VENDEDOR]["ini"], cfg[VENDEDOR]["fim"], cfg[VENDEDOR]["dias"]) == (540, 1080, [1, 2, 3])
+
+
+# ── (d) vendedor fora do CRM (cartão b67f1c6b) ─────────────────────────────────
+# O Arthur atende a exportação pelo fixo, fora do CRM (`vendedores.atende_no_crm=false`):
+# não há resposta dele para o watchdog medir, então o lead dele não entra no SLA.
+
+def _seed_vendedor(fake, vid, atende):
+    fake.tables.setdefault("vendedores", []).append({"id": vid, "atende_no_crm": atende})
+
+
+def test_vendedor_fora_do_crm_por_assigned_to_nao_viola(monkeypatch):
+    fake = _fake_db(monkeypatch)
+    _seed_vendedor(fake, "u-arthur", False)
+    _seed_conv(fake, "conv-1", "lead-1", customer=_sp(2026, 10, 16, 15, 50), assigned_to="u-arthur")
+
+    assert check_handoff_sla(_sp(2026, 10, 19, 10, 15)) == 0
+    assert fake.tables["system_alerts"] == []
+
+
+def test_vendedor_fora_do_crm_pelo_handoff_nao_viola(monkeypatch):
+    """Sem `assigned_to`, vale `metadata.handoff.vendedor_id` (carimbo do repasse)."""
+    fake = _fake_db(monkeypatch)
+    _seed_vendedor(fake, "u-arthur", False)
+    _seed_conv(fake, "conv-1", "lead-1", customer=_sp(2026, 10, 16, 15, 50), assigned_to=None)
+    fake.tables["conversations"][-1]["leads"]["metadata"] = {"handoff": {"vendedor_id": "u-arthur"}}
+
+    assert check_handoff_sla(_sp(2026, 10, 19, 10, 15)) == 0
+
+
+def test_vendedor_que_atende_no_crm_continua_violando(monkeypatch):
+    fake = _fake_db(monkeypatch)
+    _seed_vendedor(fake, VENDEDOR, True)
+    _seed_conv(fake, "conv-1", "lead-1", customer=_sp(2026, 10, 16, 15, 50))
+
+    assert check_handoff_sla(_sp(2026, 10, 19, 10, 15)) == 1
+
+
+def test_falha_ao_ler_vendedores_nao_cala_o_alerta(monkeypatch):
+    """Fail-open: erro ao ler `vendedores` mantém o lead no SLA."""
+    fake = _fake_db(monkeypatch)
+    _seed_conv(fake, "conv-1", "lead-1", customer=_sp(2026, 10, 16, 15, 50), assigned_to="u-arthur")
+    original = fake.table
+
+    def table(name):
+        if name == "vendedores":
+            raise RuntimeError("relation vendedores does not exist")
+        return original(name)
+
+    monkeypatch.setattr(fake, "table", table)
+    assert check_handoff_sla(_sp(2026, 10, 19, 10, 15)) == 1

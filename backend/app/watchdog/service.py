@@ -649,6 +649,29 @@ def _ultima_resposta_por_lead(sb, lead_ids: list) -> dict:
     return out
 
 
+def _vendedor_do_lead(lead: dict) -> str | None:
+    """Vendedor do lead: `leads.assigned_to`; sem ele, o carimbo do repasse
+    `metadata.handoff.vendedor_id` (cartão b67f1c6b)."""
+    if lead.get("assigned_to"):
+        return lead["assigned_to"]
+    handoff = (lead.get("metadata") or {}).get("handoff")
+    return (handoff or {}).get("vendedor_id") if isinstance(handoff, dict) else None
+
+
+def _vendedores_fora_do_crm(sb, vendedor_ids) -> set:
+    """Ids de `vendedores` com `atende_no_crm=false` (ex.: Arthur, exportação pelo
+    fixo). Fail-open: erro de leitura → conjunto vazio (o alerta continua)."""
+    ids = [v for v in set(vendedor_ids) if v]
+    if not ids:
+        return set()
+    try:
+        rows = sb.table("vendedores").select("id, atende_no_crm").in_("id", ids).execute().data or []
+    except Exception as exc:
+        logger.warning("[WATCHDOG] falha ao ler vendedores: %s — SLA vale para todos", exc)
+        return set()
+    return {r["id"] for r in rows if r.get("atende_no_crm") is False}
+
+
 def check_handoff_sla(now: datetime) -> int:
     """Check 5 (caso Juliana, 02/07) — SLA de resposta HUMANA pos-handoff.
 
@@ -689,7 +712,7 @@ def check_handoff_sla(now: datetime) -> int:
         sb.table("conversations")
         .select(
             "id, lead_id, last_customer_message_at, last_seller_response_at, "
-            "channels!inner(mode), leads!inner(name, assigned_to)"
+            "channels!inner(mode), leads!inner(name, assigned_to, metadata)"
         )
         .eq("channels.mode", "human")
         .not_.is_("last_customer_message_at", "null")
@@ -724,6 +747,11 @@ def check_handoff_sla(now: datetime) -> int:
         if candidates else {}
     )
 
+    fora_do_crm = (
+        _vendedores_fora_do_crm(sb, [_vendedor_do_lead(_embed_one(r.get("leads"))) for r, _ in candidates])
+        if candidates else set()
+    )
+
     violated: list[str] = []
     lead_names: dict[str, str] = {}
     for row, customer_ts in candidates:
@@ -731,6 +759,8 @@ def check_handoff_sla(now: datetime) -> int:
         if lead_seller_ts and lead_seller_ts >= customer_ts:
             continue  # respondeu em outra conversa do mesmo lead — ok
         lead = _embed_one(row.get("leads"))
+        if _vendedor_do_lead(lead) in fora_do_crm:
+            continue  # vendedor atende fora do CRM (Arthur, fixo) — nada a medir aqui
         cfg = cfg_by_user.get(lead.get("assigned_to")) or cfg_by_user.get(None) or SLA_DEFAULT_CFG
         if _minutos_uteis(customer_ts, now, cfg) <= HANDOFF_SLA_MINUTES:
             continue
