@@ -36,7 +36,7 @@ export async function POST(request: NextRequest) {
 
   const { data, error } = await supabase
     .from("leads")
-    .insert({ phone: canonical, status: "imported", stage: "pending" })
+    .insert({ phone: canonical, status: "imported", stage: "pending", origem_cadastro: "manual" })
     .select("id")
     .single();
 

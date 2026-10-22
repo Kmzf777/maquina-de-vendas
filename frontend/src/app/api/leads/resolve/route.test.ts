@@ -71,6 +71,7 @@ describe("POST /api/leads/resolve", () => {
       phone: "5549999170363",
       status: "imported",
       stage: "pending",
+      origem_cadastro: "manual",
     });
   });
 
