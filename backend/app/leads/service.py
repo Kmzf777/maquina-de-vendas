@@ -474,7 +474,14 @@ def get_or_create_lead(
     ctwa_clid: str | None = None,
     tracking: dict[str, Any] | None = None,
     bsuid: str | None = None,
+    origem_cadastro: str | None = None,
 ) -> dict[str, Any]:
+    """Acha ou cria o lead pelo telefone (ou BSUID).
+
+    `origem_cadastro` (b67f1c6b) só entra no lead NOVO: quem cria um lead que não chegou
+    sozinho pelo WhatsApp/LP (ex.: alvo de disparo outbound → 'manual') informa a origem.
+    Omitido = default da coluna, 'inbound' (webhook Meta, buffer, LP).
+    """
     sb = get_supabase()
     # Não persistir handle/username (ex.: push_name "Brunor_barista") como nome do lead.
     name = sanitize_display_name(name)
@@ -501,6 +508,8 @@ def get_or_create_lead(
             insert["channel"] = channel
         if ctwa_clid:
             insert["ctwa_clid"] = ctwa_clid
+        if origem_cadastro:
+            insert["origem_cadastro"] = origem_cadastro
         created = sb.table("leads").insert(insert).execute()
         return created.data[0]
 
@@ -641,6 +650,8 @@ def get_or_create_lead(
         new_lead["traffic_type"] = traffic_type
     if is_bsuid(bsuid):
         new_lead["bsuid"] = bsuid
+    if origem_cadastro:
+        new_lead["origem_cadastro"] = origem_cadastro
     result = sb.table("leads").insert(new_lead).execute()
     return result.data[0]
 

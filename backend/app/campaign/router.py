@@ -66,6 +66,7 @@ async def import_leads(campaign_id: str, file: UploadFile = File(...)):
                 "campaign_id": campaign_id,
                 "status": "imported",
                 "stage": "pending",
+                "origem_cadastro": "csv_import",  # b67f1c6b: importado não é lead inbound
             }).execute()
             created += 1
         except Exception:

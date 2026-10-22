@@ -165,7 +165,9 @@ async def import_leads(broadcast_id: str, file: UploadFile = File(...)):
         try:
             # get_or_create_lead handles 12→13-digit legacy backfill, preventing
             # duplicate leads that would cause the same person to receive two templates.
-            lead = _get_or_create_lead(phone)
+            # Alvo de disparo outbound não é lead inbound (b67f1c6b): 'manual' evita a
+            # entrada "Orgânico" e o "Leads novos". Só vale para o lead criado agora.
+            lead = _get_or_create_lead(phone, origem_cadastro="manual")
             # CAMADA 1 — filtro de origem: nunca enfileirar blacklist (opt-out / pipeline Blacklist).
             if _is_lead_blacklisted(lead["id"]):
                 skipped_blacklist += 1

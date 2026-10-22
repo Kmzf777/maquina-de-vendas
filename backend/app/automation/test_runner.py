@@ -86,7 +86,10 @@ def _get_or_create_test_lead(phone: str) -> tuple[dict, bool]:
         "phone": normalized,
         "env_tag": env_tag,
         "ai_enabled": False,
-        "stage": "Novo",
+        # Fase válida (CHECK leads_stage_fase_check, b67f1c6b) e origem 'manual': o lead de
+        # teste não é lead de marketing.
+        "stage": "novo",
+        "origem_cadastro": "manual",
     }).execute().data
     if not inserted:
         raise RuntimeError("Falha ao criar lead de teste")

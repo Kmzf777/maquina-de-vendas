@@ -115,7 +115,8 @@ async def test_import_leads_calls_get_or_create_lead():
         from app.broadcast.router import import_leads
         result = await import_leads(broadcast_id="bc-uuid", file=mock_file)
 
-    mock_gcl.assert_called_once_with("5511987654321")
+    # b67f1c6b: o alvo de disparo criado agora nasce com origem_cadastro manual.
+    mock_gcl.assert_called_once_with("5511987654321", origem_cadastro="manual")
     assert result["imported"] == 1
     assert result["invalid"] == 0
 
