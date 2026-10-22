@@ -566,3 +566,34 @@ def test_score_qualifica_e_compartilhado_com_o_fluxo_de_botoes():
     from app.button_flow import valeria_runner
     from app.leads.qualificado import score_qualifica
     assert valeria_runner._score_qualifica is score_qualifica
+
+
+# ─────────────────────────────────────────────── cartão segue o vendedor RESOLVIDO
+
+@pytest.mark.asyncio
+async def test_sem_segmento_e_vendedor_arthur_manda_cartao_do_arthur(monkeypatch, tabela):
+    reg = _mocks_handoff(monkeypatch, LEAD_SEM_SEG)
+    res = await _encaminhar({"vendedor": "Arthur", "motivo": "importador"})
+    contato = reg["provider"].send_contact.call_args.kwargs
+    assert contato == {"contact_name": EXPORTACAO_NAME, "contact_phone": EXPORTACAO_PHONE}
+    despedida = reg["provider"].send_text.call_args.args[1]
+    assert "Arthur" in despedida and "João" not in despedida
+    assert reg["rescue"] == []
+    assert _desligou(reg)["assigned_to"] == "u-arthur"
+    assert res == "Lead encaminhado para Arthur"
+
+
+@pytest.mark.asyncio
+async def test_sem_segmento_arthur_com_cadastro_vazio_ainda_manda_o_arthur(monkeypatch, tabela_vazia):
+    reg = _mocks_handoff(monkeypatch, LEAD_SEM_SEG)
+    await _encaminhar({"vendedor": "Arthur", "motivo": "importador"})
+    assert reg["provider"].send_contact.call_args.kwargs["contact_name"] == EXPORTACAO_NAME
+    assert reg["rescue"] == []
+
+
+@pytest.mark.asyncio
+async def test_atacado_com_llm_dizendo_arthur_segue_o_joao(monkeypatch, tabela):
+    reg = _mocks_handoff(monkeypatch, LEAD_ATACADO)
+    await _encaminhar({"vendedor": "Arthur", "motivo": "q"})
+    assert reg["provider"].send_contact.call_args.kwargs["contact_name"] == SUPERVISOR_NAME
+    assert len(reg["rescue"]) == 1

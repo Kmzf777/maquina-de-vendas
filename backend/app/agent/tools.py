@@ -863,6 +863,21 @@ def _despedida_exportacao() -> str:
         return "combinado, já passei pro Arthur\n\nele entra em contato assim que estiver disponível"
 
 
+def _vendedor_e_exportacao(vendedor_id: str | None, rotulo: str | None) -> bool:
+    """O vendedor resolvido atende exportação (`'exportacao' in vendedores.segmentos`).
+    Sem linha no cadastro (vazio/indisponível), decide pelo rótulo: "Arthur"."""
+    row = None
+    if vendedor_id:
+        try:
+            from app.vendedores import service as vendedores
+            row = vendedores.por_id(vendedor_id)
+        except Exception as exc:
+            logger.warning("encaminhar_humano: cadastro de vendedores indisponível: %s", exc)
+    if row is not None:
+        return "exportacao" in (row.get("segmentos") or [])
+    return _normalize_text(rotulo or "").split()[:1] == ["arthur"]
+
+
 async def _t_encaminhar_humano(ctx: ToolContext) -> str:
     args = ctx.args
     lead_id = ctx.lead_id
@@ -893,7 +908,11 @@ async def _t_encaminhar_humano(ctx: ToolContext) -> str:
     )
     if _seg is None:
         _assigned_to = _vendedor_id
-    _exportacao = _seg == "exportacao"
+    # O cartão/despedida/resgate seguem o vendedor RESOLVIDO: lead sem segmento de vendedor
+    # (None/consumo) que o LLM mandou para o Arthur recebe o cartão de exportação.
+    _exportacao = _seg == "exportacao" or (
+        _seg not in SEGMENT_HANDOFF_PIPELINE and _vendedor_e_exportacao(_vendedor_id, vendedor)
+    )
     _disable_fields = {"status": "converted", "human_control": True, "ai_enabled": False}
     if _assigned_to:
         _disable_fields["assigned_to"] = _assigned_to
