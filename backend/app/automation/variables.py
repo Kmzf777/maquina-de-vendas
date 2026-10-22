@@ -2,6 +2,7 @@
 from datetime import datetime, timezone
 from dateutil.parser import parse as parse_dt
 from app.db.supabase import get_supabase
+from app.vendedores import service as vendedores_service
 
 
 def substitute_variables(text: str, lead: dict, enrollment: dict | None = None) -> str:
@@ -58,13 +59,10 @@ def _fill_sale_vars(text: str, lead: dict, out: dict) -> None:
 def _fill_seller_var(text: str, lead: dict, out: dict) -> None:
     if "{{vendedor}}" not in text:
         return
+    # Cadastro único `vendedores` (b67f1c6b); `team_users` nunca existiu.
     assigned = lead.get("assigned_to")
-    if not assigned:
-        out["{{vendedor}}"] = ""
-        return
-    sb = get_supabase()
-    rows = sb.table("team_users").select("name").eq("id", assigned).limit(1).execute().data
-    out["{{vendedor}}"] = rows[0]["name"] if rows else ""
+    vendedor = vendedores_service.por_id(assigned) if assigned else None
+    out["{{vendedor}}"] = (vendedor or {}).get("nome") or ""
 
 
 def _fill_deal_vars(text: str, lead: dict, out: dict) -> None:

@@ -49,3 +49,27 @@ class TestSubstituteVariables:
         with patch("app.automation.variables.get_supabase") as mock_get_sb:
             substitute_variables("Olá {{nome}}", LEAD, ENROLLMENT)
         mock_get_sb.assert_not_called()
+
+
+class TestSellerVar:
+    """{{vendedor}} lê o cadastro único `vendedores` (cartão b67f1c6b), não mais `team_users`."""
+
+    def test_vendedor_pelo_cadastro(self):
+        lead = {**LEAD, "assigned_to": "u-joao"}
+        with patch("app.automation.variables.vendedores_service.por_id",
+                   return_value={"id": "u-joao", "nome": "João Brás"}) as por_id, \
+             patch("app.automation.variables.get_supabase") as gs:
+            result = substitute_variables("Fale com {{vendedor}}", lead, ENROLLMENT)
+        assert result == "Fale com João Brás"
+        por_id.assert_called_once_with("u-joao")
+        gs.assert_not_called()
+
+    def test_vendedor_desconhecido_vira_vazio(self):
+        lead = {**LEAD, "assigned_to": "u-sumiu"}
+        with patch("app.automation.variables.vendedores_service.por_id", return_value=None):
+            assert substitute_variables("[{{vendedor}}]", lead, ENROLLMENT) == "[]"
+
+    def test_sem_assigned_to_nao_consulta(self):
+        with patch("app.automation.variables.vendedores_service.por_id") as por_id:
+            assert substitute_variables("[{{vendedor}}]", LEAD, ENROLLMENT) == "[]"
+        por_id.assert_not_called()
