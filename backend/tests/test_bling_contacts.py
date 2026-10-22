@@ -476,16 +476,26 @@ def test_create_faz_post_quando_realmente_nao_existe(monkeypatch):
     assert enviado["tipo"] == "F"
 
 
-def test_create_devolve_409_quando_o_contato_ja_e_de_outro_lead(monkeypatch):
-    """I5: aqui a falta de tratamento e pior que no `resolve`.
+def test_create_transfere_o_contato_que_ja_era_de_outro_lead(monkeypatch):
+    """Caso Jessica/Vinicius (22/10): dois leads da mesma empresa. O contato do
+    Bling estava no lead do Vinicius; o vendedor lancou pela Jessica, digitou o
+    CNPJ e clicou "Cadastrar e lancar o pedido". Antes: 409 "abra o lead
+    existente ou desfaca o vinculo", e o pedido montado ficava preso.
 
-    O contato JA existe no Bling, entao toda tentativa futura repete
-    GET -> acha -> `_link` -> 23505: laco de falha permanente, sem mensagem que
-    permita ao vendedor entender o que fazer. Vira 409 com instrucao.
+    O CNPJ digitado identifica o contato sem ambiguidade (a mesma decisao do
+    "E este cliente"): o vinculo NESTA conta passa para o lead do pedido, sem
+    criar contato novo no Bling e sem laco de falha.
     """
+    upserts = {"n": 0}
+
     def lead_bling_contacts(filters):
         if "upsert" in filters:
-            raise FakeUniqueViolation()
+            upserts["n"] += 1
+            if upserts["n"] == 1:
+                raise FakeUniqueViolation()
+            return [filters["upsert"]]
+        if filters.get("delete"):
+            return [{"lead_id": "L-antigo"}]
         return []
 
     sb = FakeSupabase({"lead_bling_contacts": lead_bling_contacts})
@@ -505,13 +515,15 @@ def test_create_devolve_409_quando_o_contato_ja_e_de_outro_lead(monkeypatch):
             return {"data": {"id": 999999}}
 
     client = FakeClient()
-    with pytest.raises(BlingValidationError) as exc:
-        asyncio.run(ct.create_contact(
-            client, {"id": "L1"}, {"nome": "X", "numeroDocumento": "12345678909"}))
+    out = asyncio.run(ct.create_contact(
+        client, {"id": "L1"}, {"nome": "X", "numeroDocumento": "12345678909"}))
 
-    assert exc.value.status == 409
-    assert "outro lead" in str(exc.value).lower()
+    assert out == 424242
     assert client.posts == []
+    vinculos = [q.filters for q in sb.queries if q.name == "lead_bling_contacts"]
+    apagou = [f for f in vinculos if f.get("delete")]
+    assert apagou and apagou[0]["bling_contact_id"] == 424242
+    assert vinculos[-1]["upsert"]["lead_id"] == "L1"
 
 
 def test_create_nao_cria_quando_o_lock_e_negado(monkeypatch):
