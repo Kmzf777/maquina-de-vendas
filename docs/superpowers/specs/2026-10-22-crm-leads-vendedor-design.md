@@ -162,7 +162,7 @@ Para cada backfill:
 | F6 | Vendedor: `deals.assigned_to` pelo dono do funil (3.278) ou pelo `assigned_to` do lead (48); `leads.assigned_to` e `handoff.vendedor_id` pelo nome do repasse, só quando inequívoco (508 João + 20 Arthur). Os ambíguos ("Vendedor" 60, "Joao Bras" fora de segmento 22) vão para relatório | cerca de 3.326 + 528 |
 | F7 | Evento `qualificado`: 1º repasse não excluído de cada lead (até 1.776) + score B2B `>=5` definitivo (18, com data de `updated_at`) | até cerca de 1.794 |
 
-Ordem obrigatória: F1, F2 e F3 rodam **antes** do push do código, porque o código novo roteia por `segmento`. F4 a F7 rodam depois.
+Ordem obrigatória: migrations a, b, c, d, d1 e g; F1; F2; migration e (precisa do F1 e do F2); push do código; F3 e, logo depois, a migration f; F4 a F7. F1 e F2 rodam **antes** do push, porque o código novo roteia por `segmento`. O F3 roda **depois** do push, para o código antigo nunca rodar com `stage` já convertido em fase (o código novo lê o `stage` antigo enquanto `segmento` está vazio). Da migration d até o F7, a taxa de qualificação fica perto de 0; o F7 roda no mesmo dia.
 O F3 é UPDATE direto no banco: não dispara as automações `stage_enter` do Python. Antes de rodar, confiro que não há gatilho de banco em `leads.stage` que grave evento ou mova card.
 
 ## Onde
@@ -175,6 +175,7 @@ O F3 é UPDATE direto no banco: não dispara as automações `stage_enter` do Py
   - `20261022d_qualificado_dashboard.sql`
   - `20261022e_analytics.sql`
   - `20261022f_stage_fase_check.sql` (só depois do F3)
+  - `20261022g_search_leads_segmento.sql`
 - **Backend:** `agent/tools.py`, `leads/service.py`, `leads/repasse.py`, `leads/qualificado.py` (novo), `vendedores/` (novo), `button_flow/effects.py`, `button_flow/valeria_runner.py`, `buffer/processor.py`, `buffer/parking.py`, `follow_up/scheduler.py`, `orchestrator.py`, `automation/engine.py`, `automation/variables.py`, `campaigns/node_registry.py`, `campaigns/traffic_report.py`, `bling/contacts.py`, `watchdog/service.py`, `agent/summary.py`.
 - **Frontend:** as telas e rotas listadas acima.
 - **Serviços:** `canastra_api`, `canastra_worker` e `crm_crm` (deploy pelo GitHub Actions), mais o Postgres `supabase_db`.
@@ -237,14 +238,17 @@ Tudo no worktree `agente/b67f1c6b`, antes de qualquer push.
 ## Como publicar (só depois do [Liberar produção])
 
 1. **Pré-checagem:** `docker service ls`, `docker service logs --since 1h canastra_api`, `pm2 ls`. Se `origin/master` andou, `git pull origin master` no branch e rodar os testes de novo.
-2. **Migrations a–e à mão** pelo `psql` do `supabase_db`, uma por vez, com `SET LOCAL lock_timeout='5s'`. Todas são aditivas, e o código atual segue funcionando com elas. Depois, recarregar o PostgREST com SIGUSR1 (o NOTIFY é ignorado nesta VPS) e conferir que as funções, colunas e grants existem.
-3. **F1, F2 e F3**, cada um com o seu OK. Depois do F3, a migration f (CHECK de fase).
+2. **Migrations a, b, c, d, d1 e g à mão** pelo `psql` do `supabase_db`, uma por vez, com `SET LOCAL lock_timeout='5s'`. Todas são aditivas, e o código atual segue funcionando com elas. Depois, recarregar o PostgREST com SIGUSR1 (o NOTIFY é ignorado nesta VPS) e conferir que as funções, colunas e grants existem. Da d até o F7 a taxa de qualificação fica perto de 0: o F7 roda no mesmo dia.
+3. **F1 e F2**, cada um com o seu OK. Depois, a migration e (precisa do F1 e do F2).
 4. **Merge e push:** merge de `agente/b67f1c6b` em `master` e `git push origin agente/b67f1c6b:master`, sem force. O GitHub Actions faz o deploy de `crm_crm`, `canastra_api` e `canastra_worker`. Acompanhar o job e os logs até os serviços estabilizarem.
-5. **F4 a F7**, um por vez, cada um com o seu OK.
+5. **F3**, com o seu OK, e logo depois a migration f (CHECK de fase). Depois, **F4 a F7**, um por vez, cada um com o seu OK.
 6. **Voltar atrás:**
+   - antes do revert do código: `ALTER TABLE public.leads DROP CONSTRAINT IF EXISTS leads_stage_fase_check;` e o `f3_rollback.sql`;
    - código: `git revert` do merge e push, que redeploya a versão anterior;
-   - migrations: `scripts/leads_vendedor/rollback_migrations.sql`, que recria `dashboard_kpis`, `dashboard_funnel_conversion`, `fn_lead_canal`, o gatilho e as views analytics a partir das definições guardadas, e remove as colunas e funções novas. Só roda **depois** do revert do código;
-   - backfills: o rollback de cada um, a partir de `backup_b67f_<n>`.
+   - backfills: os demais rollbacks (F7, F6, F5, F4, F2, F1), a partir de `backup_b67f_<n>`;
+   - migrations: `scripts/leads_vendedor/rollback_migrations.sql`, que recria `dashboard_kpis`, `dashboard_funnel_conversion`, `fn_lead_canal`, o gatilho e as views analytics a partir das definições guardadas, e remove as colunas e funções novas; a g volta reaplicando a `search_leads` de `20260818_universal_search.sql`. Só roda **depois** do revert do código e dos rollbacks dos backfills.
+
+Ajuste de 22/10 na execução: ordem de publicação revista (push antes do F3) para o código antigo nunca rodar com stage já convertido; F6 não preenche deals do funil Blacklist.
 
 ## Como testar em produção
 

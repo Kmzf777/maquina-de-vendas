@@ -2,6 +2,46 @@
 
 Cada parte edita só a sua seção.
 
+## Ordem de publicação e de rollback (vale para o cartão inteiro)
+
+Revista em 22/10 pelo coordenador. Manda sobre as notas de ordem das seções abaixo. O push vem
+antes do F3: o código antigo nunca roda com `leads.stage` já convertido em fase. O código novo
+funciona com o `stage` antigo, porque `segmento_do_lead` cai no `stage` quando `segmento` está vazio.
+
+Publicar (psql do `supabase_db`, uma coisa por vez, cada backfill com o seu OK):
+
+1. Migrations aditivas, nesta ordem: `20261022a_vendedores.sql`, `20261022b_segmento.sql`,
+   `20261022c_origem_cadastro.sql`, `20261022d_qualificado_dashboard.sql`, `20261022d1_score_directory.sql`,
+   `20261022g_search_leads_segmento.sql`. O código atual segue funcionando com elas. Depois, recarregar o
+   PostgREST com SIGUSR1 (o NOTIFY é ignorado nesta VPS).
+2. `f1_vendedores.sql` (precisa da a).
+3. `f2_segmento.sql` (precisa da b).
+4. Migration `20261022e_analytics.sql` (precisa do F1 e do F2: `dim_vendedor` lê `vendedores` e `dim_lead`
+   lê `leads.segmento`).
+5. Push do código (deploy pelo GitHub Actions). Acompanhar até `canastra_api`, `canastra_worker` e `crm_crm`
+   estabilizarem.
+6. `f3_fase.sql`, e logo depois a migration `20261022f_stage_fase_check.sql` (CHECK de fase; falha se o F3
+   não rodou).
+7. `f4_origem.sql` (precisa da c).
+8. `f5_entrada_organico.sql` (precisa da c e do F4).
+9. `f6_vendedor.sql` (precisa do F1 e do F2/F3).
+10. `f7_qualificado.sql` (precisa do F1 e do F2).
+
+**Taxa de qualificação:** da migration d até o F7, o dashboard conta só o evento `qualificado`, que só o
+código novo e o F7 gravam. Nesse intervalo a taxa fica perto de 0. Por isso o F7 roda no mesmo dia da d.
+
+Voltar atrás:
+
+1. Antes do revert do código: `ALTER TABLE public.leads DROP CONSTRAINT IF EXISTS leads_stage_fase_check;`
+   e `f3_rollback.sql`. Assim o código antigo volta já com o segmento em `stage`.
+2. `git revert` do merge e push (redeploya a versão anterior).
+3. Demais rollbacks dos backfills: `f7_rollback.sql`, `f6_rollback.sql`, `f5_rollback.sql`, `f4_rollback.sql`,
+   `f2_rollback.sql`, `f1_rollback.sql`. Antes da migration a nenhum deal tinha `assigned_to`. Se o `f1_rollback`
+   abortar pela FK, a causa são cards atribuídos pelo código novo depois do push. Zere-os
+   (`update public.deals set assigned_to = null where assigned_to is not null;`) e rode o `f1_rollback` de novo.
+4. `rollback_migrations.sql` (desfaz f, e, d1, d, c, b, a). A g não está nele: reaplicar a `search_leads` de
+   `supabase/migrations/20260818_universal_search.sql`. Depois, SIGUSR1 no PostgREST.
+
 ## F2, F3, F4 (segmento, fase, origem)
 
 Contagem em produção em 22/10/2026, só SELECT (`f2_/f3_/f4_contagem_producao.sql`, regra equivalente
@@ -19,12 +59,13 @@ Backups: `public.backup_b67f_f2|f3|f4` (id, valor_anterior jsonb, gravado_em), c
 sem grant para anon/authenticated. Os rollbacks (`fN_rollback.sql`) só voltam linhas que ainda têm o
 valor gravado pelo backfill e não apagam o backup.
 
-Ordem:
+Ordem (a sequência completa, com o push antes do F3, está no topo deste README):
 1. migration `20261022b` → `f2_segmento.sql`.
-2. `f3_fase.sql` (aborta se algum lead com stage-segmento não tiver o mesmo segmento, ou seja, se o F2 não rodou).
+2. Push do código. Depois, `f3_fase.sql` (aborta se algum lead com stage-segmento não tiver o mesmo segmento,
+   ou seja, se o F2 não rodou).
 3. Aplicar `supabase/migrations/20261022f_stage_fase_check.sql` (CHECK de fase). O F3 imprime no fim os
    stages fora das fases; precisa sair vazio. Testado no scratch: a f passa depois do F3 e falha antes ("rodar F3 antes").
-4. Push do código. Depois: migration `20261022c` → `f4_origem.sql`.
+4. `f4_origem.sql` (a migration `20261022c` já entrou antes do push).
 
 Desfazer: F3 antes do F2 (o `f2_rollback.sql` recusa enquanto houver lead na fase do F3). Se a migration f
 já entrou, `ALTER TABLE public.leads DROP CONSTRAINT IF EXISTS leads_stage_fase_check;` antes do `f3_rollback.sql`.
@@ -114,8 +155,9 @@ lead de consumo 15 / secretaria 5 / exportacao 2 = 22 (vendedor não atende o se
 `handoff.segmento` ou `stage` em consumo/secretaria/exportacao fora de `vendedores.segmentos`).
 
 Notas:
-- Ordem: migration `20261022a` → `f1_vendedores.sql` (antes do push). `f6_vendedor.sql` depois do push (F4–F7)
-  e depois do F1 (e do F2/F3, para o filtro de segmento enxergar `leads.segmento`).
+- Ordem (completa no topo deste README): migration `20261022a` → `f1_vendedores.sql` (antes do push).
+  `f6_vendedor.sql` depois do push e do F3, e depois do F1 (e do F2, para o filtro de segmento enxergar
+  `leads.segmento`).
 - Funil **Blacklist** (decisão de 22/10, caminho conservador): o F6 não preenche nenhum deal dele, nem pelo dono
   do funil nem pelo vendedor do lead. Hoje são 177 deals sem vendedor lá, 67 deles com lead do João (seriam o
   fallback pelo lead); todos vão para a seção `blacklist` de `relatorios/vendedores_ambiguos.sql`.
