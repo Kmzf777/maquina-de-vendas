@@ -106,8 +106,10 @@ values ('aaaaaaaa-0000-0000-0000-000000000002', '5511900000002', 'Sem rastreio')
 do $$
 declare e public.lead_events; n int;
 begin
-  select count(*) into n from public.lead_events where lead_id = 'aaaaaaaa-0000-0000-0000-000000000002';
-  assert n = 0, 'lead sem rastreio nao gera entrada';
+  -- b67f1c6b (20261022c, D1b): lead inbound sem rastreio ganha a entrada "Organico"
+  select count(*) into n from public.lead_events where lead_id = 'aaaaaaaa-0000-0000-0000-000000000002'
+     and event_type = 'entrada' and source = 'inbound' and metadata->>'sem_rastreio' = 'true';
+  assert n = 1, 'lead inbound sem rastreio gera 1 entrada Organico';
   select * into e from public.lead_events where lead_id = 'aaaaaaaa-0000-0000-0000-000000000001';
   assert e.event_type = 'entrada', 'insert com ctwa_clid gera entrada';
   assert e.dedupe_key = 'entrada:lead:aaaaaaaa-0000-0000-0000-000000000001:inicial', e.dedupe_key;
@@ -190,7 +192,8 @@ update public.deals set title = 'Card renomeado' where id = 'bbbbbbbb-0000-0000-
 do $$
 declare e public.lead_events; k text;
 begin
-  assert (select count(*) from public.lead_events where lead_id = 'bbbbbbbb-0000-0000-0000-0000000000c1') = 2,
+  assert (select count(*) from public.lead_events where lead_id = 'bbbbbbbb-0000-0000-0000-0000000000c1'
+           and event_type = 'etapa') = 2,
     'so a mudanca de etapa gera evento';
   select 'etapa:' || d.id || ':' || d.stage_id || ':' || extract(epoch from d.entered_stage_at)::text
     into k from public.deals d where d.id = 'bbbbbbbb-0000-0000-0000-0000000000d1';
@@ -264,7 +267,8 @@ insert into public.leads (id, phone) values
 insert into public.broadcast_leads (id, broadcast_id, lead_id) values
   ('dddddddd-0000-0000-0000-0000000000f1', 'dddddddd-0000-0000-0000-0000000000b1', 'dddddddd-0000-0000-0000-0000000000c1');
 do $$ begin
-  assert (select count(*) from public.lead_events where lead_id = 'dddddddd-0000-0000-0000-0000000000c1') = 0,
+  assert (select count(*) from public.lead_events where lead_id = 'dddddddd-0000-0000-0000-0000000000c1'
+           and event_type = 'disparo') = 0,
     'pendente nao e disparo';
 end $$;
 update public.broadcast_leads set sent_at = now(), status = 'sent' where id = 'dddddddd-0000-0000-0000-0000000000f1';
@@ -273,7 +277,8 @@ update public.broadcast_leads set sent_at = now() + interval '1 minute' where id
 do $$
 declare e public.lead_events;
 begin
-  assert (select count(*) from public.lead_events where lead_id = 'dddddddd-0000-0000-0000-0000000000c1') = 1,
+  assert (select count(*) from public.lead_events where lead_id = 'dddddddd-0000-0000-0000-0000000000c1'
+           and event_type = 'disparo') = 1,
     'um disparo por envio';
   select * into e from public.lead_events where dedupe_key = 'disparo:dddddddd-0000-0000-0000-0000000000f1';
   assert e.new_value = 'Reativação Outubro' and e.source = 'disparo'
@@ -344,15 +349,17 @@ begin
      and e.metadata->>'campanha_nome' = 'CTWA Recuperada', e.metadata::text;
   assert e.occurred_at < now() - interval '39 days', 'a data da entrada nao muda';
 end $$;
--- lead antigo SEM evento algum (anterior a migracao): o update de meta_ad_id nao cria nada
+-- lead antigo SEM evento algum (anterior a migracao). b67f1c6b (20261022c): o update de
+-- meta_ad_id grava a entrada datada do CADASTRO (':inicial'), nunca de hoje
 set session_replication_role = replica;
 insert into public.leads (id, phone, ctwa_clid)
 values ('abababab-0000-0000-0000-000000000002', '5511900000052', 'clid-m2');
 set session_replication_role = origin;
 update public.leads set meta_ad_id = 'ad-p3m' where id = 'abababab-0000-0000-0000-000000000002';
 do $$ begin
-  assert (select count(*) from public.lead_events where lead_id = 'abababab-0000-0000-0000-000000000002') = 0,
-    'sem entrada com o mesmo ctwa_clid: nao faz nada';
+  assert (select count(*) from public.lead_events where lead_id = 'abababab-0000-0000-0000-000000000002'
+           and dedupe_key = 'entrada:lead:abababab-0000-0000-0000-000000000002:inicial') = 1,
+    'lead sem entrada nenhuma: o anuncio vira a entrada do cadastro';
 end $$;
 -- a entrada mais recente tem OUTRO ctwa_clid: nao enriquece
 update public.lead_events set metadata = metadata || '{"ctwa_clid": "clid-velho"}'
@@ -574,7 +581,8 @@ set local role authenticated;
 delete from public.sales where id = 'cdcdcdcd-0000-0000-0000-0000000000e1';
 reset role;
 do $$ begin
-  assert not exists (select 1 from public.lead_events where lead_id = 'cdcdcdcd-0000-0000-0000-0000000000c1'),
+  assert not exists (select 1 from public.lead_events where lead_id = 'cdcdcdcd-0000-0000-0000-0000000000c1'
+                      and event_type <> 'entrada'),
     'venda apagada leva venda e venda_cancelada junto';
 end $$;
 rollback;
@@ -620,7 +628,8 @@ begin
   select * into e from public.lead_events where dedupe_key = 'disparo:dededede-0000-0000-0000-0000000000f1';
   assert e.occurred_at = '2026-09-03 12:00+00', 'on conflict atualiza a data: ' || e.occurred_at;
   assert e.metadata->>'broadcast_nome' = 'Disparo Cap v2', e.metadata::text;
-  assert (select count(*) from public.lead_events where lead_id = 'dededede-0000-0000-0000-0000000000c1') = 1,
+  assert (select count(*) from public.lead_events where lead_id = 'dededede-0000-0000-0000-0000000000c1'
+           and event_type = 'disparo') = 1,
     'um evento so';
 end $$;
 rollback;

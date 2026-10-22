@@ -40,11 +40,13 @@ VENDEDOR2 = "7b143561-0000-0000-0000-0000000000f2"
 MARCADOR = "[encaminhar_humano] Lead encaminhado ao vendedor João (atacado)"
 
 # Saída de dashboard_kpis em produção (conferida em 19/10/2026): não pode mudar.
+# b67f1c6b (20261022d_qualificado_dashboard.sql): ganhou contacts_new no FIM; o resto é igual.
 KPIS_RESULT = (
     "TABLE(leads_new bigint, leads_prev bigint, active_with_ai bigint, "
     "active_awaiting_lead bigint, conversations_attended bigint, handoffs bigint, "
     "qualification_rate numeric, sla_median_minutes numeric, sla_p95_minutes numeric, "
-    "sla_samples bigint, cost_per_handoff_usd numeric, cost_per_atendimento_usd numeric)"
+    "sla_samples bigint, cost_per_handoff_usd numeric, cost_per_atendimento_usd numeric, "
+    "contacts_new bigint)"
 )
 
 
