@@ -122,9 +122,9 @@ def gerar_insert_lead(dados, nome_crm):
     return (
         "INSERT INTO leads (phone, name, company, stage, status, channel, "
         "assigned_to, cnpj, razao_social, nome_fantasia, email, endereco, metadata, "
-        "ai_enabled)\n"
+        "ai_enabled, origem_cadastro)\n"
         "VALUES (%s, %s, %s, 'pending', 'imported', %s, %s::uuid, %s, %s, %s, %s, %s, "
-        "%s::jsonb, false)\n"
+        "%s::jsonb, false, 'reativacao_import')\n"
         "ON CONFLICT (phone) DO NOTHING;" % (
             sql_literal(phone),
             sql_literal(nome),

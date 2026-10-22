@@ -138,6 +138,16 @@ class TestSqlFunil:
 
 
 class TestSqlLead:
+    def test_origem_cadastro_reativacao_import(self):
+        """b67f1c6b: lead da reativação nasce com origem_cadastro de importado."""
+        linha = _linha(whatsapp="553491461669")
+        linha["_phone"] = lote_completo.telefone_da_linha(linha)
+        sql = lote_completo.gerar_insert_lead(linha)
+        colunas = [c.strip() for c in sql.split("(", 1)[1].split(")", 1)[0].split(",")]
+        assert "origem_cadastro" in colunas
+        assert "'reativacao_import'" in sql
+        assert "'pending', 'imported'" in sql
+
     def test_insere_com_telefone_canonico(self):
         linha = _linha(whatsapp="553491461669")   # celular antigo: ganha o 9
         linha["_phone"] = lote_completo.telefone_da_linha(linha)

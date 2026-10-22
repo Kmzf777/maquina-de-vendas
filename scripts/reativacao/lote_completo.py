@@ -215,8 +215,9 @@ def gerar_insert_lead(linha):
     return (
         "INSERT INTO leads (phone, name, company, razao_social, nome_fantasia, "
         "cnpj, email, endereco, telefone_comercial, stage, status, channel, "
-        "ai_enabled, opt_out, metadata) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, "
-        "%s, 'pending', 'imported', 'manual', false, false, %s::jsonb) "
+        "ai_enabled, opt_out, metadata, origem_cadastro) VALUES (%s, %s, %s, %s, %s, %s, "
+        "%s, %s, %s, 'pending', 'imported', 'manual', false, false, %s::jsonb, "
+        "'reativacao_import') "
         "ON CONFLICT (phone) DO NOTHING;" % (
             sql_literal(linha["_phone"]),
             sql_literal(nome_do_lead(linha)),

@@ -74,6 +74,15 @@ class TestGerarInsertLead:
         assert "'pending'" in sql
         assert "'imported'" in sql
 
+    def test_origem_cadastro_reativacao_import(self):
+        """b67f1c6b: lead importado da reativação fica fora de "Leads novos" (D1)."""
+        sql = generate_sql.gerar_insert_lead(_dados(), None)
+        colunas = sql.split("(", 1)[1].split(")", 1)[0]
+        assert "origem_cadastro" in [c.strip() for c in colunas.split(",")]
+        assert "'reativacao_import'" in sql
+        # fase válida (CHECK leads_stage_fase_check) e status de importado
+        assert "'pending', 'imported'" in sql
+
     def test_atribui_ao_joao(self):
         sql = generate_sql.gerar_insert_lead(_dados(), None)
         assert generate_sql.JOAO_UUID in sql
@@ -135,7 +144,7 @@ class TestGerarInsertLead:
         # via sql_literal (que renderizaria a STRING 'False' entre aspas).
         sql = generate_sql.gerar_insert_lead(_dados(), None)
         assert "ai_enabled" in sql
-        assert ", false)" in sql
+        assert ", false, 'reativacao_import')" in sql
         assert "'False'" not in sql and "'false'" not in sql
 
     def test_razao_social_cai_no_nome_quando_vazia(self):
