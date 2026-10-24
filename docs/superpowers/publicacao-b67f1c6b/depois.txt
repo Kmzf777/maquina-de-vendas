@@ -1,0 +1,22 @@
+Output format is unaligned.
+Field separator is " | ".
+fora_enum | 0
+fora_fase | 0
+origem | inbound | f | 4439
+origem | reativacao_import | f | 995
+origem | reativacao_import | t | 212
+origem | bling_import | t | 172
+origem | inbound | t | 119
+origem | bling_import | f | 14
+status | imported | 3622
+status | converted | 1678
+status | active | 651
+sold_by_sem_vendedor | 0
+deals_fora | 0
+deals_com_vendedor | 3304
+kpis_0115 | 567 | 461 | 17 | 16 | 103 | 166 | 0.3753 | 2402.4 | 4482.4 | 5 | 0.0752 | 0.1174 | 476
+kpis_0123 | 785 | 721 | 17 | 16 | 157 | 247 | 0.3815 | 31.3 | 2977.7 | 35 | 0.0766 | 0.1166 | 700
+qualif_out | 260
+eventos_novos_pos_deploy | entrada | 182
+eventos_novos_pos_deploy | qualificado | 1306
+score_dir | 142

@@ -50,3 +50,38 @@ rc=0
 == 20261022e_analytics 2026-10-24T20:31:39-03:00
 rc=0
 COMMIT
+== f3_fase 2026-10-24T20:40:26-03:00
+NOTICE:  F3 alvo=2385 teto=2616
+COMMIT
+NOTICE:  F3 alterados=2385
+rc=0
+== 20261022f 2026-10-24T20:40:32-03:00
+rc=0
+ALTER TABLE
+ALTER TABLE
+COMMIT
+== f4_origem 2026-10-24T20:40:43-03:00
+NOTICE:  F4 alvo=1393 teto=1533
+NOTICE:  F4 alterados=1393
+COMMIT
+rc=0
+== f5_entrada_organico 2026-10-24T20:40:47-03:00
+NOTICE:  F5 alvo=182 (organico=175, meta_ad_id=7) teto=197
+NOTICE:  F5 alterados=182
+COMMIT
+rc=0
+== f6_vendedor 2026-10-24T20:40:50-03:00
+NOTICE:  F6   leads fora (relatório) nome nao resolve: 62
+NOTICE:  F6   leads fora (relatório) vendedor nao atende o segmento: 22
+NOTICE:  F6   deals assigned_to do lead João Brás: 1
+NOTICE:  F6   deals dono do funil Arthur: 30
+NOTICE:  F6   deals dono do funil João Brás: 3273
+NOTICE:  F6 leads alvo=552 teto=599
+NOTICE:  F6 deals alvo=3304 teto=3633
+COMMIT
+rc=0
+== f7_qualificado 2026-10-24T20:40:54-03:00
+NOTICE:  F7 alvo=1306 (repasse=1305, score=1) teto=1419
+NOTICE:  F7 alterados=1306
+COMMIT
+rc=0
