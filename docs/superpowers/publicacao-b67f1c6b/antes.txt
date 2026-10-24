@@ -1,0 +1,20 @@
+Output format is unaligned.
+Field separator is " | ".
+kpis_0115 | 476 | 483 | 16 | 15 | 103 | 166 | 0.1845 | 2402.4 | 4482.4 | 5 | 0.0752 | 0.1174
+kpis_0123 | 700 | 763 | 16 | 15 | 157 | 247 | 0.1847 | 31.3 | 2977.7 | 35 | 0.0766 | 0.1166
+stage | pending | 3224
+stage | private_label | 1091
+stage | atacado | 627
+stage | secretaria | 420
+stage | consumo | 209
+stage | novo | 191
+stage | perdido | 150
+stage | exportacao | 30
+stage | contato | 3
+stage | negociacao | 3
+stage | ja_chamado | 2
+status | imported | 3621
+status | converted | 1678
+status | active | 465
+status | ativo | 186
+deals_assigned | 0 | 5492

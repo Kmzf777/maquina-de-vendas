@@ -1,0 +1,52 @@
+== 20261022a_vendedores 2026-10-24T20:30:21-03:00
+ALTER TABLE
+DO
+CREATE INDEX
+COMMIT
+rc=0
+== 20261022b_segmento 2026-10-24T20:30:26-03:00
+REVOKE
+GRANT
+DO
+COMMIT
+rc=0
+== 20261022c_origem_cadastro 2026-10-24T20:30:30-03:00
+REVOKE
+DO
+COMMIT
+NOTICE:  fn_lead_canal_legado_b67f mantida: analytics.dim_lead ainda depende dela (a 20261022e a remove)
+rc=0
+== 20261022d_qualificado_dashboard 2026-10-24T20:30:33-03:00
+GRANT
+GRANT
+DO
+COMMIT
+rc=0
+== 20261022d1_score_directory 2026-10-24T20:30:37-03:00
+SET
+CREATE VIEW
+COMMENT
+COMMIT
+rc=0
+== 20261022g_search_leads_segmento 2026-10-24T20:30:40-03:00
+BEGIN
+SET
+CREATE FUNCTION
+COMMIT
+rc=0
+== f1_vendedores 2026-10-24T20:31:16-03:00
+NOTICE:  F1   bling_seller_map (insert): 1
+NOTICE:  F1   bling_seller_map.vendedor_id: 2
+NOTICE:  F1   pipelines.owner_user_id: 1
+NOTICE:  F1   vendedores: 4
+NOTICE:  F1 alvo=8 teto=9
+COMMIT
+rc=0
+== f2_segmento 2026-10-24T20:31:19-03:00
+NOTICE:  F2 alvo=1957 teto=2145
+NOTICE:  F2 alterados=1957
+COMMIT
+rc=0
+== 20261022e_analytics 2026-10-24T20:31:39-03:00
+rc=0
+COMMIT
