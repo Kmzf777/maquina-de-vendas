@@ -9,10 +9,13 @@ const fmtRoas = (v: number | null) =>
     ? "—"
     : `${v.toLocaleString("pt-BR", { minimumFractionDigits: 1, maximumFractionDigits: 2 })}x`;
 
-function Card({ label, value }: { label: string; value: string }) {
+function Card({ label, value, hint }: { label: string; value: string; hint?: string }) {
   return (
-    <div className="bg-white border border-[#dedbd6] rounded-[8px] p-4 flex flex-col gap-1">
-      <div className="text-[11px] uppercase tracking-[0.6px] text-[#7b7b78]">{label}</div>
+    <div data-kpi className="bg-white border border-[#dedbd6] rounded-[8px] p-4 flex flex-col gap-1">
+      <div className="text-[11px] uppercase tracking-[0.6px] text-[#7b7b78]">
+        <span>{label}</span>
+        {hint && <span className="normal-case tracking-normal"> · {hint}</span>}
+      </div>
       <div
         className="text-[22px] md:text-[26px] font-normal text-[#111111] mt-1 tabular-nums leading-none"
         style={{ letterSpacing: "-0.5px" }}
@@ -25,13 +28,15 @@ function Card({ label, value }: { label: string; value: string }) {
 
 export function CampaignKpis({ summary }: { summary: CampaignRow }) {
   const hasSpend = summary.investimento > 0 || summary.roas != null;
-  const cards: { label: string; value: string }[] = [
+  const cards: { label: string; value: string; hint?: string }[] = [
     { label: "Leads", value: fmtInt(summary.leads) },
     { label: "Conversas", value: fmtInt(summary.conversas) },
     { label: "Foi pro closer", value: fmtInt(summary.closer) },
     { label: "Clientes", value: fmtInt(summary.clientes) },
     { label: "Pedidos", value: fmtInt(summary.pedidos) },
-    { label: "Receita", value: fmtBRL(summary.receita) },
+    // D7 (1e6381fe): receita sem frete; o frete das mesmas vendas fica ao lado.
+    { label: "Receita", value: fmtBRL(summary.receita), hint: "sem frete" },
+    { label: "Frete", value: fmtBRL(summary.frete ?? 0) },
     { label: "Ticket médio", value: fmtBRL(summary.ticket_medio) },
     { label: "Conversão", value: fmtPct(summary.conversao) },
     ...(hasSpend

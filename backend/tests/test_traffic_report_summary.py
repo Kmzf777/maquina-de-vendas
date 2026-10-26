@@ -148,7 +148,7 @@ def test_traffic_report_includes_summary(monkeypatch):
     monkeypatch.setattr(tr, "_fetch_leads", lambda sb, mode, lo, hi: leads)
     monkeypatch.setattr(tr, "_conversed_ids", lambda sb, ids: {"a"})
     monkeypatch.setattr(tr, "_closer_ids", lambda sb, ids: set())
-    monkeypatch.setattr(tr, "_sales_by_lead", lambda sb, ids, lo, hi, mode: {})
+    monkeypatch.setattr(tr, "_sales_by_lead", lambda sb, ids, lo, hi, mode, **kw: {})
     monkeypatch.setattr(tr, "_spend_by_channel", lambda sb, lo, hi: {})
     monkeypatch.setattr(tr, "_meta_campaign_by_lead", lambda sb, ls: {})
     out = tr.traffic_report("30d", "lead")

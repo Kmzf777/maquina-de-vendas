@@ -13,7 +13,8 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 from app.db.supabase import get_supabase
-from app.leads.segmento import normalizar_segmento
+from app.leads.segmento import SEGMENTOS_B2B, normalizar_segmento
+from app.utils.receita_venda import frete_da_venda, receita_da_venda, venda_cancelada
 
 # Fuso de negócio: o dia do relatório é o dia de Brasília, do começo ao fim. A janela
 # (_resolve_window), o gráfico (_local_day) e o recorte do gasto por data usam ESTE relógio —
@@ -100,7 +101,7 @@ def _s(v: Any) -> str:
 
 def _cancelada(sale: dict[str, Any]) -> bool:
     """Venda cancelada não é venda: não conta cliente, pedido, receita nem compra."""
-    return _s(sale.get("status")).lower() == "cancelada"
+    return venda_cancelada(sale)
 
 
 # Origens (utm_source) de anúncio pago, por plataforma. A gestora de tráfego tagueia a Meta
@@ -206,7 +207,7 @@ def _index_campaigns(spend):
 
 def _new_row(channel, campaign):
     return {"channel": channel, "campaign": campaign, "leads": 0, "conversas": 0, "closer": 0,
-            "clientes": 0, "pedidos": 0, "receita": 0.0, "investimento": 0.0}
+            "clientes": 0, "pedidos": 0, "receita": 0.0, "frete": 0.0, "investimento": 0.0}
 
 
 def build_campaign_report(
@@ -222,7 +223,8 @@ def build_campaign_report(
     """Agrega os leads em linhas (canal, campanha). Puro — recebe coleções já buscadas.
 
     - conversed_ids / closer_ids: sets de lead_id que conversaram / chegaram ao closer.
-    - sales_by_lead: lead_id -> {"count": int, "value": float} (já filtrado por modo).
+    - sales_by_lead: lead_id -> {"count": int, "value": float, "frete": float} (já filtrado
+      por modo). `value` é a receita SEM frete (D7, 1e6381fe); o frete vem à parte.
     - spend_by_channel: canal -> [{campaign_id, campaign_name, cost}] vindo de ad_spend.
     - campaign_id_by_lead: lead_id -> campaign_id quando a própria plataforma nos deu o
       vínculo (Meta CTWA via anuncio). Vence qualquer casamento por nome.
@@ -304,6 +306,7 @@ def build_campaign_report(
             row["clientes"] += 1  # leads distintos que compraram (base da conversão)
             row["pedidos"] += int(sale.get("count", 0) or 0)  # nº de vendas (recompra: pode ser >1)
             row["receita"] += float(sale.get("value", 0.0) or 0.0)
+            row["frete"] += float(sale.get("frete", 0.0) or 0.0)
             if lead_id not in closer_ids:
                 entraram_ja_clientes += 1
 
@@ -321,7 +324,7 @@ def build_campaign_report(
 
     rows: list[dict[str, Any]] = []
     total = {"leads": 0, "conversas": 0, "closer": 0, "clientes": 0, "pedidos": 0,
-             "receita": 0.0, "investimento": 0.0}
+             "receita": 0.0, "frete": 0.0, "investimento": 0.0}
     paid_receita = 0.0
     for row in groups.values():
         pedidos = row["pedidos"]
@@ -340,12 +343,13 @@ def build_campaign_report(
         sub = channel_subtotals.get(row["channel"])
         if sub is None:
             sub = {"leads": 0, "conversas": 0, "closer": 0, "clientes": 0, "pedidos": 0,
-                   "receita": 0.0, "investimento": 0.0}
+                   "receita": 0.0, "frete": 0.0, "investimento": 0.0}
             channel_subtotals[row["channel"]] = sub
         for k in sub:
             sub[k] += row[k]
     for sub in channel_subtotals.values():
         sub["receita"] = round(sub["receita"], 2)
+        sub["frete"] = round(sub["frete"], 2)
         sub["investimento"] = round(sub["investimento"], 2)
         sub["roas"] = round(sub["receita"] / sub["investimento"], 2) if sub["investimento"] else None
 
@@ -353,6 +357,10 @@ def build_campaign_report(
     rows.sort(key=lambda r: (r["channel"], r["campaign"].startswith(_UNATTRIBUTED),
                              -r["receita"], -r["investimento"], -r["leads"]))
     total["receita"] = round(total["receita"], 2)
+    total["frete"] = round(total["frete"], 2)
+    for row in rows:
+        row["receita"] = round(row["receita"], 2)
+        row["frete"] = round(row["frete"], 2)
     total["investimento"] = round(total["investimento"], 2)
     total["roas"] = round(paid_receita / total["investimento"], 2) if total["investimento"] else None
     return {"mode": mode, "period": period, "rows": rows, "total": total,
@@ -414,7 +422,7 @@ def build_report_summary(report: dict[str, Any], leads: list[dict[str, Any]],
               "entraram_ja_clientes": int(report.get("entraram_ja_clientes", 0) or 0)}
 
     paid = dict.fromkeys(_COUNT_KEYS, 0)
-    inv = rec = 0.0
+    inv = rec = fre = 0.0
     for ch in _PAID_CHANNELS:
         sub = subtotals.get(ch)
         if not sub:
@@ -423,11 +431,13 @@ def build_report_summary(report: dict[str, Any], leads: list[dict[str, Any]],
             paid[k] += v
         inv += float(sub.get("investimento", 0) or 0)
         rec += float(sub.get("receita", 0) or 0)
+        fre += float(sub.get("frete", 0) or 0)
 
     def _cost(den: int) -> float | None:
         return round(inv / den, 2) if inv and den else None
 
-    cost = {"investimento": round(inv, 2), "receita": round(rec, 2),
+    # Receita sem frete (D7); o frete das mesmas vendas fica ao lado.
+    cost = {"investimento": round(inv, 2), "receita": round(rec, 2), "frete": round(fre, 2),
             "roas": round(rec / inv, 2) if inv else None, **paid,
             "cpl": _cost(paid["leads"]), "custo_conversa": _cost(paid["conversas"]),
             "custo_closer": _cost(paid["closer"]), "cac": _cost(paid["clientes"])}
@@ -442,7 +452,8 @@ def build_report_summary(report: dict[str, Any], leads: list[dict[str, Any]],
         if c["leads"] == 0 and inv_ch == 0:
             continue
         rec_ch = round(float(sub.get("receita", 0) or 0), 2)
-        channels.append({"channel": ch, **c, "receita": rec_ch, "investimento": inv_ch,
+        channels.append({"channel": ch, **c, "receita": rec_ch,
+                         "frete": round(float(sub.get("frete", 0) or 0), 2), "investimento": inv_ch,
                          "roas": round(rec_ch / inv_ch, 2) if inv_ch else None,
                          **_stage_rates(c)})
 
@@ -684,27 +695,89 @@ def _closer_ids(sb, lead_ids: list[str]) -> set[str]:
     return out
 
 
-def _sales_by_lead(sb, lead_ids: list[str], lo: str | None, hi: str | None, mode: str) -> dict[str, dict[str, Any]]:
+# D10 (cartão 1e6381fe): no modo lead, a venda só conta se o dia dela (Brasília) cair entre o
+# dia de entrada do lead (created_at, a mesma data que põe o lead na janela) e entrada + 30 dias
+# (B2C) ou + 90 dias (B2B). Limites inclusivos.
+_JANELA_B2C_DIAS = 30
+_JANELA_B2B_DIAS = 90
+
+
+def _lead_b2b(sb, lead: dict[str, Any], cache: dict[str, bool]) -> bool:
+    """D9: B2B = mesma regra de `public.fn_lead_b2b` (supabase/migrations/20261022b_segmento.sql):
+    segmento atacado/private_label, OU deal em funil Atacado/Private Label, OU contato Bling com
+    CNPJ. O segmento já vem no select dos leads; o resto é a própria rpc, chamada só para quem
+    tem venda entre o dia 31 e o 90 (o único caso em que B2B muda o resultado).
+    Fail-soft: erro na rpc vira B2C (janela menor) e loga."""
+    lid = lead.get("id")
+    if lid in cache:
+        return cache[lid]
+    if normalizar_segmento(lead.get("segmento")) in SEGMENTOS_B2B:
+        cache[lid] = True
+        return True
+    try:
+        b2b = bool(sb.rpc("fn_lead_b2b", {"p_lead": lid}).execute().data)
+    except Exception as exc:
+        logger.warning("traffic_report: rpc fn_lead_b2b falhou para o lead %s: %s", lid, exc)
+        b2b = False
+    cache[lid] = b2b
+    return b2b
+
+
+def _venda_na_janela_d10(sb, sale: dict[str, Any], lead: dict[str, Any] | None,
+                         cache_b2b: dict[str, bool]) -> bool:
+    if lead is None:
+        return False
+    entrada = _local_day(lead.get("created_at"))
+    dia = _local_day(sale.get("sold_at"))
+    if entrada is None or dia is None:
+        return False
+    dias = (dia - entrada).days
+    if dias < 0:
+        return False
+    if dias <= _JANELA_B2C_DIAS:
+        return True
+    return dias <= _JANELA_B2B_DIAS and _lead_b2b(sb, lead, cache_b2b)
+
+
+def _vendas_que_contam(sb, rows: list[dict[str, Any]], mode: str,
+                       leads_por_id: dict[str, dict[str, Any]] | None) -> list[dict[str, Any]]:
+    """Tira as canceladas e, no modo lead com `leads_por_id`, as fora da janela D10."""
+    cache_b2b: dict[str, bool] = {}
+    out = []
+    for r in rows:
+        if _cancelada(r):
+            continue
+        if mode != "sale" and leads_por_id is not None and not _venda_na_janela_d10(
+                sb, r, leads_por_id.get(r.get("lead_id")), cache_b2b):
+            continue
+        out.append(r)
+    return out
+
+
+def _sales_by_lead(sb, lead_ids: list[str], lo: str | None, hi: str | None, mode: str, *,
+                   leads_por_id: dict[str, dict[str, Any]] | None = None) -> dict[str, dict[str, Any]]:
+    """lead_id -> {count, value (receita sem frete, D7), frete, first/last_sold_at}.
+
+    Modo venda: recorta pela janela do relatório. Modo lead com `leads_por_id`: janela D10 a
+    partir da entrada de cada lead. Sem `leads_por_id`: vida inteira (coluna "Compras")."""
     out: dict[str, dict[str, Any]] = {}
     for chunk in _chunks(lead_ids):
         def _q(c=chunk):
-            q = sb.table("sales").select("lead_id, value, sold_at, status").in_("lead_id", c)
+            q = sb.table("sales").select("lead_id, value, freight, sold_at, status").in_("lead_id", c)
             if mode == "sale" and lo:
                 q = q.gte("sold_at", lo)
             if mode == "sale" and hi:
                 q = q.lte("sold_at", hi)
             return q
-        for r in _fetch_all(_q):
+        for r in _vendas_que_contam(sb, _fetch_all(_q), mode, leads_por_id):
             lid = r.get("lead_id")
-            if not lid or _cancelada(r):
+            if not lid:
                 continue
-            agg = out.setdefault(lid, {"count": 0, "value": 0.0, "last_sold_at": None,
-                                        "first_sold_at": None})
+            agg = out.setdefault(lid, {"count": 0, "value": 0.0, "frete": 0.0,
+                                        "last_sold_at": None, "first_sold_at": None})
             agg["count"] += 1
-            try:
-                agg["value"] += float(r.get("value") or 0.0)
-            except (TypeError, ValueError):
-                pass
+            agg["value"] = round(agg["value"] + receita_da_venda(r), 2)
+            agg["frete"] = round(agg["frete"] + frete_da_venda(r), 2)
             # Track latest sale date via ISO string comparison (safe for ISO 8601 timestamps).
             sold_at = r.get("sold_at")
             if isinstance(sold_at, str) and sold_at:
@@ -717,10 +790,17 @@ def _sales_by_lead(sb, lead_ids: list[str], lo: str | None, hi: str | None, mode
     return out
 
 
+def _leads_por_id(leads: list[dict[str, Any]], mode: str) -> dict[str, dict[str, Any]] | None:
+    """Mapa para a janela D10: só no modo lead (no modo venda a janela é a do relatório)."""
+    if mode == "sale":
+        return None
+    return {l["id"]: l for l in leads if l.get("id")}
+
+
 def _empty_report(mode: str, period: str) -> dict[str, Any]:
     report = {"mode": mode, "period": period, "rows": [], "channel_subtotals": {},
               "total": {"leads": 0, "conversas": 0, "closer": 0, "clientes": 0, "pedidos": 0,
-                        "receita": 0.0, "investimento": 0.0, "roas": None}}
+                        "receita": 0.0, "frete": 0.0, "investimento": 0.0, "roas": None}}
     report["summary"] = build_report_summary(report, [], {})
     return report
 
@@ -839,7 +919,7 @@ def _select_auto(in_channel, campaign, campaigns, campaign_id_by_lead):
 
 def _empty_summary(channel: str, campaign: str) -> dict[str, Any]:
     return {"channel": channel, "campaign": campaign, "leads": 0, "conversas": 0, "closer": 0,
-            "clientes": 0, "pedidos": 0, "receita": 0.0, "ticket_medio": 0.0, "conversao": 0.0,
+            "clientes": 0, "pedidos": 0, "receita": 0.0, "frete": 0.0, "ticket_medio": 0.0, "conversao": 0.0,
             "investimento": 0.0, "roas": None}
 
 
@@ -879,9 +959,11 @@ def build_campaign_timeseries(days: list[date], leads: list[dict[str, Any]],
         if d is not None and d.isoformat() in idx:
             idx[d.isoformat()]["vendas"] += 1
             try:
-                idx[d.isoformat()]["receita"] += float(s.get("value") or 0.0)
+                idx[d.isoformat()]["receita"] += receita_da_venda(s)
             except (TypeError, ValueError):
                 pass
+    for v in idx.values():
+        v["receita"] = round(v["receita"], 2)
     return list(idx.values())
 
 
@@ -901,7 +983,8 @@ def campaign_detail(channel: str, campaign: str, period: str = "30d", mode: str 
         lead_ids = [l["id"] for l in selected if l.get("id")]
         conversed = _conversed_ids(sb, lead_ids)
         closers = _closer_ids(sb, lead_ids)
-        sales = _sales_by_lead(sb, lead_ids, lo, hi, mode)
+        por_id = _leads_por_id(selected, mode)
+        sales = _sales_by_lead(sb, lead_ids, lo, hi, mode, leads_por_id=por_id)
         report = build_campaign_report(
             selected, conversed, closers, sales, mode, period,
             spend_by_channel=spend_by_channel, campaign_id_by_lead=camp_by_lead,
@@ -914,13 +997,13 @@ def campaign_detail(channel: str, campaign: str, period: str = "30d", mode: str 
         sales_rows: list[dict[str, Any]] = []
         for chunk in _chunks(lead_ids):
             def _sq(c=chunk):
-                q = sb.table("sales").select("value, sold_at, status").in_("lead_id", c)
+                q = sb.table("sales").select("lead_id, value, freight, sold_at, status").in_("lead_id", c)
                 if mode == "sale" and lo:
                     q = q.gte("sold_at", lo)
                 if mode == "sale" and hi:
                     q = q.lte("sold_at", hi)
                 return q
-            sales_rows.extend(r for r in _fetch_all(_sq) if not _cancelada(r))
+            sales_rows.extend(_vendas_que_contam(sb, _fetch_all(_sq), mode, por_id))
         timeseries = build_campaign_timeseries(_daterange_days(lo, hi), selected, sales_rows)
         return {"summary": summary, "leads": leads, "timeseries": timeseries}
     except Exception as exc:
@@ -940,7 +1023,7 @@ def traffic_report(period: str = "30d", mode: str = "lead",
             return _empty_report(mode, period)
         conversed = _conversed_ids(sb, lead_ids)
         closers = _closer_ids(sb, lead_ids)
-        sales = _sales_by_lead(sb, lead_ids, lo, hi, mode)
+        sales = _sales_by_lead(sb, lead_ids, lo, hi, mode, leads_por_id=_leads_por_id(leads, mode))
         report = build_campaign_report(
             leads, conversed, closers, sales, mode, period,
             spend_by_channel=_spend_by_channel(sb, lo, hi),
@@ -992,9 +1075,9 @@ def campaign_leads(channel: str, campaign: str, period: str = "30d", mode: str =
             return []
         lead_ids = [l["id"] for l in selected if l.get("id")]
         conversed = _conversed_ids(sb, lead_ids)
-        sales = _sales_by_lead(sb, lead_ids, lo, hi, mode)
-        # "Compras" é a vida inteira do lead; no modo venda `sales` vem recortado pela janela.
-        compras = sales if mode != "sale" else _sales_by_lead(sb, lead_ids, None, None, "lead")
+        sales = _sales_by_lead(sb, lead_ids, lo, hi, mode, leads_por_id=_leads_por_id(selected, mode))
+        # "Compras" é a vida inteira do lead: `sales` vem recortado (janela do modo venda ou D10).
+        compras = _sales_by_lead(sb, lead_ids, None, None, "lead")
         origem = _primeira_origem(sb, lead_ids)
         stage_info = _stage_info_map(sb)
         deals = []

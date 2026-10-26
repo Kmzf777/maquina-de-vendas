@@ -161,14 +161,14 @@ def test_build_total_and_subtotals_have_clientes_and_pedidos():
     out = build_campaign_report(leads, {"a"}, {"a"}, sales_by_lead, mode="lead", period="30d")
     # Funil cumulativo (call 01/10): "b" comprou, então conta como closer e conversa.
     assert out["total"] == {"leads": 2, "conversas": 2, "closer": 2,
-                            "clientes": 2, "pedidos": 3, "receita": 80.0,
+                            "clientes": 2, "pedidos": 3, "receita": 80.0, "frete": 0.0,
                             "investimento": 0.0, "roas": None}
     assert out["channel_subtotals"]["Google Ads"] == {
         "leads": 1, "conversas": 1, "closer": 1, "clientes": 1, "pedidos": 1, "receita": 50.0,
-        "investimento": 0.0, "roas": None}
+        "frete": 0.0, "investimento": 0.0, "roas": None}
     assert out["channel_subtotals"]["Meta Ads"] == {
         "leads": 1, "conversas": 1, "closer": 1, "clientes": 1, "pedidos": 2, "receita": 30.0,
-        "investimento": 0.0, "roas": None}
+        "frete": 0.0, "investimento": 0.0, "roas": None}
 
 
 # --- Task 3: traffic_report e campaign_leads (I/O fail-soft) ---

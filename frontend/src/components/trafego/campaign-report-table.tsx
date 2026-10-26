@@ -6,6 +6,8 @@ import { TableBody, TableCell, TableFooter, TableHead, TableHeader, TableRow } f
 export type CampaignRow = {
   channel: string; campaign: string; leads: number; conversas: number;
   closer: number; clientes: number; pedidos: number; receita: number;
+  /** D7 (1e6381fe): frete das vendas da receita (que é sem frete). Opcional: backend antigo não manda. */
+  frete?: number;
   investimento: number; roas: number | null; ticket_medio: number; conversao: number;
 };
 
