@@ -7,6 +7,7 @@ from typing import Any
 from app.conversations.service import render_history_content
 from app.db.supabase import get_supabase, run_with_retry
 from app.leads.segmento import SEGMENTOS_B2B, normalizar_segmento
+from app.utils.receita_venda import receita_da_venda, venda_cancelada
 
 logger = logging.getLogger(__name__)
 
@@ -266,8 +267,10 @@ def lead_is_customer(lead_id: str) -> bool:
         # NB: checagens usam "lista não-vazia" (PostgREST sempre devolve list) em vez
         # de truthiness cru — um client mockado/anômalo nunca deve virar positivo.
         # (1) Venda registrada na tabela `sales` = cliente definitivo (sinal mais forte).
-        sale = sb.table("sales").select("id").eq("lead_id", lead_id).limit(1).execute()
-        if isinstance(sale.data, list) and sale.data:
+        # D7 (1e6381fe): venda cancelada não faz do lead um cliente. Sem `limit`, para
+        # uma cancelada não ocupar a única linha lida.
+        sale = sb.table("sales").select("id, freight, status").eq("lead_id", lead_id).execute()
+        if isinstance(sale.data, list) and any(not venda_cancelada(s) for s in sale.data):
             return True
         # (2) Deal em estágio de GANHO. A verdade do estágio é `deals.stage_id` ->
         # `pipeline_stages.key`; a coluna legada `deals.stage` está CONGELADA (auditoria
@@ -2174,18 +2177,19 @@ def get_relationship_summary(lead_id: str) -> str:
     """
     try:
         sb = get_supabase()
+        # D7 (1e6381fe): a última venda NÃO cancelada, com valor sem frete.
         sale = (
             sb.table("sales")
-            .select("product, value, sold_at")
+            .select("product, value, freight, status, sold_at")
             .eq("lead_id", lead_id)
             .order("sold_at", desc=True)
-            .limit(1)
             .execute()
         )
-        if sale.data:
-            row = sale.data[0]
+        validas = [s for s in (sale.data or []) if not venda_cancelada(s)]
+        if validas:
+            row = validas[0]
             product = row.get("product", "")
-            value = row.get("value", 0) or 0
+            value = receita_da_venda(row)
             sold_at = row.get("sold_at", "") or ""
             # Formata data como DD/MM/YYYY
             try:

@@ -30,7 +30,7 @@ class TestSubstituteVariables:
 
     def test_sale_vars_with_sale(self):
         mock_sb = MagicMock()
-        mock_sb.table.return_value.select.return_value.eq.return_value.order.return_value.limit.return_value.execute.return_value.data = [
+        mock_sb.table.return_value.select.return_value.eq.return_value.order.return_value.execute.return_value.data = [
             {"product": "Café Especial", "value": 150.50, "sold_at": "2026-05-10T10:00:00+00:00"}
         ]
         with patch("app.automation.variables.get_supabase", return_value=mock_sb):
@@ -40,7 +40,7 @@ class TestSubstituteVariables:
 
     def test_sale_vars_without_sale(self):
         mock_sb = MagicMock()
-        mock_sb.table.return_value.select.return_value.eq.return_value.order.return_value.limit.return_value.execute.return_value.data = []
+        mock_sb.table.return_value.select.return_value.eq.return_value.order.return_value.execute.return_value.data = []
         with patch("app.automation.variables.get_supabase", return_value=mock_sb):
             result = substitute_variables("Produto: {{produto}}", LEAD, ENROLLMENT)
         assert result == "Produto: "

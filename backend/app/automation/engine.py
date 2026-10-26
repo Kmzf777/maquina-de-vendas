@@ -6,6 +6,7 @@ from datetime import datetime, timezone, timedelta, date
 from app.db.supabase import get_supabase
 from app.automation.variables import substitute_variables
 from app.automation.retry import calculate_next_retry
+from app.utils.receita_venda import receita_da_venda, venda_cancelada
 
 logger = logging.getLogger(__name__)
 
@@ -499,6 +500,24 @@ def casa_fase_ou_segmento(alvo: str | None, *, stage: str | None, segmento: str 
     return stage == alvo or (alvo == "triagem" and stage == "secretaria")
 
 
+def _vendas_validas_do_lead(sb, lead_id: str) -> list[dict]:
+    """Vendas NAO canceladas do lead, da mais recente para a mais antiga (D7, 1e6381fe).
+
+    Sem `limit`: a "ultima venda" e a ultima nao cancelada, entao a cancelada mais
+    recente nao pode ocupar a unica linha lida. As vendas de um lead sao poucas.
+    Valor da venda: sempre por `receita_da_venda` (sem frete).
+    """
+    rows = (
+        sb.table("sales")
+        .select("id, value, freight, status, sold_at")
+        .eq("lead_id", lead_id)
+        .order("sold_at", desc=True)
+        .execute()
+        .data
+    ) or []
+    return [r for r in rows if not venda_cancelada(r)]
+
+
 def _execute_condition(enrollment: dict, node: dict, lead: dict, now: datetime) -> None:
     sb = get_supabase()
     cfg = node.get("config") or {}
@@ -519,17 +538,16 @@ def _execute_condition(enrollment: dict, node: dict, lead: dict, now: datetime) 
         result = bool(sb.table("deals").select("id").eq("lead_id", enrollment["lead_id"]).limit(1).execute().data)
 
     elif cond == "sale_count":
-        res = sb.table("sales").select("id", count="exact").eq("lead_id", enrollment["lead_id"]).execute()
-        result = _compare(res.count or 0, cfg.get("operator", "gte"), cfg.get("value", 1))
+        result = _compare(len(_vendas_validas_do_lead(sb, enrollment["lead_id"])),
+                          cfg.get("operator", "gte"), cfg.get("value", 1))
 
     elif cond == "total_spend":
-        rows = sb.table("sales").select("value").eq("lead_id", enrollment["lead_id"]).execute().data or []
-        total = sum(float(r["value"]) for r in rows)
+        total = sum(receita_da_venda(r) for r in _vendas_validas_do_lead(sb, enrollment["lead_id"]))
         result = _compare(total, cfg.get("operator", "gte"), cfg.get("value", 0))
 
     elif cond == "last_sale_value":
-        rows = sb.table("sales").select("value").eq("lead_id", enrollment["lead_id"]).order("sold_at", desc=True).limit(1).execute().data
-        val = float(rows[0]["value"]) if rows else 0
+        rows = _vendas_validas_do_lead(sb, enrollment["lead_id"])
+        val = receita_da_venda(rows[0]) if rows else 0
         result = _compare(val, cfg.get("operator", "gte"), cfg.get("value", 0))
 
     elif cond == "deal_value":
@@ -564,7 +582,7 @@ def _execute_condition(enrollment: dict, node: dict, lead: dict, now: datetime) 
         result = bool(alvo) and _normalize_reply(ultima.get("texto")) == alvo
 
     elif cond == "repurchase_days":
-        rows = sb.table("sales").select("sold_at").eq("lead_id", enrollment["lead_id"]).order("sold_at", desc=True).limit(1).execute().data
+        rows = _vendas_validas_do_lead(sb, enrollment["lead_id"])
         if rows:
             from dateutil.parser import parse
             sold_at = parse(rows[0]["sold_at"]) if isinstance(rows[0]["sold_at"], str) else rows[0]["sold_at"]

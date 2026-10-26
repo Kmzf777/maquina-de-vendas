@@ -336,42 +336,26 @@ def _eval_condition(cfg: dict, lead: dict, enrollment: dict, now: datetime) -> s
             return "yes" if lt.data else "no"
         return "no"
 
-    from app.automation.engine import _compare
+    from app.automation.engine import _compare, _vendas_validas_do_lead
+    from app.utils.receita_venda import receita_da_venda
     op = cfg.get("operator", "gte")
     target = cfg.get("value", 0)
 
     if cond == "sale_count":
-        res = sb.table("sales").select("id", count="exact").eq("lead_id", enrollment["lead_id"]).execute()
-        return "yes" if _compare(res.count or 0, op, target) else "no"
+        rows = _vendas_validas_do_lead(sb, enrollment["lead_id"])
+        return "yes" if _compare(len(rows), op, target) else "no"
 
     if cond == "total_spend":
-        rows = sb.table("sales").select("value").eq("lead_id", enrollment["lead_id"]).execute().data or []
-        total = sum(float(r["value"]) for r in rows)
+        total = sum(receita_da_venda(r) for r in _vendas_validas_do_lead(sb, enrollment["lead_id"]))
         return "yes" if _compare(total, op, target) else "no"
 
     if cond == "last_sale_value":
-        rows = (
-            sb.table("sales")
-            .select("value")
-            .eq("lead_id", enrollment["lead_id"])
-            .order("sold_at", desc=True)
-            .limit(1)
-            .execute()
-            .data
-        )
-        val = float(rows[0]["value"]) if rows else 0
+        rows = _vendas_validas_do_lead(sb, enrollment["lead_id"])
+        val = receita_da_venda(rows[0]) if rows else 0
         return "yes" if _compare(val, op, target) else "no"
 
     if cond == "repurchase_days":
-        rows = (
-            sb.table("sales")
-            .select("sold_at")
-            .eq("lead_id", enrollment["lead_id"])
-            .order("sold_at", desc=True)
-            .limit(1)
-            .execute()
-            .data
-        )
+        rows = _vendas_validas_do_lead(sb, enrollment["lead_id"])
         if rows:
             from dateutil.parser import parse
             sold_at = parse(rows[0]["sold_at"]) if isinstance(rows[0]["sold_at"], str) else rows[0]["sold_at"]

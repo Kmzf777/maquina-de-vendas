@@ -2,6 +2,7 @@
 from datetime import datetime, timezone
 from dateutil.parser import parse as parse_dt
 from app.db.supabase import get_supabase
+from app.utils.receita_venda import receita_da_venda, venda_cancelada
 from app.vendedores import service as vendedores_service
 
 
@@ -31,19 +32,21 @@ def _fill_sale_vars(text: str, lead: dict, out: dict) -> None:
     if not any(v in text for v in ("{{produto}}", "{{valor_ultima_venda}}", "{{dias_sem_compra}}")):
         return
     sb = get_supabase()
+    # D7 (1e6381fe): "última venda" = a última NÃO cancelada, e o valor sai sem frete.
+    # Sem `limit`, para a cancelada mais recente não esconder a válida.
     rows = (
         sb.table("sales")
-        .select("product, value, sold_at")
+        .select("product, value, freight, status, sold_at")
         .eq("lead_id", lead["id"])
         .order("sold_at", desc=True)
-        .limit(1)
         .execute()
         .data
-    )
+    ) or []
+    rows = [r for r in rows if not venda_cancelada(r)]
     if rows:
         s = rows[0]
         out["{{produto}}"] = s.get("product") or ""
-        raw_val = float(s.get("value") or 0)
+        raw_val = receita_da_venda(s)
         out["{{valor_ultima_venda}}"] = (
             f"R$ {raw_val:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
         )

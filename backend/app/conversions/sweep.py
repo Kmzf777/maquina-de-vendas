@@ -20,6 +20,7 @@ from app.conversions.eligibility import (
 from app.db.paginacao import paginar
 from app.db.supabase import get_supabase
 from app.leads.service import segmento_do_lead
+from app.utils.receita_venda import receita_da_venda, venda_cancelada
 
 logger = logging.getLogger(__name__)
 
@@ -152,7 +153,7 @@ def build_candidates(*, lead: dict[str, Any], entradas: list[dict[str, Any]], sa
     if opp:
         eventos.append(("opportunity", opp, values.get((segment, "opportunity")), None))
     for s in sales:
-        if (s.get("status") or "").strip().lower() == "cancelada":
+        if venda_cancelada(s):
             continue
         at = _sale_at(s)
         if at and s.get("id"):
@@ -162,7 +163,8 @@ def build_candidates(*, lead: dict[str, Any], entradas: list[dict[str, Any]], sa
                 logger.warning("[CONVERSOES] venda %s do lead %s sem valor: não enfileirada",
                                s["id"], lead.get("id"))
                 continue
-            eventos.append(("purchase", at, float(s["value"]), s["id"]))
+            # D7 (1e6381fe): receita sem frete. Só vale para conversão NOVA.
+            eventos.append(("purchase", at, receita_da_venda(s), s["id"]))
 
     out: dict[str, dict[str, Any]] = {}
     for stage, event_at, value, sale_id in eventos:
@@ -227,7 +229,7 @@ def _blocos(sb, now: datetime, backfill: timedelta, stats: dict[str, int] | None
         # ANTES do evento, e o filtro de janela é do build_candidates.
         entradas = _by_lead(paginar(lambda: sb.table("lead_events").select("id,lead_id,occurred_at,metadata")
                                    .eq("event_type", "entrada").in_("lead_id", bloco).order("id")))
-        sales = _by_lead(paginar(lambda: sb.table("sales").select("id,lead_id,sold_at,created_at,value,status")
+        sales = _by_lead(paginar(lambda: sb.table("sales").select("id,lead_id,sold_at,created_at,value,freight,status")
                                 .in_("lead_id", bloco).gte("sold_at", since).order("id")))
         quotes = _by_lead(paginar(lambda: sb.table("quotes").select("id,lead_id,status,quoted_at,created_at")
                                  .in_("lead_id", bloco).in_("status", _OPP_QUOTE_STATUS).order("id")))
