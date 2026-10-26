@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { getServiceSupabase } from "@/lib/supabase/api";
 import { resolverEscopoDeVendas } from "@/lib/sales/sales-scope-route";
+import { limitesDoDiaBRT } from "@/lib/sales/receita";
 
 export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url);
@@ -36,8 +37,10 @@ export async function GET(request: NextRequest) {
 
   if (leadId) query = query.eq("lead_id", leadId);
   if (soldBy) query = query.eq("sold_by", soldBy);
-  if (from) query = query.gte("sold_at", from.length === 10 ? `${from}T00:00:00.000Z` : from);
-  if (to) query = query.lte("sold_at", to.length === 10 ? `${to}T23:59:59.999Z` : to);
+  // D7 (1e6381fe): o dia do filtro e o dia de Brasilia, igual aos cards.
+  const { gte, lte } = limitesDoDiaBRT(from, to);
+  if (gte) query = query.gte("sold_at", gte);
+  if (lte) query = query.lte("sold_at", lte);
   if (search) query = query.ilike("product", `%${search}%`);
 
   // O escopo entra como um parametro `or` proprio, que o PostgREST combina com

@@ -12,6 +12,7 @@ import type { Sale } from "@/lib/types";
 
 interface SalesMetrics {
   total_value: number;
+  freight_value: number;
   count: number;
   avg_value: number;
   avg_repurchase_cycle_days: number | null;

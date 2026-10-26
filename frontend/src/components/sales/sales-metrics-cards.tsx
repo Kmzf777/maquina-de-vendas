@@ -2,6 +2,7 @@
 
 interface SalesMetrics {
   total_value: number;
+  freight_value: number;
   count: number;
   avg_value: number;
   avg_repurchase_cycle_days: number | null;
@@ -30,14 +31,19 @@ export function SalesMetricsCards({ metrics, loading }: SalesMetricsCardsProps) 
     n.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
   return (
-    <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+    <div className="grid grid-cols-2 lg:grid-cols-5 gap-4">
       <MetricCard
-        label="Faturamento do período"
+        label="Receita (sem frete)"
         value={metrics ? `R$ ${fmt(metrics.total_value)}` : "R$ 0,00"}
         loading={loading}
       />
       <MetricCard
-        label="Nº de vendas"
+        label="Frete"
+        value={metrics ? `R$ ${fmt(metrics.freight_value ?? 0)}` : "R$ 0,00"}
+        loading={loading}
+      />
+      <MetricCard
+        label="Vendas"
         value={metrics ? String(metrics.count) : "0"}
         loading={loading}
       />
