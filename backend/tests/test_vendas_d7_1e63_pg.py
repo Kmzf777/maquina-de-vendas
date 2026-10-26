@@ -249,6 +249,43 @@ select 'dep=' || (select count(*) from analytics.vw_vendedores_semana) * 0
     assert "dep=0" in linhas, linhas
 
 
+# ── d: analytics.vw_vendedores_semana ─────────────────────────────────────────────
+@_precisa_pg
+def test_vendedores_semana_bling_pedido_e_vendedor_confiavel():
+    # Mesma semana (segunda 07/01/2030), mesmo vendedor: uma venda com o vendedor do próprio pedido
+    # Bling (confiável) e uma pelo responsável do lead (não confiável) -> 50% sem vendedor confiável.
+    # Pela definição antiga (só crm confiável) daria 100%.
+    linhas = _cenario(
+        _venda(1, LEAD_A, "2030-01-08T12:00:00-03:00", origin="bling", discount="0",
+               sold_by=EMAIL_JOAO, vendedor_fonte="bling_pedido")
+        + _venda(2, LEAD_B, "2030-01-09T12:00:00-03:00", origin="bling", discount="0",
+                 sold_by=EMAIL_JOAO, vendedor_fonte="lead_assigned")
+        + """
+select 'w=' || semana || '|' || vendas || '|' || pct_vendas_sem_vendedor_confiavel
+  from analytics.vw_vendedores_semana
+ where vendedor = 'Joãozinho Umseis' and semana = '2030-01-07';
+""")
+    assert "w=2030-01-07|2|50.0" in linhas, linhas
+
+
+@_precisa_pg
+def test_vendedores_semana_mantem_colunas_tipos_e_grant():
+    out = _psql("""
+select 'cols=' || string_agg(column_name || ':' || data_type, ',' order by ordinal_position)
+  from information_schema.columns where table_schema = 'analytics' and table_name = 'vw_vendedores_semana';
+select 'grant=' || has_table_privilege('consulta_ro', 'analytics.vw_vendedores_semana', 'SELECT')::text
+       || '|' || array_to_string(reloptions, ',') from pg_class
+ where oid = 'analytics.vw_vendedores_semana'::regclass;
+select 'coment=' || (obj_description('analytics.vw_vendedores_semana'::regclass) like '%bling_pedido%')::text;
+""")
+    linhas = [x.strip() for x in out.splitlines() if "=" in x]
+    assert ("cols=semana:date,vendedor:text,repasses_recebidos:integer,respondidos:integer,"
+            "mediana_minutos_uteis:numeric,vendas:integer,receita:numeric,ticket_medio:numeric,"
+            "conversao_repasse_venda:numeric,pct_vendas_sem_vendedor_confiavel:numeric") in linhas, linhas
+    assert "grant=true|security_invoker=true" in linhas, linhas
+    assert "coment=true" in linhas, linhas
+
+
 if __name__ == "__main__":
     if not PSQL:
         print("defina E1E63_PSQL")
