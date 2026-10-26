@@ -402,3 +402,33 @@ Nenhuma credencial nova. Varredura e reconciliação usam o `BlingClient` de cad
 6. **Aplicar as três migrations**, na ordem (seção 0.3), e conferir.
 7. **Deploy como está** (varredura desligada por padrão, reconciliação ligada; seção 0.4).
 8. **Depois do deploy: `reprocessar-falhas` nas duas contas** (seção 0.5).
+
+---
+
+## Cartão 1e6381fe (26/10/2026)
+
+Spec `docs/superpowers/specs/2026-10-26-vendas-receita-d7-design.md`. Glossário para o agente de consulta: `docs/superpowers/specs/2026-10-26-glossario-consulta-vendas.md`.
+
+**Situações (gate 0.1), lista confirmada pelo dono em 26/10:**
+- `Cancelado` (ids 12 e 34, nas duas contas) → `cancelada`;
+- `Em devolução` (id 729685, só na conta 1) → continua venda, com `devolucao_parcial = true` (a revisar);
+- `Em aberto`, `Em andamento`, `Atendido`, `Verificado`, `Em digitação`, `Venda Agenciada` e `Pagamento aprovado` → venda.
+
+Não há "Devolvido" em nenhuma conta. A regra de `classificar_situacao` (`backend/app/bling/orders.py`) já fazia isso e não mudou.
+
+**Resultado do P1 (vendedor do contato, só leitura):** `GET /contatos/{id}` na conta 1, em 2 contatos cujos pedidos têm o João como vendedor, devolveu `vendedor: {"id": 0}`. O vendedor não está preenchido no contato no Bling, então o degrau 2 da D8 (`bling_contato`) fica **indisponível na API**. Não há comando `contatos-vendedor` e `sync.py` não mudou.
+
+**Releitura da conta 1 (P2), fora do horário comercial e com o OK do dono:**
+
+```bash
+sg docker -c "$OPS backfill --conta default --desde 2025-08-01 --ate 2026-10-13 --reiniciar --estimar"
+sg docker -c "$OPS backfill --conta default --desde 2025-08-01 --ate 2026-10-13 --reiniciar" | tee ~/bling_1e63_backfill.log
+```
+
+Relê os pedidos da conta 1 dessa janela (os 47 `Cancelado` viram `cancelada`, os 995 sem desconto/frete gravados passam a ter). Antes e depois, seguir `docs/superpowers/specs/2026-10-26-dados-1e63.sql`, um bloco por vez: conferência C0, cópia P0 (`backup_1e63_vendas`), automações A1, conferência C1, teto de 80 cancelamentos novos (passou disso, parar e levar ao dono), lista P3 ao dono e o rollback do P2.
+
+**Reconciliação diária (seção 7), a partir deste cartão:**
+- os dias são de Brasília (`America/Sao_Paulo`), não UTC, no banco e na comparação;
+- compara também a **situação**: pedido com `situacao.id` da listagem diferente de `sales.bling_situacao_id` entra em `situacao_diferente`, o dia fica divergente e o pedido é reimportado. Assim um cancelamento chega em até 1 dia mesmo sem webhook. Situação nula num dos lados não conta como divergência.
+
+**`sold_at`:** pedido do Bling passa a ser gravado ao meio-dia de Brasília (`AAAA-MM-DDT12:00:00-03:00`), e não mais meio-dia UTC. A data do pedido não muda. As vendas antigas (12:00Z = 09:00 em Brasília) caem no mesmo dia em Brasília; a releitura do P2 regrava o `sold_at` delas no formato novo.
