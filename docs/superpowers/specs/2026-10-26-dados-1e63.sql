@@ -119,5 +119,8 @@ select s.bling_account,
 select v.account, v.id bling_vendedor_id, v.nome, m.user_email
   from public.bling_sellers v
   left join public.bling_seller_map m on m.account = v.account and m.bling_seller_id = v.id
+ where m.user_email is null
  order by 1, 2;
--- (se a tabela do espelho de vendedores tiver outro nome, conferir em backend/app/bling/sync.py: sync_sellers)
+-- Contar vendas por vendedor sem mapa não dá: `sales` não guarda o id do vendedor do Bling
+-- (só `sold_by` resolvido). O log do P2 (JSON do backfill) não lista esses ids.
+-- Se o dono quiser a contagem, ela sai pelo painel do Bling (relatório de vendas por vendedor).

@@ -233,3 +233,16 @@ Commit: `docs: scripts de dados P0-P3 e glossario de vendas (1e6381fe)`.
 3. Testes SQL com `E1E63_PSQL` verdes.
 4. Revisão de código do diff inteiro (superpowers:requesting-code-review).
 5. Prints: em modo teste não há CRM com este código. Rodar o frontend local (`npm run dev`, com o `.env.local` existente, que aponta para o Supabase de produção só para leitura) e tirar o print do `/painel-vendas` com o script de print, se o login de teste funcionar em `localhost`. Se não funcionar, os prints ficam para depois da publicação, como diz a spec.
+
+## Decisões tomadas na execução (26/10)
+
+- **Ordem de publicação:**
+  1. merge, push e deploy;
+  2. migration `a` (funções; aditiva para o código novo e o antigo);
+  3. P0, com a cópia refeita logo antes do P2;
+  4. P2;
+  5. migrations `c` (`fct_vendas`, como `supabase_admin`) e `d` (`vw_vendedores_semana`, como `supabase_admin`), aplicadas **depois** do P2, para que a view nova não mostre ~1.100 vendas como `sem` vendedor até a releitura;
+  6. P3.
+- **P0 rodou por engano em 26/10 16:56 UTC.** O arquivo inteiro foi mandado ao psql durante a conferência das consultas de leitura. A tabela `backup_1e63_vendas` tem 1.175 linhas, RLS ligado e grants só para `postgres`/`service_role`. Nenhuma venda foi alterada. Na publicação, refazer a cópia (drop + create) com o OK do dono.
+- **`fct_vendas.vendedor_fonte='crm'`** vale para venda com `sold_by` e sem fonte gravada. Hoje só existem as `crm` (14) e as `manual` (152). Nenhuma venda `bling` tem `sold_by` sem fonte (conferido em 26/10).
+- **Filtro de vendedor no `/painel-vendas` (cards e lista):** `ilike` com escape. Com `*`, que o PostgREST trata como curinga, cai em `eq`.

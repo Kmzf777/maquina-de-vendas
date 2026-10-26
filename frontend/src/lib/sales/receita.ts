@@ -40,3 +40,11 @@ export function limitesDoDiaBRT(
   const lte = to ? (to.length === 10 ? `${to}T23:59:59.999-03:00` : to) : null;
   return { gte, lte };
 }
+
+// Padrao para `ilike` do vendedor (e-mail comparado sem diferenciar caixa), com
+// `\`, `%` e `_` escapados. O PostgREST tambem trata `*` como curinga e nao ha
+// escape confiavel para ele: nesse caso devolve null e quem chama usa `eq`.
+export function padraoVendedor(soldBy: string): string | null {
+  if (soldBy.includes("*")) return null;
+  return soldBy.replace(/[\\%_]/g, (c) => `\\${c}`);
+}

@@ -1,7 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { getServiceSupabase } from "@/lib/supabase/api";
 import { resolverEscopoDeVendas } from "@/lib/sales/sales-scope-route";
-import { limitesDoDiaBRT } from "@/lib/sales/receita";
+import { limitesDoDiaBRT, padraoVendedor } from "@/lib/sales/receita";
 
 export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url);
@@ -36,7 +36,11 @@ export async function GET(request: NextRequest) {
     .range(offset, offset + limit - 1);
 
   if (leadId) query = query.eq("lead_id", leadId);
-  if (soldBy) query = query.eq("sold_by", soldBy);
+  if (soldBy) {
+    // Sem diferenciar caixa, como os cards (metrics/route.ts).
+    const padrao = padraoVendedor(soldBy);
+    query = padrao === null ? query.eq("sold_by", soldBy) : query.ilike("sold_by", padrao);
+  }
   // D7 (1e6381fe): o dia do filtro e o dia de Brasilia, igual aos cards.
   const { gte, lte } = limitesDoDiaBRT(from, to);
   if (gte) query = query.gte("sold_at", gte);

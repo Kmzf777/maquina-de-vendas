@@ -2,7 +2,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { getServiceSupabase } from "@/lib/supabase/api";
 import { resolverEscopoDeVendas } from "@/lib/sales/sales-scope-route";
 import { vendedorDaRecompra } from "@/lib/sales/sales-scope";
-import { freteDaVenda, limitesDoDiaBRT, receitaDaVenda, vendaCancelada } from "@/lib/sales/receita";
+import { freteDaVenda, limitesDoDiaBRT, padraoVendedor, receitaDaVenda, vendaCancelada } from "@/lib/sales/receita";
 
 export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url);
@@ -16,9 +16,8 @@ export async function GET(request: NextRequest) {
   const escopo = escopoRes.escopo;
 
   const { gte, lte } = limitesDoDiaBRT(from, to);
-  // Escapa os curingas do ilike: o vendedor e comparado sem diferenciar caixa,
-  // mas "%" ou "_" no nome nao podem virar coringa.
-  const vendedor = soldBy ? soldBy.replace(/[\\%_]/g, (c) => `\\${c}`) : null;
+  // Vendedor comparado sem diferenciar caixa, sem deixar curinga virar padrao.
+  const vendedor = soldBy ? padraoVendedor(soldBy) : null;
 
   // D7 (1e6381fe): pagina de 1.000 em 1.000 (o PostgREST corta em 1.000 linhas
   // e o card mostrava so parte do periodo) e deixa a cancelada de fora ja no
@@ -37,7 +36,11 @@ export async function GET(request: NextRequest) {
     // O filtro de vendedor da barra precisa mover os cards, nao so a lista — era
     // a queixa: escolher "joao" mudava a tabela e deixava os quatro numeros
     // falando da operacao inteira.
-    if (vendedor) periodQuery = periodQuery.ilike("sold_by", vendedor);
+    if (soldBy) {
+      periodQuery = vendedor === null
+        ? periodQuery.eq("sold_by", soldBy)
+        : periodQuery.ilike("sold_by", vendedor);
+    }
     if (escopo) periodQuery = periodQuery.or(escopo);
 
     const { data, error } = await periodQuery.order("id").range(i, i + PAGINA - 1);

@@ -100,6 +100,11 @@ describe("GET /api/sales/metrics", () => {
     expect(consultasDeVendas()[0].searchParams.get("sold_by")).toBe("ilike.Jo\\%ao\\_x");
   });
 
+  it("vendedor com asterisco (curinga do PostgREST) usa eq", async () => {
+    await chamar("?sold_by=jo*");
+    expect(consultasDeVendas()[0].searchParams.get("sold_by")).toBe("eq.jo*");
+  });
+
   it("soma todas as linhas, paginando de 1.000 em 1.000 e ordenando por id", async () => {
     linhas = Array.from({ length: 1500 }, () => ({ value: 10, freight: 1, status: null }));
     const r = await chamar();

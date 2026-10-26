@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { vendaCancelada, receitaDaVenda, freteDaVenda, limitesDoDiaBRT } from "@/lib/sales/receita";
+import { vendaCancelada, receitaDaVenda, freteDaVenda, limitesDoDiaBRT, padraoVendedor } from "@/lib/sales/receita";
 
 describe("receita da venda (D7)", () => {
   it("tira o frete", () => {
@@ -35,5 +35,15 @@ describe("limitesDoDiaBRT", () => {
       gte: "2026-10-01T10:00:00Z",
       lte: null,
     });
+  });
+});
+
+describe("padraoVendedor", () => {
+  it("escapa curingas do ilike", () => {
+    expect(padraoVendedor("jo%a_o\\x@c.com")).toBe("jo\\%a\\_o\\\\x@c.com");
+  });
+
+  it("asterisco (curinga do PostgREST) nao vira padrao: devolve null para usar eq", () => {
+    expect(padraoVendedor("jo*@c.com")).toBeNull();
   });
 });
