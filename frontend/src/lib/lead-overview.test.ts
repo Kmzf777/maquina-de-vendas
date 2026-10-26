@@ -175,6 +175,21 @@ describe("computeVitals", () => {
     expect(v.ticketMedio).toBe(600);
   });
 
+  it("D7: receita sem frete e sem cancelada; pedidos só das válidas", () => {
+    const v = computeVitals(
+      overview({
+        sales: [
+          sale({ id: "s1", value: 500, freight: 50, status: "registrada" }),
+          sale({ id: "s2", value: 300, status: "cancelada" }),
+        ],
+      }),
+      AGORA,
+    );
+    expect(v.receita).toBe(450);
+    expect(v.pedidos).toBe(1);
+    expect(v.ticketMedio).toBe(450);
+  });
+
   it("ticket médio de lead sem venda é zero, não NaN", () => {
     expect(computeVitals(overview(), AGORA).ticketMedio).toBe(0);
   });
@@ -301,6 +316,28 @@ describe("buildJourney", () => {
 
 // ─── buildMovements ────────────────────────────────────────────────────────────
 
+describe("buildJourney D7", () => {
+  it("'comprou' é falso quando o lead só tem venda cancelada", () => {
+    const { steps, stalledAt } = buildJourney(overview({ sales: [sale({ status: "cancelada" })] }));
+    expect(steps.find((x) => x.key === "comprou")!.reached).toBe(false);
+    expect(stalledAt).not.toBeNull();
+  });
+
+  it("'comprou' usa a data da primeira venda válida", () => {
+    const { steps } = buildJourney(
+      overview({
+        sales: [
+          sale({ id: "s1", status: "cancelada", sold_at: "2026-09-04T10:00:00.000Z" }),
+          sale({ id: "s2", status: "registrada", sold_at: "2026-09-06T10:00:00.000Z" }),
+        ],
+      }),
+    );
+    const comprou = steps.find((x) => x.key === "comprou")!;
+    expect(comprou.reached).toBe(true);
+    expect(comprou.at).toBe("2026-09-06T10:00:00.000Z");
+  });
+});
+
 describe("buildMovements", () => {
   it("junta todas as fontes numa linha do tempo decrescente", () => {
     const movs = buildMovements(
@@ -411,6 +448,18 @@ describe("buildMovements", () => {
     const venda = movs.find((m) => m.kind === "venda")!;
     expect(venda.title).toContain("1.234,50");
     expect(venda.detail).toBe("Microlote 1kg");
+  });
+
+  it("D7: venda mostra o valor sem frete", () => {
+    const movs = buildMovements(overview({ sales: [sale({ value: 500, freight: 50 })] }));
+    expect(movs.find((m) => m.kind === "venda")!.title).toContain("450,00");
+  });
+
+  it("D7: a venda cancelada continua na trilha, marcada como cancelada", () => {
+    const movs = buildMovements(overview({ sales: [sale({ value: 300, status: "cancelada" })] }));
+    const venda = movs.find((m) => m.kind === "venda")!;
+    expect(venda.title).toContain("cancelada");
+    expect(venda.title).toContain("300,00");
   });
 });
 

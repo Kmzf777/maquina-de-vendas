@@ -7,6 +7,8 @@ export interface FunnelStage {
   count: number;
   /** Texto da taxa de conversão a partir do estágio anterior (exibido entre as barras). */
   rateFromPrev?: string;
+  /** Texto de ajuda do estágio, mostrado no `title` (hover) da linha. */
+  help?: string;
 }
 
 /**
@@ -42,9 +44,16 @@ export function FunnelBars({ stages }: { stages: FunnelStage[] }) {
             )}
             <div
               className="flex items-baseline justify-between gap-3"
-              title={`${stage.label}: ${fmtInt(stage.count)}`}
+              title={stage.help ? `${stage.label}: ${stage.help}` : `${stage.label}: ${fmtInt(stage.count)}`}
             >
-              <span className="text-[13px] text-[#111111]">{stage.label}</span>
+              <span className="text-[13px] text-[#111111]">
+                {stage.label}
+                {stage.help && (
+                  <span className="ml-1 text-[11px] text-[#7b7b78] cursor-help" aria-hidden="true">
+                    ⓘ
+                  </span>
+                )}
+              </span>
               <span
                 className="text-[22px] font-normal leading-none text-[#111111]"
                 style={{ letterSpacing: "-0.5px" }}

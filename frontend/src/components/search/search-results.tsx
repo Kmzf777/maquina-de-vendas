@@ -11,6 +11,7 @@ import type {
   SaleSearchResult,
   ConversationSearchResult,
 } from "@/lib/types";
+import { receitaDaVenda, vendaCancelada } from "@/lib/sales/receita";
 
 const rowClass =
   "flex items-center justify-between gap-4 px-3 py-3 border-b border-[#dedbd6]/50 hover:bg-[#faf9f6] transition-colors";
@@ -61,6 +62,10 @@ function DealRow({ deal }: { deal: DealSearchResult }) {
 }
 
 function SaleRow({ sale }: { sale: SaleSearchResult }) {
+  // D7: valor sem frete; a cancelada mostra o próprio valor (sem frete), com selo.
+  // Sem status/frete no retorno (função SQL antiga), fica o valor de sempre.
+  const cancelada = vendaCancelada(sale);
+  const valor = receitaDaVenda({ ...sale, status: null });
   return (
     <Link href={`/painel-vendas?sale_id=${sale.id}`} className={rowClass}>
       <div className="min-w-0">
@@ -69,7 +74,12 @@ function SaleRow({ sale }: { sale: SaleSearchResult }) {
           {joinParts([sale.lead_name || sale.lead_phone, sale.deal_title, shortDate(sale.sold_at)])}
         </p>
       </div>
-      <span className={metaText}>{currency(sale.value)}</span>
+      <span className={`${metaText} flex items-center gap-2`}>
+        {cancelada && (
+          <span className="rounded-[4px] bg-[#f0ede8] px-1.5 py-0.5 text-[11px] text-[#7b7b78]">cancelada</span>
+        )}
+        <span className={cancelada ? "line-through" : undefined}>{currency(valor)}</span>
+      </span>
     </Link>
   );
 }

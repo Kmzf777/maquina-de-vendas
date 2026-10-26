@@ -129,7 +129,7 @@ export async function GET(
         unwrap(
           await sb
             .from("sales")
-            .select("id, value, product, sold_at, sold_by, origin, status")
+            .select("id, value, freight, product, sold_at, sold_by, origin, status")
             .eq("lead_id", id)
             .order("sold_at", { ascending: false })
             .limit(MAX_ROWS),

@@ -4,6 +4,10 @@ import type { DashboardConversion } from "./types";
 import { FunnelBars } from "./funnel-bars";
 import { fmtPct } from "./format";
 
+// D7: "Ganho" conta oportunidades do funil, não vendas; a receita mora no Painel de vendas.
+const AJUDA_GANHO =
+  "oportunidades marcadas como ganhas no funil. Vendas do Bling sem oportunidade não entram aqui; veja a receita no Painel de vendas.";
+
 /**
  * Bloco "Conversão fim-a-fim": coorte de leads do período → handoff → ganho.
  * handoff_rate e win_rate vêm prontos da rota (sobre o total de leads);
@@ -26,6 +30,7 @@ export function ConversionFunnel({ data }: { data: DashboardConversion }) {
             label: "Ganho",
             count: data.won,
             rateFromPrev: `${fmtPct(handoffToWon)} dos handoffs viram ganho`,
+            help: AJUDA_GANHO,
           },
         ]}
       />

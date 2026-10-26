@@ -84,6 +84,7 @@ export function mapSale(r: Row): OverviewSale {
   return {
     id: String(r.id),
     value: num(r.value),
+    freight: r.freight == null ? null : num(r.freight),
     product: str(r.product),
     sold_at: str(r.sold_at),
     sold_by: str(r.sold_by),

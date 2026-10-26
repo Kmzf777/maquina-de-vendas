@@ -10,6 +10,7 @@
 
 import { AGENT_STAGES, DEAL_STAGES } from "@/lib/constants";
 import { FASE_LABELS, rotuloDoLead, segmentoDoLead } from "@/lib/segmento";
+import { receitaDaVenda, vendaCancelada } from "@/lib/sales/receita";
 import type { OverviewRepasse } from "@/lib/repasse-resposta";
 
 const DASH = "—";
@@ -62,6 +63,8 @@ export interface OverviewDeal {
 export interface OverviewSale {
   id: string;
   value: number;
+  /** Frete do pedido (D7: fora da receita). Opcional: linha antiga vem sem. */
+  freight?: number | null;
   product: string | null;
   sold_at: string | null;
   sold_by: string | null;
@@ -310,8 +313,10 @@ function firstCustomerContactAt(o: LeadOverview): string | null {
  * sem dois cards discordando por milissegundos.
  */
 export function computeVitals(o: LeadOverview, nowMs: number): LeadVitals {
-  const receita = o.sales.reduce((acc, s) => acc + (Number(s.value) || 0), 0);
-  const pedidos = o.sales.length;
+  // D7: receita = valor − frete, só das vendas não canceladas.
+  const validas = o.sales.filter((s) => !vendaCancelada(s));
+  const receita = Math.round(validas.reduce((acc, s) => acc + receitaDaVenda(s), 0) * 100) / 100;
+  const pedidos = validas.length;
   const abertos = o.deals.filter((d) => !CLOSED_STAGE_KEYS.has(d.stage_key ?? ""));
 
   const criado = Date.parse(o.lead.created_at);
@@ -396,8 +401,8 @@ export function buildJourney(o: LeadOverview): Journey {
     {
       key: "comprou",
       label: "Comprou",
-      reached: o.sales.length > 0,
-      at: earliest(o.sales.map((s) => s.sold_at)),
+      reached: o.sales.some((s) => !vendaCancelada(s)),
+      at: earliest(o.sales.filter((s) => !vendaCancelada(s)).map((s) => s.sold_at)),
     },
   ];
 
@@ -474,10 +479,14 @@ export function buildMovements(o: LeadOverview): Movement[] {
   }
 
   for (const s of o.sales) {
+    // D7: a cancelada continua na trilha (aconteceu), marcada; o valor mostrado
+    // é sempre sem frete, inclusive o da cancelada.
+    const cancelada = vendaCancelada(s);
+    const semFrete = receitaDaVenda({ ...s, status: null });
     push(out, s.sold_at, {
       id: `venda-${s.id}`,
       kind: "venda",
-      title: `Venda de ${fmtBRL(Number(s.value) || 0)}`,
+      title: cancelada ? `Venda cancelada de ${fmtBRL(semFrete)}` : `Venda de ${fmtBRL(semFrete)}`,
       detail: s.product ?? s.sold_by ?? null,
     });
   }

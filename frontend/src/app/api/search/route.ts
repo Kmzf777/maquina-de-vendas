@@ -6,10 +6,9 @@ import {
   parseSearchParams,
   limitForTab,
   offsetFor,
-  startOfDayIso,
-  endOfDayIso,
   type SearchTab,
 } from "@/lib/universal-search";
+import { limitesDoDiaBRT } from "@/lib/sales/receita";
 
 const MIN_QUERY_LEN = 2;
 const EMPTY_RESULT = { data: [] as unknown[], count: 0 };
@@ -57,8 +56,8 @@ export async function GET(request: NextRequest) {
   const limit = limitForTab(params.tab);
   const offset = offsetFor(params.page, limit);
   const wantsAll = params.tab === "all";
-  const dateAfter = params.dateFrom ? startOfDayIso(params.dateFrom) : null;
-  const dateBefore = params.dateTo ? endOfDayIso(params.dateTo) : null;
+  // D7: o dia do filtro é o dia de Brasília (00:00 a 23:59:59.999 −03:00), não o UTC.
+  const { gte: dateAfter, lte: dateBefore } = limitesDoDiaBRT(params.dateFrom, params.dateTo);
 
   // As 4 RPCs rodam SEMPRE, mesmo numa aba específica: a UI mostra a contagem de
   // todas as abas o tempo todo, e pular as inativas zerava essas contagens.

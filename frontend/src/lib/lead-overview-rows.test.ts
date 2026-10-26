@@ -94,6 +94,7 @@ describe("mapSale", () => {
     ).toEqual({
       id: "s1",
       value: 900.5,
+      freight: null,
       product: "Microlote 1kg",
       sold_at: "2026-09-05T10:00:00.000Z",
       sold_by: "joao@canastra",
@@ -104,6 +105,11 @@ describe("mapSale", () => {
 
   it("produto vazio vira nulo — a UI decide o rótulo, não a string vazia", () => {
     expect(mapSale({ id: "s1", product: "" }).product).toBeNull();
+  });
+
+  it("D7: leva o frete; sem frete vira nulo (nunca NaN)", () => {
+    expect(mapSale({ id: "s1", value: 500, freight: "50.00" }).freight).toBe(50);
+    expect(mapSale({ id: "s1", value: 500 }).freight).toBeNull();
   });
 });
 

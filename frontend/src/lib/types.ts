@@ -545,6 +545,9 @@ export interface SaleSearchResult {
   deal_id: string | null;
   deal_title: string | null;
   total_count: number;
+  /** D7: vêm da `search_sales` nova; ausentes na função antiga. */
+  status?: string | null;
+  freight?: number | string | null;
 }
 
 export interface ConversationSearchResult {
