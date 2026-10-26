@@ -8,8 +8,9 @@ varredura e sob a mesma trava `bling:pedidos:{conta}`):
      (ate ontem), pela data do pedido — `dataInicial`/`dataFinal`, o mesmo
      filtro que o backfill ja usa em producao;
   2. le as vendas do banco da conta no mesmo intervalo;
-  3. compara POR DIA: quantidade, soma do total e conjunto de ids (faltando no
-     banco, sobrando no banco, mesmo id com valor diferente);
+  3. compara POR DIA (dia de Brasilia): quantidade, soma do total e conjunto
+     de ids (faltando no banco, sobrando no banco, mesmo id com valor diferente,
+     mesmo id com situacao diferente);
   4. dia divergente -> reimporta so os ids envolvidos (detalhe + contato sob
      demanda + upsert) e confere de novo;
   5. grava o resultado de TODOS os dias em `bling_reconciliacao`
@@ -37,6 +38,11 @@ Redis fora (sem a trava): WARNING a cada pulo e alerta
 
 A comparacao conta TODAS as vendas com o pedido (inclusive canceladas), porque
 a listagem do Bling tambem traz todas as situacoes. `value` x `total` do Bling.
+
+Situacao (1e6381fe): `situacao.id` da listagem diferente de
+`sales.bling_situacao_id` tambem e divergencia e o pedido e reimportado. E assim
+que um cancelamento no Bling chega ao CRM em ate 1 dia mesmo sem webhook. Se um
+dos lados nao tem a situacao, nao ha o que comparar.
 """
 import asyncio
 import logging
@@ -91,19 +97,21 @@ def _salvar_estado(conta: str, quando: str) -> None:
 def _vendas_do_banco(conta: str, inicio: date, fim: date) -> list[dict]:
     """Vendas com pedido Bling da conta com `sold_at` em [inicio, fim].
 
-    `sold_at` de venda Bling e sempre `<data do pedido>T12:00:00+00:00`
-    (`_sold_at_iso` e `create_order`), entao o dia UTC e o dia do pedido.
+    `sold_at` de venda Bling e `<data do pedido>T12:00:00-03:00`, meio-dia de
+    Brasilia (`_sold_at_iso` e `create_order`). As vendas antigas, gravadas a
+    `T12:00:00+00:00` (09:00 BRT), caem no mesmo dia em Brasilia. Os limites
+    sao os do dia de Brasilia.
 
     Paginada por `range` com ordem estavel (`bling_order_id`): ver `_PAGINA`.
     """
     vendas: list[dict] = []
     while True:
         res = (get_supabase().table("sales")
-               .select("bling_order_id, sold_at, value, status")
+               .select("bling_order_id, sold_at, value, status, bling_situacao_id")
                .eq("bling_account", conta)
                .not_.is_("bling_order_id", "null")
-               .gte("sold_at", f"{inicio.isoformat()}T00:00:00+00:00")
-               .lt("sold_at", f"{(fim + timedelta(days=1)).isoformat()}T00:00:00+00:00")
+               .gte("sold_at", f"{inicio.isoformat()}T00:00:00-03:00")
+               .lt("sold_at", f"{(fim + timedelta(days=1)).isoformat()}T00:00:00-03:00")
                .order("bling_order_id")
                .range(len(vendas), len(vendas) + _PAGINA - 1).execute())
         pagina = getattr(res, "data", None) or []
@@ -138,6 +146,13 @@ def _dec(valor) -> Decimal:
     return Decimal(str(valor or 0))
 
 
+def _situacao_id(valor) -> int | None:
+    try:
+        return int(valor) if valor is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
 def _por_dia_bling(pedidos: list[dict]) -> dict[str, dict[int, Decimal]]:
     dias: dict[str, dict[int, Decimal]] = defaultdict(dict)
     for p in pedidos:
@@ -145,24 +160,57 @@ def _por_dia_bling(pedidos: list[dict]) -> dict[str, dict[int, Decimal]]:
     return dias
 
 
+def _situacoes_bling(pedidos: list[dict]) -> dict[int, int | None]:
+    """`situacao.id` de cada pedido da listagem (paralelo a `_por_dia_bling`)."""
+    return {int(p["id"]): _situacao_id((p.get("situacao") or {}).get("id")) for p in pedidos}
+
+
+def _dia_brt(sold_at) -> str:
+    """Dia de Brasilia de um `sold_at`. Nao usar o `[:10]` da string: e o dia
+    no offset em que veio gravado (UTC), nao o de Brasilia."""
+    texto = str(sold_at or "")
+    try:
+        instante = datetime.fromisoformat(texto)
+    except ValueError:
+        return texto[:10]
+    if instante.tzinfo is None:
+        instante = instante.replace(tzinfo=timezone.utc)
+    return instante.astimezone(_TZ).date().isoformat()
+
+
 def _por_dia_banco(vendas: list[dict]) -> dict[str, dict[int, Decimal]]:
     dias: dict[str, dict[int, Decimal]] = defaultdict(dict)
     for v in vendas:
-        dias[str(v.get("sold_at") or "")[:10]][int(v["bling_order_id"])] = _dec(v.get("value"))
+        dias[_dia_brt(v.get("sold_at"))][int(v["bling_order_id"])] = _dec(v.get("value"))
     return dias
 
 
-def _comparar(bling: dict[int, Decimal], banco: dict[int, Decimal]) -> dict:
+def _situacoes_banco(vendas: list[dict]) -> dict[int, int | None]:
+    """`bling_situacao_id` de cada venda (paralelo a `_por_dia_banco`)."""
+    return {int(v["bling_order_id"]): _situacao_id(v.get("bling_situacao_id")) for v in vendas}
+
+
+def _comparar(bling: dict[int, Decimal], banco: dict[int, Decimal],
+              sit_bling: dict[int, int | None] | None = None,
+              sit_banco: dict[int, int | None] | None = None) -> dict:
+    sit_bling, sit_banco = sit_bling or {}, sit_banco or {}
+    comuns = set(bling) & set(banco)
     return {
         "faltando": sorted(set(bling) - set(banco)),
         "sobrando": sorted(set(banco) - set(bling)),
-        "valor_diferente": sorted(i for i in set(bling) & set(banco)
+        "valor_diferente": sorted(i for i in comuns
                                   if abs(bling[i] - banco[i]) > _TOLERANCIA),
+        # Situacao nula de um dos lados nao e divergencia: nao ha o que comparar.
+        "situacao_diferente": sorted(
+            i for i in comuns
+            if sit_bling.get(i) is not None and sit_banco.get(i) is not None
+            and sit_bling[i] != sit_banco[i]),
     }
 
 
 def _diverge(d: dict) -> bool:
-    return bool(d["faltando"] or d["sobrando"] or d["valor_diferente"])
+    return bool(d["faltando"] or d["sobrando"] or d["valor_diferente"]
+                or d.get("situacao_diferente"))
 
 
 def _soma(valores: dict[int, Decimal]) -> float:
@@ -212,12 +260,15 @@ async def _reconciliar(client, conta: str, inicio: date, fim: date, resultado: d
         return resultado
 
     bling = _por_dia_bling(pedidos)
+    sit_bling = _situacoes_bling(pedidos)
     vendas = await asyncio.to_thread(_vendas_do_banco, conta, inicio, fim)
     banco = _por_dia_banco(vendas)
+    sit_banco = _situacoes_banco(vendas)
     todos_os_dias = [(inicio + timedelta(days=i)).isoformat()
                      for i in range((fim - inicio).days + 1)]
 
-    primeira = {d: _comparar(bling.get(d, {}), banco.get(d, {})) for d in todos_os_dias}
+    primeira = {d: _comparar(bling.get(d, {}), banco.get(d, {}), sit_bling, sit_banco)
+                for d in todos_os_dias}
     divergentes = [d for d in todos_os_dias if _diverge(primeira[d])]
 
     erros: dict[int, str] = {}
@@ -227,7 +278,8 @@ async def _reconciliar(client, conta: str, inicio: date, fim: date, resultado: d
         alvo = []
         for d in divergentes:
             c = primeira[d]
-            alvo.extend(c["faltando"] + c["valor_diferente"] + c["sobrando"])
+            alvo.extend(c["faltando"] + c["valor_diferente"] + c["situacao_diferente"]
+                        + c["sobrando"])
         sobrando_cancelados = {i for d in divergentes for i in primeira[d]["sobrando"]
                                if i in cancelados}
         if sobrando_cancelados:
@@ -257,6 +309,7 @@ async def _reconciliar(client, conta: str, inicio: date, fim: date, resultado: d
                 erros[order_id] = str(exc)
         vendas = await asyncio.to_thread(_vendas_do_banco, conta, inicio, fim)
         banco = _por_dia_banco(vendas)
+        sit_banco = _situacoes_banco(vendas)
         cancelados = {int(v["bling_order_id"]) for v in vendas
                       if v.get("status") == "cancelada"}
 
@@ -269,7 +322,7 @@ async def _reconciliar(client, conta: str, inicio: date, fim: date, resultado: d
     agora = datetime.now(timezone.utc).isoformat()
     linhas, ainda_divergentes = [], []
     for d in todos_os_dias:
-        depois = _comparar(bling.get(d, {}), banco.get(d, {}))
+        depois = _comparar(bling.get(d, {}), banco.get(d, {}), sit_bling, sit_banco)
         apagados_do_dia = sorted(tolerados & (set(primeira[d]["sobrando"]) | set(depois["sobrando"])))
         nota = ({"apagados_no_bling": apagados_do_dia, "observacao": OBS_APAGADO}
                 if apagados_do_dia else {})
@@ -280,7 +333,8 @@ async def _reconciliar(client, conta: str, inicio: date, fim: date, resultado: d
             status, detalhe = "reimportado", {**antes_aj, "reimportados": True, **nota}
         else:
             status = "divergente"
-            ids = set(depois_aj["faltando"] + depois_aj["sobrando"] + depois_aj["valor_diferente"])
+            ids = set(depois_aj["faltando"] + depois_aj["sobrando"] + depois_aj["valor_diferente"]
+                      + depois_aj["situacao_diferente"])
             detalhe = {**depois_aj,
                        "apagados_no_bling": sorted(apagados & set(depois_aj["sobrando"])),
                        "erros": [{"pedido": i, "erro": erros[i]} for i in sorted(ids)

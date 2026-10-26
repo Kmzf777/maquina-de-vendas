@@ -485,7 +485,8 @@ async def create_order(client, *, lead_id: str, deal_id: str | None, contact_id:
         # do chat depende disso para a rastreabilidade — o POST /api/sales sempre
         # gravou este campo, e o modo Bling nao pode ser um degrau para tras.
         "conversation_id": conversation_id,
-        "sold_at": f"{sold_at}T12:00:00+00:00",
+        # Meio-dia de Brasilia: o dia do pedido e o mesmo em BRT e em UTC.
+        "sold_at": f"{sold_at}T12:00:00-03:00",
         "value": float(total),
         # Frete guardado a parte (alem de ja estar dentro de `value`) para a
         # edicao reabrir com ele: o PUT no Bling manda o pedido inteiro e, sem
@@ -625,10 +626,12 @@ def _existing_sale(order_id: int, account: str) -> dict | None:
 
 def _sold_at_iso(pedido: dict, event_date: str | None) -> str | None:
     """Data da venda em timestamptz. Sem guarda, um pedido sem `data` viraria a
-    string "NoneT12:00:00+00:00" e explodiria no Postgres no meio do webhook."""
+    string "NoneT12:00:00-03:00" e explodiria no Postgres no meio do webhook.
+
+    Meio-dia de Brasilia (1e6381fe): as telas contam o dia em America/Sao_Paulo."""
     data = str(pedido.get("data") or "").strip()
     if data:
-        return f"{data}T12:00:00+00:00"
+        return f"{data}T12:00:00-03:00"
     return event_date or None
 
 

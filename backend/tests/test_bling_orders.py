@@ -388,6 +388,7 @@ def test_create_order_persiste_venda_e_itens(monkeypatch):
     assert venda["status"] == "registrada"
     assert venda["value"] == 267.0, "o valor vem dos itens (10 x 26,70), nao do GET"
     assert venda["product"] == "Cafe 250g"
+    assert venda["sold_at"] == "2026-08-18T12:00:00-03:00", "meio-dia de Brasilia (1e6381fe)"
     assert venda["bling_order_id"] == 34215992
     assert venda["lead_id"] == "L1" and venda["deal_id"] == "D1"
     assert venda["payment_method_id"] == 45
