@@ -6,12 +6,16 @@ import { useEffect, useState, type ReactNode } from "react";
 import { CHANNEL_STYLES } from "@/components/trafego/campaign-report-table";
 import {
   STAGE_LABEL, collapsedLine, fmtBRLOrDash, fmtDays, fmtInt, fmtPctOrDash, fmtRoasOrDash,
-  type ReportSummary, type SummaryFunnel, type SummaryStage,
+  type ReportSummary, type SummaryCost, type SummaryFunnel, type SummaryStage,
 } from "@/lib/traffic-summary";
 
 /** Campo do funil cumulativo (call de 01/10). Opcional: backend anterior não o manda. O tipo
  *  base mora em lib/traffic-summary.ts, fora do pacote P2 — por isso a extensão local. */
 export type FunnelComEntrada = SummaryFunnel & { entraram_ja_clientes?: number };
+
+/** D7 (1e6381fe): `cost.receita` já vem sem frete; o frete das mesmas vendas vem em
+ *  `cost.frete`. Opcional: backend anterior não o manda (lê-se 0). */
+export type CostComFrete = SummaryCost & { frete?: number };
 
 const STORAGE_KEY = "trafego:summary-collapsed";
 const LABEL = "text-[11px] font-medium uppercase tracking-[0.6px] text-[#7b7b78]";
@@ -103,11 +107,21 @@ function FunnelBand({ summary, mode }: { summary: ReportSummary; mode: "lead" | 
 
 // ---- 2. Custo por etapa --------------------------------------------------------------------
 function CostBand({ summary }: { summary: ReportSummary }) {
-  const c = summary.cost;
+  const c = summary.cost as CostComFrete;
+  // D7: receita sem frete; o frete do período fica à parte, nunca somado à receita.
+  const receitaEFrete = (
+    <>
+      <Stat label="Receita" value={fmtBRLOrDash(c.receita)} hint="sem frete" />
+      <Stat label="Frete" value={fmtBRLOrDash(c.frete ?? 0)} />
+    </>
+  );
   return (
     <Band title="Custo por etapa (Google + Meta)">
       {c.investimento === 0 ? (
-        <p className="text-[13px] text-[#7b7b78]">Sem investimento sincronizado no período.</p>
+        <>
+          <p className="text-[13px] text-[#7b7b78]">Sem investimento sincronizado no período.</p>
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-x-4 gap-y-4">{receitaEFrete}</div>
+        </>
       ) : (
         <div className="grid grid-cols-2 sm:grid-cols-3 gap-x-4 gap-y-4">
           <Stat label="Investimento" value={fmtBRLOrDash(c.investimento)} />
@@ -116,6 +130,7 @@ function CostBand({ summary }: { summary: ReportSummary }) {
           <Stat label="Custo por closer" value={fmtBRLOrDash(c.custo_closer)} />
           <Stat label="CAC" value={fmtBRLOrDash(c.cac)} hint={`${fmtInt(c.clientes)} clientes pagos`} />
           <Stat label="ROAS" value={fmtRoasOrDash(c.roas)} />
+          {receitaEFrete}
         </div>
       )}
     </Band>

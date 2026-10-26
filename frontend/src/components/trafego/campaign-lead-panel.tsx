@@ -36,6 +36,7 @@ import {
   type MovementKind,
 } from "@/lib/lead-overview";
 import { formatarMinutos } from "@/lib/repasse-resposta";
+import { receitaDaVenda, vendaCancelada } from "@/lib/sales/receita";
 
 type Payload = LeadOverview & { partial?: string[] };
 
@@ -548,22 +549,38 @@ export function CampaignLeadPanel({
                 <Card>
                   <SectionLabel>Vendas</SectionLabel>
                   <div className="divide-y divide-[#f0ede8]">
-                    {data.sales.map((s) => (
-                      <div key={s.id} className="flex items-start justify-between gap-3 py-2">
-                        <div className="min-w-0">
-                          <div className="text-[13px] text-[#111111] truncate">
-                            {s.product ?? "Venda"}
+                    {data.sales.map((s) => {
+                      // D7: valor sempre sem frete — inclusive o da cancelada, que fica
+                      // na lista com selo, mas fora da Receita e do ticket acima.
+                      const cancelada = vendaCancelada(s);
+                      const semFrete = receitaDaVenda({ ...s, status: null });
+                      return (
+                        <div key={s.id} className="flex items-start justify-between gap-3 py-2">
+                          <div className="min-w-0">
+                            <div className="text-[13px] text-[#111111] truncate">
+                              {s.product ?? "Venda"}
+                            </div>
+                            <div className="text-[12px] text-[#7b7b78] tabular-nums">
+                              {fmtDate(s.sold_at)}
+                              {s.sold_by ? ` · ${s.sold_by}` : ""}
+                            </div>
                           </div>
-                          <div className="text-[12px] text-[#7b7b78] tabular-nums">
-                            {fmtDate(s.sold_at)}
-                            {s.sold_by ? ` · ${s.sold_by}` : ""}
+                          <div className="flex items-center gap-1.5 flex-shrink-0">
+                            {cancelada && (
+                              <span className="text-[11px] font-medium px-1.5 py-0.5 rounded-[4px] border bg-[#c41c1c]/10 text-[#c41c1c] border-[#c41c1c]/20">
+                                cancelada
+                              </span>
+                            )}
+                            <span
+                              className={`text-[13px] tabular-nums whitespace-nowrap ${cancelada ? "text-[#7b7b78] line-through" : "text-[#1f9d57]"}`}
+                              title="Valor sem frete"
+                            >
+                              {fmtBRL(semFrete)}
+                            </span>
                           </div>
                         </div>
-                        <span className="text-[13px] text-[#1f9d57] tabular-nums whitespace-nowrap">
-                          {fmtBRL(s.value)}
-                        </span>
-                      </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 </Card>
               )}
