@@ -2532,6 +2532,61 @@ def _upload_audio_to_storage(audio_bytes: bytes, content_type: str, media_ref: s
         return None
 
 
+# Cartão da1f51a7 (27/10/2026): foto/vídeo/documento/figurinha do cliente ficavam só como
+# media_id da Meta, que some em ~5-7 dias (medido: 23-24/10 abriam, ≤19/10 davam 400).
+# Cópia em whatsapp-media/inbound/ — mesmo bucket público que a bolha já carrega.
+_INBOUND_MAX_MEDIA = 16 * 1024 * 1024       # teto da Meta p/ imagem/vídeo/figurinha
+_INBOUND_MAX_DOCUMENT = 100 * 1024 * 1024   # teto da Meta p/ documento
+_INBOUND_EXT = {
+    "image/jpeg": "jpg", "image/png": "png", "image/webp": "webp", "image/gif": "gif",
+    "video/mp4": "mp4", "video/3gpp": "3gp", "application/pdf": "pdf",
+}
+_INBOUND_EXT_PADRAO = {"image": "jpg", "video": "mp4", "sticker": "webp", "document": "bin"}
+
+
+def _inbound_ext(content_type: str | None, kind: str) -> str:
+    base = (content_type or "").split(";")[0].strip().lower()
+    if base in _INBOUND_EXT:
+        return _INBOUND_EXT[base]
+    import mimetypes
+    guessed = mimetypes.guess_extension(base) if base else None
+    return guessed.lstrip(".") if guessed else _INBOUND_EXT_PADRAO.get(kind, "bin")
+
+
+async def _copy_inbound_media(provider, media_ref: str, kind: str) -> str | None:
+    """Baixa a mídia do cliente na Meta e sobe para whatsapp-media/inbound/. Fail-soft:
+    None em qualquer erro ou acima do teto — o chamador mantém o media_id (como antes)."""
+    if not media_ref or media_ref.startswith("http") or provider is None \
+            or not hasattr(provider, "download_media"):
+        return None
+    try:
+        data, content_type = await _download_media_with_retry(provider, media_ref)
+    except Exception as e:  # noqa: BLE001
+        logger.warning("[MEDIA-INBOUND] download falhou p/ %s (%s): %s", media_ref, kind, e)
+        return None
+    teto = _INBOUND_MAX_DOCUMENT if kind == "document" else _INBOUND_MAX_MEDIA
+    if not isinstance(data, (bytes, bytearray)) or not data or len(data) > teto:
+        logger.warning("[MEDIA-INBOUND] %s (%s) fora do teto/sem bytes — mantém media_id", media_ref, kind)
+        return None
+    path = f"inbound/{media_ref}.{_inbound_ext(content_type, kind)}"
+
+    def _upload() -> str:
+        from app.db.supabase import get_supabase
+        sb = get_supabase()
+        sb.storage.from_("whatsapp-media").upload(
+            path, bytes(data),
+            file_options={"content-type": content_type or "application/octet-stream", "x-upsert": "true"},
+        )
+        return sb.storage.from_("whatsapp-media").get_public_url(path)
+
+    try:
+        # Em thread: o upload do supabase-py é síncrono e um documento pode ter até 100 MB.
+        return await asyncio.to_thread(_upload)
+    except Exception as e:  # noqa: BLE001
+        logger.warning("[MEDIA-INBOUND] upload falhou p/ %s (%s): %s", media_ref, kind, e)
+        return None
+
+
 async def _resolve_media(
     text: str, provider, lead_id: str | None = None, stage: str = "",
     transcribe: bool = True,
@@ -2542,7 +2597,7 @@ async def _resolve_media(
     Audio: downloaded, uploaded to Supabase Storage e — se `transcribe` — transcrito.
     `transcribe=False` (canal humano) pula SÓ a chamada ao Gemini: o download e o
     upload continuam, então `media_url` segue preenchido e o player do CRM não quebra.
-    Image/video/document/sticker: media_id extracted only, no download.
+    Image/video/document/sticker: copiados para whatsapp-media/inbound/ (fail-soft: fica o media_id).
     Location/contact/reaction/button: metadata dict extracted from base64 JSON.
     `lead_id`/`stage`: atribuição da contabilidade da transcrição (token_usage).
     """
@@ -2620,6 +2675,9 @@ async def _resolve_media(
             if message_type is None:
                 message_type = "image"
                 storage_url = media_ref
+                copied = await _copy_inbound_media(provider, media_ref, "image")
+                if copied:
+                    storage_url = copied
             text = text.replace(match.group(0), "")
 
     for pattern in [video_id_pattern, video_url_pattern]:
@@ -2628,6 +2686,9 @@ async def _resolve_media(
             if message_type is None:
                 message_type = "video"
                 storage_url = media_ref
+                copied = await _copy_inbound_media(provider, media_ref, "video")
+                if copied:
+                    storage_url = copied
             text = text.replace(match.group(0), "")
 
     for match in re.finditer(doc_url_pattern, text):
@@ -2636,6 +2697,9 @@ async def _resolve_media(
         if message_type is None:
             message_type = "document"
             storage_url = media_ref
+            copied = await _copy_inbound_media(provider, media_ref, "document")
+            if copied:
+                storage_url = copied
             if fname_b64:
                 try:
                     document_name = base64.b64decode(fname_b64).decode()
@@ -2648,6 +2712,9 @@ async def _resolve_media(
         if message_type is None:
             message_type = "sticker"
             storage_url = media_ref
+            copied = await _copy_inbound_media(provider, media_ref, "sticker")
+            if copied:
+                storage_url = copied
         text = text.replace(match.group(0), "")
 
     for match in re.finditer(meta_b64_pattern, text):
