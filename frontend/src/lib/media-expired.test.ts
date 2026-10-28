@@ -8,11 +8,23 @@ describe("isMediaExpired", () => {
   it("metadata.media_expired = true → expirado", () => {
     expect(isMediaExpired({ media_url: "https://x/a.jpg", metadata: { media_expired: true }, created_at: dias(1) }, NOW)).toBe(true);
   });
-  it("media_id legado da Meta com mais de 7 dias → expirado", () => {
-    expect(isMediaExpired({ media_url: "2302234720561889", created_at: dias(8) }, NOW)).toBe(true);
+  it("media_id que o CLIENTE mandou com mais de 7 dias → expirado", () => {
+    expect(isMediaExpired({ media_url: "2302234720561889", sent_by: "user", created_at: dias(8) }, NOW)).toBe(true);
+    expect(isMediaExpired({ media_url: "2302234720561889", role: "user", created_at: dias(8) }, NOW)).toBe(true);
   });
-  it("media_id recente → não expirado", () => {
-    expect(isMediaExpired({ media_url: "2302234720561889", created_at: dias(2) }, NOW)).toBe(false);
+  it("media_id do cliente recente → não expirado", () => {
+    expect(isMediaExpired({ media_url: "2302234720561889", sent_by: "user", created_at: dias(2) }, NOW)).toBe(false);
+  });
+  it("media_id enviado por nós (vendedor/robô) dura ~30 dias na Meta", () => {
+    for (const quem of [
+      { role: "assistant", sent_by: "seller" },
+      { role: "assistant", sent_by: "agent" },
+      { role: "assistant", sent_by: null },
+    ]) {
+      expect(isMediaExpired({ media_url: "2302234720561889", ...quem, created_at: dias(8) }, NOW)).toBe(false);
+      expect(isMediaExpired({ media_url: "2302234720561889", ...quem, created_at: dias(29) }, NOW)).toBe(false);
+      expect(isMediaExpired({ media_url: "2302234720561889", ...quem, created_at: dias(31) }, NOW)).toBe(true);
+    }
   });
   it("URL do Storage antiga sem marca → não expirado", () => {
     expect(isMediaExpired({ media_url: "https://x/a.jpg", created_at: dias(300) }, NOW)).toBe(false);
