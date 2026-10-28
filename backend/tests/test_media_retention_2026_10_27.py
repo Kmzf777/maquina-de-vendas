@@ -1,5 +1,6 @@
 """Cartão da1f51a7: rotação de mídia — só mensagem velha, só prefixo permitido, dry-run por padrão."""
 from datetime import datetime, timedelta, timezone
+from fnmatch import fnmatchcase
 
 import pytest
 
@@ -26,7 +27,8 @@ class FakeSB:
 
 @pytest.fixture
 def store_factory():
-    def make(msgs, origin=None):
+    def make(msgs, origin=None, filtro_banco=True):
+        """filtro_banco=False simula um banco que devolve tudo, para testar a 2ª barreira (Python)."""
         fake = FakeSB(msgs)
 
         class Store(s._Store):
@@ -34,9 +36,12 @@ def store_factory():
                 self.origin = origin
 
             def candidatas(self, cutoff, after, limit):
+                # Espelha o filtro do banco: só prefixos permitidos e só o host do projeto.
+                padroes = (s._padroes_like(self.origin) if filtro_banco
+                           else ["*/storage/v1/object/public/*"])
                 rows = [m for m in fake.msgs
                         if m["created_at"] < cutoff and (after is None or m["created_at"] > after)
-                        and "/storage/v1/object/public/" in (m["media_url"] or "")
+                        and any(fnmatchcase(m["media_url"] or "", p) for p in padroes)
                         and not ((m["metadata"] or {}).get("media_expired"))]
                 return sorted(rows, key=lambda m: m["created_at"])[:limit]
 
@@ -120,7 +125,7 @@ def test_apaga_so_o_velho_e_permitido(store_factory):
         msg(3, 100, BASE + "whatsapp-media/inbound/novo.jpg"),          # novo demais
         msg(4, 200, BASE + "whatsapp-media/valeria-botoes/cafe.png"),   # protegido
         msg(5, 200, "1234567890"),                                       # media_id da Meta
-    ])
+    ], filtro_banco=False)
     r = s.run_retention(store=store, now=NOW, dry_run=False, days=180, batch=500)
     removidos = {(b, p) for b, ps in fake.removed for p in ps}
     assert removidos == {("whatsapp-media", "inbound/a.jpg"), ("audio", "b.ogg")}
@@ -183,7 +188,7 @@ def test_url_de_outro_projeto_supabase_e_pulada(store_factory):
     store, fake = store_factory([
         msg(1, 200, "https://outro.supabase.co/storage/v1/object/public/audio/b.ogg"),
         msg(2, 200, BASE + "audio/c.ogg"),
-    ], origin="https://supabase.x/")
+    ], origin="https://supabase.x/", filtro_banco=False)
     r = s.run_retention(store=store, now=NOW, dry_run=False, days=180, batch=500)
     assert fake.removed == [("audio", ["c.ogg"])] and r["skipped"] == 1
 
@@ -211,8 +216,11 @@ def test_store_real_usa_a_api_do_supabase_py():
     st.candidatas("2026-06-01", "2026-01-01", 10)
     q = sb.table.return_value.select.return_value
     q.lt.assert_called_with("created_at", "2026-06-01")
-    q.lt.return_value.like.assert_called_with("media_url", "*/storage/v1/object/public/*")
-    q.lt.return_value.like.return_value.is_.assert_called_with("metadata->media_expired", "null")
+    q.lt.return_value.or_.assert_called_with(
+        'media_url.like."*/storage/v1/object/public/audio/*",'
+        'media_url.like."*/storage/v1/object/public/whatsapp-media/inbound/*",'
+        'media_url.like."*/storage/v1/object/public/whatsapp-media/outbound/*"')
+    q.lt.return_value.or_.return_value.is_.assert_called_with("metadata->media_expired", "null")
     st.remover("audio", ["a.ogg"])
     sb.storage.from_.assert_called_with("audio")
     sb.storage.from_.return_value.remove.assert_called_with(["a.ogg"])
@@ -233,3 +241,41 @@ def test_urls_em_uso_consulta_em_pedacos():
     assert q.in_.call_count == 3
     assert all(len(c.args[1]) <= 40 for c in q.in_.call_args_list)
     assert st.urls_em_uso_recente([], "x") == set()
+
+
+def test_candidatas_filtra_no_banco_so_prefixo_permitido_do_proprio_host():
+    """O filtro vai para o banco: valeria-botoes/ e host morto nunca voltam na consulta."""
+    from unittest.mock import MagicMock
+    sb = MagicMock()
+    st = s._Store(sb)
+    st.origin = "https://proj.supabase.co/"
+    st.candidatas("2026-06-01", None, 10)
+    q = sb.table.return_value.select.return_value
+    q.lt.return_value.or_.assert_called_once_with(
+        'media_url.like."https://proj.supabase.co/storage/v1/object/public/audio/*",'
+        'media_url.like."https://proj.supabase.co/storage/v1/object/public/whatsapp-media/inbound/*",'
+        'media_url.like."https://proj.supabase.co/storage/v1/object/public/whatsapp-media/outbound/*"')
+    q.lt.return_value.like.assert_not_called()
+
+
+def test_store_real_pega_origin_do_settings_sem_barra(monkeypatch):
+    from unittest.mock import MagicMock
+    from app.config import settings
+    import app.db.supabase as dbs
+    monkeypatch.setattr(settings, "supabase_url", "https://proj.supabase.co/")
+    monkeypatch.setattr(dbs, "get_supabase", lambda: MagicMock())
+    assert s._Store().origin == "https://proj.supabase.co"
+
+
+def test_30_mil_linhas_puladas_nao_travam_a_rotacao(store_factory):
+    origin = "https://supabase.x"
+    puladas = []
+    for i in range(30000):
+        url = (BASE + f"whatsapp-media/valeria-botoes/{i}.jpg" if i % 2
+               else f"https://tshmvxxxyxgctrdkqvam.supabase.co/storage/v1/object/public/audio/{i}.ogg")
+        puladas.append(msg(f"p{i}", 400 - i / 1000, url))  # todas mais velhas que as apagáveis
+    apagaveis = [msg(f"a{i}", 200, BASE + f"audio/a{i}.ogg") for i in range(3)]
+    store, fake = store_factory(puladas + apagaveis, origin=origin)
+    r = s.run_retention(store=store, now=NOW, dry_run=False, days=180, batch=500)
+    assert r["deleted"] == 3
+    assert fake.removed == [("audio", ["a0.ogg", "a1.ogg", "a2.ogg"])]

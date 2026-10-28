@@ -52,6 +52,21 @@ def is_allowed(bucket: str, path: str) -> bool:
     return any(path.startswith(p) for p in prefixos)
 
 
+def _padroes_like(origin: str | None) -> list[str]:
+    """Padrões LIKE (wildcard `*` do PostgREST) dos prefixos permitidos no host do projeto.
+
+    Sem origin (só em teste), aceita qualquer host; a checagem em Python continua valendo.
+    """
+    base = (origin.rstrip("/") if origin else "*") + _MARCA
+    return [f"{base}{bucket}/{prefixo}*" for bucket, prefixos in _PERMITIDOS.items()
+            for prefixo in prefixos]
+
+
+def _filtro_or(origin: str | None) -> str:
+    # Valor entre aspas duplas: a URL tem ',', '.', ':' (reservados na sintaxe do or= do PostgREST).
+    return ",".join(f'media_url.like."{p}"' for p in _padroes_like(origin))
+
+
 class _Store:
     """Acesso a banco e Storage. Os testes trocam por um fake em memória."""
 
@@ -63,12 +78,14 @@ class _Store:
             from app.config import settings
             from app.db.supabase import get_supabase
             sb = get_supabase()
-            self.origin = settings.supabase_url or None
+            self.origin = (settings.supabase_url or "").rstrip("/") or None
         self.sb = sb
 
     def candidatas(self, cutoff: str, after: str | None, limit: int) -> list[dict]:
+        # Filtra no banco só o que pode ser apagado: o que sempre seria pulado (valeria-botoes/,
+        # host antigo) não volta na consulta e não trava a rotação atrás dele.
         q = (self.sb.table("messages").select("id,media_url,metadata,created_at")
-             .lt("created_at", cutoff).like("media_url", f"*{_MARCA}*")
+             .lt("created_at", cutoff).or_(_filtro_or(self.origin))
              .is_("metadata->media_expired", "null"))
         if after:
             q = q.gt("created_at", after)
