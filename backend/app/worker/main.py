@@ -101,6 +101,11 @@ async def _valeria_repasse_tick() -> None:
     await varrer()
 
 
+async def _media_retention_tick() -> None:
+    from app.media_retention import service
+    await asyncio.to_thread(service.run_retention)
+
+
 def _bling_varredura_intervalo() -> int:
     from app.bling.config import varredura_intervalo_segundos
     return varredura_intervalo_segundos()
@@ -123,6 +128,8 @@ TASK_SPECS = [
     # Repasse automático de quem mostrou intenção e parou (desligado por padrão).
     ("valeria_repasse_parados", "periodic", _valeria_repasse_tick, 600),
     ("bling-sync", "periodic", _bling_sync_tick, 86400),
+    # Rotação de mídia do Storage (cartão da1f51a7): 1x/dia, estreia em dry-run.
+    ("media-retention", "periodic", _media_retention_tick, 86400),
     ("bling-jobs", "periodic", _bling_jobs_tick, 30),
     # Varredura de pedidos alterados, por conta (BLING_VARREDURA_HORAS, 1-3 h).
     # Pega webhook perdido e situacao congelada; ver app/bling/varredura.py.
