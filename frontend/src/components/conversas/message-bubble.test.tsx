@@ -288,3 +288,63 @@ describe("MessageBubble — tela interativa do bot", () => {
     expect(screen.queryByRole("list")).toBeNull();
   });
 });
+
+// Cartão da1f51a7 (27/10/2026): mídia que não volta mais (rotação de 180 dias, media_id
+// vencido na Meta ou erro ao carregar) vira "Arquivo expirado" em vez de quebrar a bolha.
+describe("MessageBubble — arquivo expirado", () => {
+  it("imagem marcada como expirada mostra o aviso e não desenha a imagem", () => {
+    const { container } = renderBubble({
+      message_type: "image",
+      media_url: "https://cdn.example/foto.jpg",
+      metadata: { media_expired: true },
+    });
+
+    expect(screen.getByText("Arquivo expirado")).toBeTruthy();
+    expect(container.querySelector("img")).toBeNull();
+  });
+
+  it("documento com media_id legado antigo mantém o nome e troca Baixar pelo aviso", () => {
+    renderBubble({
+      message_type: "document",
+      media_url: "2302234720561889",
+      document_name: "comprovante.pdf",
+      created_at: new Date(Date.now() - 30 * 86400000).toISOString(),
+    });
+
+    expect(screen.getByText("comprovante.pdf")).toBeTruthy();
+    expect(screen.getByText("Arquivo expirado")).toBeTruthy();
+    expect(screen.queryByText("Baixar")).toBeNull();
+  });
+
+  it("imagem que dá erro ao carregar vira o aviso", () => {
+    const { container } = renderBubble({
+      message_type: "image",
+      media_url: "https://cdn.example/foto.jpg",
+    });
+
+    fireEvent.error(container.querySelector("img")!);
+
+    expect(screen.getByText("Arquivo expirado")).toBeTruthy();
+  });
+
+  it("imagem normal continua aparecendo sem aviso", () => {
+    const { container } = renderBubble({
+      message_type: "image",
+      media_url: "https://cdn.example/foto.jpg",
+    });
+
+    expect(container.querySelector("img")).toBeTruthy();
+    expect(screen.queryByText("Arquivo expirado")).toBeNull();
+  });
+
+  it("áudio marcado como expirado mostra o aviso e não desenha o player", () => {
+    const { container } = renderBubble({
+      message_type: "audio",
+      media_url: "https://cdn.example/a.ogg",
+      metadata: { media_expired: true },
+    });
+
+    expect(screen.getByText("Arquivo expirado")).toBeTruthy();
+    expect(container.querySelector("audio")).toBeNull();
+  });
+});

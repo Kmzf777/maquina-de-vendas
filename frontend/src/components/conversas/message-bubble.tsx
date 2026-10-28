@@ -4,6 +4,7 @@ import { formatTimeOnly } from "@/lib/datetime";
 import { senderBadge } from "@/lib/sender-badge";
 import { readButtonClick } from "@/lib/button-click";
 import { mediaCaption, reactionExtraText } from "@/lib/message-visible-text";
+import { isMediaExpired } from "@/lib/media-expired";
 import {
   carrosselCorpo,
   readInterativo,
@@ -183,6 +184,19 @@ function ReplyGlyph() {
   );
 }
 
+/** Mídia que não volta mais: rotação de 180 dias, media_id vencido na Meta ou erro ao carregar. */
+function ExpiredMedia() {
+  return (
+    <div className="flex items-center gap-2 py-1" title="O arquivo não está mais disponível">
+      <svg className="w-4 h-4 opacity-60 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+        <circle cx="12" cy="12" r="9" strokeWidth={2} />
+        <path strokeLinecap="round" strokeWidth={2} d="M12 7v5l3 2" />
+      </svg>
+      <span className="text-[13px] opacity-60">Arquivo expirado</span>
+    </div>
+  );
+}
+
 /** Botões de resposta: uma linha por rótulo, separadas por divisória fina, centralizadas. */
 function InteractiveButtons({ labels, label, className = "" }: { labels: string[]; label: string; className?: string }) {
   return (
@@ -274,6 +288,7 @@ function MessageBubbleImpl({ message, isGrouped, conversationId, onReply, onReac
   const isTemp = message.id.startsWith("temp_");
   const [imgError, setImgError] = useState(false);
   const [videoError, setVideoError] = useState(false);
+  const [audioError, setAudioError] = useState(false);
   const [reactionPickerOpen, setReactionPickerOpen] = useState(false);
   const badge = senderBadge(message);
 
@@ -339,6 +354,7 @@ function MessageBubbleImpl({ message, isGrouped, conversationId, onReply, onReac
       ? message.media_url
       : `/api/media?media_id=${encodeURIComponent(message.media_url)}&conversation_id=${encodeURIComponent(conversationId)}`
     : null;
+  const mediaExpired = isMediaExpired(message);
 
   const replyBtn = onReply && !isTemp ? (
     <button
@@ -443,11 +459,16 @@ function MessageBubbleImpl({ message, isGrouped, conversationId, onReply, onReac
         )}
         {isAudio ? (
           mediaSrc ? (
-            <audio
-              controls
-              src={mediaSrc}
-              className="h-10 max-w-[240px]"
-            />
+            mediaExpired || audioError ? (
+              <ExpiredMedia />
+            ) : (
+              <audio
+                controls
+                src={mediaSrc}
+                className="h-10 max-w-[240px]"
+                onError={() => setAudioError(true)}
+              />
+            )
           ) : (
             <div className="flex items-center gap-2 py-1">
               <svg className="w-4 h-4 opacity-60 flex-shrink-0" fill="currentColor" viewBox="0 0 24 24">
@@ -458,13 +479,8 @@ function MessageBubbleImpl({ message, isGrouped, conversationId, onReply, onReac
           )
         ) : isVideo ? (
           mediaSrc ? (
-            videoError ? (
-              <div className="flex items-center gap-2 py-1">
-                <svg className="w-4 h-4 opacity-60 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 10l4.553-2.069A1 1 0 0121 8.868v6.264a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
-                </svg>
-                <span className="text-[13px] opacity-60">Vídeo</span>
-              </div>
+            mediaExpired || videoError ? (
+              <ExpiredMedia />
             ) : (
               <video
                 controls
@@ -483,13 +499,8 @@ function MessageBubbleImpl({ message, isGrouped, conversationId, onReply, onReac
           )
         ) : isImage ? (
           mediaSrc ? (
-            imgError ? (
-              <div className="flex items-center gap-2 py-1">
-                <svg className="w-4 h-4 opacity-60 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16l4.586-4.586a2 2 0 0 1 2.828 0L16 16m-2-2l1.586-1.586a2 2 0 0 1 2.828 0L20 14m-6-6h.01M6 20h12a2 2 0 0 0 2-2V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2z" />
-                </svg>
-                <span className="text-[13px] opacity-60">Imagem</span>
-              </div>
+            mediaExpired || imgError ? (
+              <ExpiredMedia />
             ) : (
               <img
                 src={mediaSrc}
@@ -527,7 +538,9 @@ function MessageBubbleImpl({ message, isGrouped, conversationId, onReply, onReac
                 </svg>
                 <div className="flex flex-col min-w-0">
                   <span className="text-[13px] truncate max-w-[180px]">{docName}</span>
-                  {downloadHref && (
+                  {downloadHref && mediaExpired ? (
+                    <span className="text-[11px] opacity-60 mt-0.5">Arquivo expirado</span>
+                  ) : downloadHref && (
                     <a
                       href={downloadHref}
                       target="_blank"
@@ -543,11 +556,16 @@ function MessageBubbleImpl({ message, isGrouped, conversationId, onReply, onReac
           })()
         ) : isSticker ? (
           mediaSrc ? (
-            <img
-              src={mediaSrc}
-              alt="Sticker"
-              className="max-w-[160px] max-h-[160px] object-contain block"
-            />
+            mediaExpired || imgError ? (
+              <ExpiredMedia />
+            ) : (
+              <img
+                src={mediaSrc}
+                alt="Sticker"
+                className="max-w-[160px] max-h-[160px] object-contain block"
+                onError={() => setImgError(true)}
+              />
+            )
           ) : (
             <span className="text-[13px] opacity-60">Sticker</span>
           )
