@@ -338,6 +338,60 @@ describe("buildJourney D7", () => {
   });
 });
 
+describe("buildJourney: venda de antes da entrada (mesclagem, cartão 70d844a6)", () => {
+  const ENTRADA = "2026-10-05T13:45:25Z";
+  const leadEntrou = { created_at: ENTRADA } as LeadOverview["lead"];
+  const antigas = [
+    sale({ id: "a1", sold_at: "2026-02-27T12:00:00Z" }),
+    sale({ id: "a2", sold_at: "2026-06-01T12:00:00Z" }),
+  ];
+
+  it("só vendas antigas: não fecha o ciclo e vira 'já era cliente'", () => {
+    const j = buildJourney(overview({ lead: leadEntrou, sales: antigas }));
+    expect(j.steps.find((s) => s.key === "comprou")!.reached).toBe(false);
+    expect(j.steps.find((s) => s.key === "oportunidade")!.reached).toBe(false);
+    expect(j.stalledAt).not.toBeNull();
+    expect(j.jaEraCliente).toEqual({ compras: 2, desde: "2026-02-27T12:00:00Z" });
+  });
+
+  it("venda no mesmo dia local da entrada (antes da hora) conta como 'Comprou'", () => {
+    const j = buildJourney(
+      overview({
+        lead: leadEntrou,
+        sales: [...antigas, sale({ id: "n1", sold_at: "2026-10-05T10:00:00Z" })],
+      }),
+    );
+    const comprou = j.steps.find((s) => s.key === "comprou")!;
+    expect(comprou.reached).toBe(true);
+    expect(comprou.at).toBe("2026-10-05T10:00:00Z");
+    expect(j.stalledAt).toBeNull();
+    expect(j.jaEraCliente?.compras).toBe(2);
+  });
+
+  it("o dia é o de São Paulo: 05/10 02:00Z é 04/10 em SP, antes da entrada", () => {
+    const j = buildJourney(
+      overview({ lead: leadEntrou, sales: [sale({ id: "x", sold_at: "2026-10-05T02:00:00Z" })] }),
+    );
+    expect(j.steps.find((s) => s.key === "comprou")!.reached).toBe(false);
+    expect(j.jaEraCliente).toEqual({ compras: 1, desde: "2026-10-05T02:00:00Z" });
+  });
+
+  it("venda cancelada antes da entrada não conta em 'já era cliente'", () => {
+    const j = buildJourney(
+      overview({
+        lead: leadEntrou,
+        sales: [...antigas, sale({ id: "c", status: "cancelada", sold_at: "2026-01-10T12:00:00Z" })],
+      }),
+    );
+    expect(j.jaEraCliente).toEqual({ compras: 2, desde: "2026-02-27T12:00:00Z" });
+  });
+
+  it("sem venda anterior, 'já era cliente' é null", () => {
+    expect(buildJourney(overview({ sales: [sale()] })).jaEraCliente).toBeNull();
+    expect(buildJourney(overview()).jaEraCliente).toBeNull();
+  });
+});
+
 describe("buildMovements", () => {
   it("junta todas as fontes numa linha do tempo decrescente", () => {
     const movs = buildMovements(

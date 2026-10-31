@@ -6,9 +6,10 @@
  * total (Receita) e o ticket não somam cancelada nem frete.
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, render, screen, within } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 
-vi.mock("next/navigation", () => ({ useRouter: () => ({ push: vi.fn() }) }));
+const { push } = vi.hoisted(() => ({ push: vi.fn() }));
+vi.mock("next/navigation", () => ({ useRouter: () => ({ push }) }));
 
 import { CampaignLeadPanel, type CampaignLeadPanelTarget } from "./campaign-lead-panel";
 import type { LeadOverview, OverviewSale } from "@/lib/lead-overview";
@@ -54,7 +55,7 @@ function mockFetch(payload: LeadOverview = PAYLOAD) {
 /** O <div> do card/stat que contém o rótulo. */
 const blocoDe = (rotulo: HTMLElement) => rotulo.parentElement as HTMLElement;
 
-afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
+afterEach(() => { cleanup(); vi.unstubAllGlobals(); push.mockClear(); });
 
 describe("CampaignLeadPanel — vendas pela D7", () => {
   it("card Vendas mostra cada venda sem frete e marca a cancelada", async () => {
@@ -89,14 +90,27 @@ describe("CampaignLeadPanel — vendas pela D7", () => {
 });
 
 // Cartão 70d844a6: lead sem conversa (ex.: importado do Bling) não pode levar a um
-// /conversas calado. O botão fica à vista, desabilitado, com o motivo escrito.
+// /conversas calado. Com telefone utilizável o botão vira "Iniciar conversa" e leva ao
+// aviso do /conversas, onde está o modal; sem telefone fica desabilitado com o motivo.
 describe("CampaignLeadPanel — botão de conversa", () => {
-  it("lead sem conversa: botão desabilitado com 'Sem conversa no WhatsApp'", async () => {
+  it("lead sem conversa e com telefone: 'Iniciar conversa' habilitado leva ao /conversas", async () => {
     mockFetch({ ...PAYLOAD, has_conversation: false });
     render(<CampaignLeadPanel target={TARGET} onClose={() => {}} />);
-    const botao = await screen.findByRole("button", { name: /Sem conversa no WhatsApp/ });
-    expect((botao as HTMLButtonElement).disabled).toBe(true);
+    const botao = await screen.findByRole("button", { name: /Iniciar conversa/ });
+    expect((botao as HTMLButtonElement).disabled).toBe(false);
     expect(screen.queryByRole("button", { name: /Abrir conversa/ })).toBeNull();
+    fireEvent.click(botao);
+    expect(push).toHaveBeenCalledWith("/conversas?lead_id=L1");
+  });
+
+  it("lead sem conversa e sem telefone utilizável: desabilitado com 'Sem telefone para WhatsApp'", async () => {
+    mockFetch({ ...PAYLOAD, lead: { ...PAYLOAD.lead, phone: "bling-1" }, has_conversation: false });
+    render(<CampaignLeadPanel target={TARGET} onClose={() => {}} />);
+    const botao = await screen.findByRole("button", { name: /Sem telefone para WhatsApp/ });
+    expect((botao as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.queryByRole("button", { name: /Iniciar conversa/ })).toBeNull();
+    fireEvent.click(botao);
+    expect(push).not.toHaveBeenCalled();
   });
 
   it("lead com conversa: 'Abrir conversa' habilitado", async () => {
@@ -112,5 +126,27 @@ describe("CampaignLeadPanel — botão de conversa", () => {
     render(<CampaignLeadPanel target={TARGET} onClose={() => {}} />);
     await screen.findByText("Vendas");
     expect((screen.getByRole("button", { name: /Abrir conversa/ }) as HTMLButtonElement).disabled).toBe(false);
+  });
+});
+
+describe("CampaignLeadPanel — trilha com venda de antes da entrada", () => {
+  it("mostra 'Já era cliente' com a contagem e a data da mais antiga", async () => {
+    mockFetch({
+      ...PAYLOAD,
+      sales: [
+        venda({ id: "a1", value: 100, sold_at: "2026-02-27T12:00:00Z" }),
+        venda({ id: "a2", value: 100, sold_at: "2026-06-01T12:00:00Z" }),
+      ],
+    });
+    render(<CampaignLeadPanel target={TARGET} onClose={() => {}} />);
+    expect(await screen.findByText(/Já era cliente: 2 compras antes de entrar, desde 27\/02\/2026\./)).toBeTruthy();
+    expect(screen.queryByText(/Ciclo fechado/)).toBeNull();
+  });
+
+  it("sem venda anterior, a linha não aparece", async () => {
+    mockFetch();
+    render(<CampaignLeadPanel target={TARGET} onClose={() => {}} />);
+    await screen.findByText("Vendas");
+    expect(screen.queryByText(/Já era cliente/)).toBeNull();
   });
 });

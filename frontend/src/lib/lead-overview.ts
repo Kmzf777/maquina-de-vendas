@@ -371,6 +371,17 @@ export interface Journey {
   steps: JourneyStep[];
   /** Índice da última etapa alcançada quando o lead NÃO comprou. Null se comprou. */
   stalledAt: number | null;
+  /** Vendas válidas anteriores ao dia de entrada do lead (contagem e a mais antiga). */
+  jaEraCliente: { compras: number; desde: string } | null;
+}
+
+const diaSP = new Intl.DateTimeFormat("en-CA", { timeZone: "America/Sao_Paulo" });
+
+/** Data local (São Paulo) `YYYY-MM-DD`; null se a data não parseia. */
+function diaLocal(iso: string | null | undefined): string | null {
+  if (!iso) return null;
+  const t = Date.parse(iso);
+  return Number.isNaN(t) ? null : diaSP.format(t);
 }
 
 function earliest(values: (string | null | undefined)[]): string | null {
@@ -394,6 +405,17 @@ export function buildJourney(o: LeadOverview): Journey {
   const contatoAt = firstCustomerContactAt(o);
   const conversou = contatoAt !== null || o.messages.inbound > 0;
 
+  // A mesclagem automática (cartão 70d844a6) move para o lead novo as vendas do
+  // lead antigo. Venda de antes do dia de entrada não fecha o ciclo: vira
+  // "já era cliente". Venda do mesmo dia (horário de São Paulo) conta.
+  const entrada = diaLocal(o.lead.created_at);
+  const validas = o.sales.filter((s) => !vendaCancelada(s));
+  const antes = validas.filter((s) => {
+    const dia = diaLocal(s.sold_at);
+    return entrada !== null && dia !== null && dia < entrada;
+  });
+  const depois = validas.filter((s) => !antes.includes(s));
+
   const raw: JourneyStep[] = [
     { key: "entrou", label: "Entrou", reached: true, at: o.lead.created_at },
     { key: "conversou", label: "Conversou", reached: conversou, at: contatoAt },
@@ -406,8 +428,8 @@ export function buildJourney(o: LeadOverview): Journey {
     {
       key: "comprou",
       label: "Comprou",
-      reached: o.sales.some((s) => !vendaCancelada(s)),
-      at: earliest(o.sales.filter((s) => !vendaCancelada(s)).map((s) => s.sold_at)),
+      reached: depois.length > 0,
+      at: earliest(depois.map((s) => s.sold_at)),
     },
   ];
 
@@ -421,7 +443,12 @@ export function buildJourney(o: LeadOverview): Journey {
   }
 
   const last = raw.reduce((acc, s, i) => (s.reached ? i : acc), 0);
-  return { steps: raw, stalledAt: raw[raw.length - 1].reached ? null : last };
+  const desde = earliest(antes.map((s) => s.sold_at));
+  return {
+    steps: raw,
+    stalledAt: raw[raw.length - 1].reached ? null : last,
+    jaEraCliente: antes.length > 0 && desde ? { compras: antes.length, desde } : null,
+  };
 }
 
 // ─── Movimentações ─────────────────────────────────────────────────────────────
