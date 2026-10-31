@@ -6,7 +6,7 @@
  * Lista, chat e detalhe são dublês: o que se testa é a orquestração da página.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { useState } from "react";
 import type { Conversation } from "@/lib/types";
 
@@ -14,6 +14,8 @@ const h = vi.hoisted(() => ({
   params: new URLSearchParams(),
   conversas: [] as unknown[],
   replace: vi.fn(),
+  fetchConversationById: vi.fn(),
+  ensureInList: vi.fn(),
 }));
 
 const conversa = {
@@ -51,8 +53,8 @@ vi.mock("./use-conversation-list", () => ({
       selectedConversation: conversations.find((c) => c.id === selectedId) ?? null,
       patchList: vi.fn(),
       patchConversation: vi.fn(),
-      ensureInList: vi.fn(),
-      fetchConversationById: vi.fn(),
+      ensureInList: h.ensureInList,
+      fetchConversationById: h.fetchConversationById,
       noteMarkedRead: vi.fn(),
       setPendingAi: vi.fn(),
       setPendingFollowup: vi.fn(),
@@ -68,6 +70,19 @@ vi.mock("@/components/conversas/chat-view", () => ({
 vi.mock("@/components/conversas/contact-detail", () => ({
   ContactDetail: () => <div data-testid="detalhe" />,
 }));
+vi.mock("@/components/conversas/iniciar-conversa-modal", () => ({
+  IniciarConversaModal: (p: { leadId: string; onIniciada: (id: string) => void }) => (
+    <button data-testid="modal-iniciar" onClick={() => p.onIniciada("conv-novo")}>
+      modal {p.leadId}
+    </button>
+  ),
+}));
+
+/** GET /api/leads/<id>/iniciar-conversa que o aviso faz para saber o telefone. */
+const rotaIniciar = (url: string, telefone: string | null) =>
+  String(url).includes("/iniciar-conversa")
+    ? { lead: { id: "lead-sem", name: "Micheli", phone: telefone ?? "bling-1", company: null }, telefone, canais: [] }
+    : undefined;
 
 import ConversasPage from "./page";
 
@@ -79,6 +94,8 @@ beforeEach(() => {
   h.params = new URLSearchParams();
   h.conversas = [];
   h.replace.mockClear();
+  h.fetchConversationById.mockReset();
+  h.ensureInList.mockReset();
   window.matchMedia = vi.fn(() => ({
     matches: false, media: "", onchange: null,
     addEventListener: vi.fn(), removeEventListener: vi.fn(),
@@ -107,7 +124,9 @@ describe("/conversas — deep-link ?lead_id=", () => {
     vi.stubGlobal("fetch", vi.fn(async (url: string) => ({
       ok: true,
       status: 200,
-      json: async () => (String(url).includes("lead_id=lead-sem") ? { conversations: [], next_cursor: null } : []),
+      json: async () =>
+        rotaIniciar(url, "5534988861441") ??
+        (String(url).includes("lead_id=lead-sem") ? { conversations: [], next_cursor: null } : []),
     })));
     render(<ConversasPage />);
 
@@ -117,6 +136,37 @@ describe("/conversas — deep-link ?lead_id=", () => {
     const links = screen.getAllByRole("link", { name: "Abrir ficha do lead" });
     expect(links[0].getAttribute("href")).toBe("/leads?lead_id=lead-sem");
     expect(screen.queryByText("Selecione uma conversa")).toBeNull();
+  });
+
+  it("lead sem conversa com telefone: Iniciar conversa abre o modal e, ao dar certo, o chat do celular", async () => {
+    h.params = new URLSearchParams("lead_id=lead-sem");
+    const nova = { ...conversa, id: "conv-novo", lead_id: "lead-sem", leads: { id: "lead-sem", name: "Micheli", phone: "5534988861441" } } as unknown as Conversation;
+    h.fetchConversationById.mockResolvedValue(nova);
+    h.ensureInList.mockImplementation((c: Conversation) => { h.conversas = [c]; });
+    vi.stubGlobal("fetch", vi.fn(async (url: string) => ({
+      ok: true,
+      status: 200,
+      json: async () =>
+        rotaIniciar(url, "5534988861441") ??
+        (String(url).includes("lead_id=lead-sem") ? { conversations: [], next_cursor: null } : []),
+    })));
+    render(<ConversasPage />);
+
+    const botoes = await screen.findAllByRole("button", { name: "Iniciar conversa" });
+    expect(botoes).toHaveLength(2); // celular + PC
+    expect(screen.queryByTestId("modal-iniciar")).toBeNull();
+    fireEvent.click(botoes[0]);
+    const modal = await screen.findByTestId("modal-iniciar");
+    expect(modal.textContent).toContain("lead-sem");
+    fireEvent.click(modal);
+
+    await waitFor(() => expect(h.fetchConversationById).toHaveBeenCalledWith("conv-novo"));
+    expect(h.ensureInList).toHaveBeenCalledWith(nova);
+    const chats = await screen.findAllByTestId("chat");
+    const chatCelular = chats.map(blocoCelular).find(Boolean) as HTMLElement;
+    expect(visivel(chatCelular)).toBe(true);
+    expect(screen.queryByTestId("modal-iniciar")).toBeNull();
+    expect(screen.queryByTestId("lead-sem-conversa")).toBeNull();
   });
 
   it("sem lead_id: estado vazio normal, sem aviso", async () => {

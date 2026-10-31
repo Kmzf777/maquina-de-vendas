@@ -12,6 +12,7 @@ import { useMediaQuery } from "@/hooks/use-media-query";
 import { useMenuLateral } from "@/components/menu-lateral";
 import { conversationsListUrl } from "@/app/api/conversations/list-params";
 import { LeadSemConversaAviso } from "@/components/conversas/lead-sem-conversa-aviso";
+import { IniciarConversaModal } from "@/components/conversas/iniciar-conversa-modal";
 import { ConversasQueryProvider } from "./query-provider";
 import { useConversationList } from "./use-conversation-list";
 import { useDeepLinkLead } from "./use-deep-link-lead";
@@ -128,6 +129,23 @@ function ConversasContent() {
     clearUrl: () => router.replace("/conversas"),
   });
   const avisoSemConversa = leadSemConversa && !selectedConversation ? leadSemConversa : null;
+  // Modal "Iniciar conversa" aberto a partir do aviso (lead do aviso).
+  const [iniciarLeadId, setIniciarLeadId] = useState<string | null>(null);
+
+  async function handleConversaIniciada(conversationId: string) {
+    const conv = await fetchConversationById(conversationId);
+    setIniciarLeadId(null);
+    if (!conv) {
+      // Conversa criada mas a busca falhou: a lista recarrega e ela aparece lá.
+      void refetchConversations();
+      return;
+    }
+    dispensarAvisoSemConversa();
+    ensureInList(conv);
+    setSelectedId(conv.id);
+    setPendingScrollMessageId(null);
+    setMobileView("chat");
+  }
 
   function handleSelectConversation(conv: Conversation) {
     dispensarAvisoSemConversa();
@@ -338,10 +356,17 @@ function ConversasContent() {
 
   return (
     <div className="flex h-full min-w-0 overflow-hidden bg-[#faf9f6]">
+      {iniciarLeadId && (
+        <IniciarConversaModal
+          leadId={iniciarLeadId}
+          onClose={() => setIniciarLeadId(null)}
+          onIniciada={handleConversaIniciada}
+        />
+      )}
 
       {/* Mobile: one panel at a time */}
       <div className={`md:hidden flex-1 min-w-0 flex-col h-full ${mobileView === "list" ? "flex" : "hidden"}`}>
-        {avisoSemConversa && <LeadSemConversaAviso leadId={avisoSemConversa} />}
+        {avisoSemConversa && <LeadSemConversaAviso leadId={avisoSemConversa} onIniciar={() => setIniciarLeadId(avisoSemConversa)} />}
         <ChatList
           conversations={conversations}
           channels={channels}
@@ -461,7 +486,7 @@ function ConversasContent() {
           <div className="flex-1 flex items-center justify-center bg-[#faf9f6]">
             {avisoSemConversa ? (
               <div className="w-full max-w-sm">
-                <LeadSemConversaAviso leadId={avisoSemConversa} />
+                <LeadSemConversaAviso leadId={avisoSemConversa} onIniciar={() => setIniciarLeadId(avisoSemConversa)} />
               </div>
             ) : (
               <div className="text-center">
