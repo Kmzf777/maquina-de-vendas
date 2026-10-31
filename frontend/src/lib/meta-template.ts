@@ -6,6 +6,18 @@ import type { getServiceSupabase } from "@/lib/supabase/api";
 
 type ServiceSupabase = Awaited<ReturnType<typeof getServiceSupabase>>;
 
+/**
+ * A Meta respondeu e RECUSOU o envio (HTTP não-ok): é certo que a mensagem não saiu.
+ * Falha de rede, timeout ou JSON inválido NÃO viram esta classe — nesses casos o envio
+ * é incerto (a Meta pode ter aceitado), e quem chama não deve desfazer nada.
+ */
+export class MetaRecusou extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "MetaRecusou";
+  }
+}
+
 export async function sendTemplateViaMeta(
   config: Record<string, string>,
   to: string,
@@ -61,7 +73,7 @@ export async function sendTemplateViaMeta(
 
   if (!res.ok) {
     const err = await res.text();
-    throw new Error(`Meta API ${res.status}: ${err}`);
+    throw new MetaRecusou(`Meta API ${res.status}: ${err}`);
   }
 
   return res.json();

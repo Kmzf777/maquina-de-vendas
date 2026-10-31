@@ -18,7 +18,8 @@ interface Dados {
 interface Props {
   leadId: string;
   onClose: () => void;
-  onIniciada: (conversationId: string) => void;
+  /** Pode ser assíncrono: o modal aguarda antes de liberar o fechar. */
+  onIniciada: (conversationId: string) => void | Promise<void>;
 }
 
 export function IniciarConversaModal({ leadId, onClose, onIniciada }: Props) {
@@ -27,6 +28,9 @@ export function IniciarConversaModal({ leadId, onClose, onIniciada }: Props) {
   const [canal, setCanal] = useState("");
   const [escolha, setEscolha] = useState<TemplateEscolhido | null>(null);
   const [sending, setSending] = useState(false);
+  // Envio que pode ter saído pela Meta (certo ou incerto): trava o Enviar até o modal
+  // fechar, para nunca mandar a mesma mensagem duas vezes.
+  const [travado, setTravado] = useState<"enviado" | "incerto" | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -62,7 +66,7 @@ export function IniciarConversaModal({ leadId, onClose, onIniciada }: Props) {
   }
 
   async function handleSend() {
-    if (!canal || !escolha) return;
+    if (!canal || !escolha || sending || travado) return;
     setSending(true);
     setError(null);
     try {
@@ -73,14 +77,26 @@ export function IniciarConversaModal({ leadId, onClose, onIniciada }: Props) {
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok || !data.conversation_id) {
+        // Erro com conversation_id = envio incerto: a mensagem pode ter saído.
+        if (data.conversation_id) setTravado("incerto");
         throw new Error(data.error || "Erro ao iniciar conversa");
       }
-      onIniciada(data.conversation_id);
+      setTravado("enviado");
+      try {
+        await onIniciada(data.conversation_id);
+      } catch {
+        // A mensagem já saiu: falha da tela não reabre o Enviar.
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : "Erro inesperado");
     } finally {
       setSending(false);
     }
+  }
+
+  function fechar() {
+    if (sending) return;
+    onClose();
   }
 
   const canais = dados?.canais ?? [];
@@ -89,7 +105,7 @@ export function IniciarConversaModal({ leadId, onClose, onIniciada }: Props) {
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/40"
-      onClick={onClose}
+      onClick={fechar}
     >
       <div
         role="dialog"
@@ -114,8 +130,9 @@ export function IniciarConversaModal({ leadId, onClose, onIniciada }: Props) {
             )}
           </div>
           <button
-            onClick={onClose}
-            className="text-[#7b7b78] hover:text-[#111111] transition-colors p-1"
+            onClick={fechar}
+            disabled={sending}
+            className="text-[#7b7b78] hover:text-[#111111] transition-colors p-1 disabled:opacity-40"
             aria-label="Fechar"
           >
             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -169,17 +186,18 @@ export function IniciarConversaModal({ leadId, onClose, onIniciada }: Props) {
           </div>
           <div className="flex gap-2">
             <button
-              onClick={onClose}
-              className="border border-[#dedbd6] text-[#111111] text-[13px] px-4 py-2 rounded-[4px] hover:bg-[#dedbd6]/30 transition-colors"
+              onClick={fechar}
+              disabled={sending}
+              className="disabled:opacity-40 border border-[#dedbd6] text-[#111111] text-[13px] px-4 py-2 rounded-[4px] hover:bg-[#dedbd6]/30 transition-colors"
             >
               Cancelar
             </button>
             <button
               onClick={handleSend}
-              disabled={!canal || !escolha || sending}
+              disabled={!canal || !escolha || sending || travado !== null}
               className="bg-[#111111] text-white text-[13px] px-4 py-2 rounded-[4px] transition-transform hover:scale-110 active:scale-[0.85] disabled:opacity-40 disabled:hover:scale-100"
             >
-              {sending ? "Enviando..." : "Enviar"}
+              {sending ? "Enviando..." : travado === "enviado" ? "Enviado" : "Enviar"}
             </button>
           </div>
         </div>

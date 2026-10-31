@@ -133,16 +133,17 @@ function ConversasContent() {
   const [iniciarLeadId, setIniciarLeadId] = useState<string | null>(null);
 
   async function handleConversaIniciada(conversationId: string) {
-    const conv = await fetchConversationById(conversationId);
+    // A mensagem já saiu: fecha o modal e tira o aviso (com o botão) em qualquer caso.
+    const conv = await fetchConversationById(conversationId).catch(() => null);
     setIniciarLeadId(null);
-    if (!conv) {
-      // Conversa criada mas a busca falhou: a lista recarrega e ela aparece lá.
-      void refetchConversations();
-      return;
-    }
     dispensarAvisoSemConversa();
-    ensureInList(conv);
-    setSelectedId(conv.id);
+    if (conv) {
+      ensureInList(conv);
+    } else {
+      // Busca falhou: a conversa nova é a mais recente, entra na primeira página.
+      void refetchConversations();
+    }
+    setSelectedId(conversationId);
     setPendingScrollMessageId(null);
     setMobileView("chat");
   }

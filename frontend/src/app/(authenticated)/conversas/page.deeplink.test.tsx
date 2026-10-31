@@ -16,6 +16,7 @@ const h = vi.hoisted(() => ({
   replace: vi.fn(),
   fetchConversationById: vi.fn(),
   ensureInList: vi.fn(),
+  refetchConversations: vi.fn(),
 }));
 
 const conversa = {
@@ -44,7 +45,7 @@ vi.mock("./use-conversation-list", () => ({
       convPending: false,
       listError: null,
       isRefreshing: false,
-      refetchConversations: vi.fn(),
+      refetchConversations: h.refetchConversations,
       hasNextPage: false,
       isFetchingNextPage: false,
       loadMore: vi.fn(),
@@ -96,6 +97,7 @@ beforeEach(() => {
   h.replace.mockClear();
   h.fetchConversationById.mockReset();
   h.ensureInList.mockReset();
+  h.refetchConversations.mockReset();
   window.matchMedia = vi.fn(() => ({
     matches: false, media: "", onchange: null,
     addEventListener: vi.fn(), removeEventListener: vi.fn(),
@@ -167,6 +169,36 @@ describe("/conversas — deep-link ?lead_id=", () => {
     expect(visivel(chatCelular)).toBe(true);
     expect(screen.queryByTestId("modal-iniciar")).toBeNull();
     expect(screen.queryByTestId("lead-sem-conversa")).toBeNull();
+  });
+
+  it("conversa iniciada mas a busca dela volta null: recarrega a lista, tira o aviso e seleciona quando ela chega", async () => {
+    h.params = new URLSearchParams("lead_id=lead-sem");
+    const nova = { ...conversa, id: "conv-novo", lead_id: "lead-sem", leads: { id: "lead-sem", name: "Micheli", phone: "5534988861441" } } as unknown as Conversation;
+    h.fetchConversationById.mockResolvedValue(null);
+    h.refetchConversations.mockImplementation(async () => { h.conversas = [nova]; });
+    vi.stubGlobal("fetch", vi.fn(async (url: string) => ({
+      ok: true,
+      status: 200,
+      json: async () =>
+        rotaIniciar(url, "5534988861441") ??
+        (String(url).includes("lead_id=lead-sem") ? { conversations: [], next_cursor: null } : []),
+    })));
+    const { rerender } = render(<ConversasPage />);
+
+    const botoes = await screen.findAllByRole("button", { name: "Iniciar conversa" });
+    fireEvent.click(botoes[0]);
+    fireEvent.click(await screen.findByTestId("modal-iniciar"));
+
+    await waitFor(() => expect(h.refetchConversations).toHaveBeenCalled());
+    await waitFor(() => expect(screen.queryByTestId("modal-iniciar")).toBeNull());
+    expect(screen.queryByTestId("lead-sem-conversa")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Iniciar conversa" })).toBeNull();
+
+    // A lista recarregada traz a conversa nova: ela já está selecionada e o chat do celular abre.
+    rerender(<ConversasPage />);
+    const chats = await screen.findAllByTestId("chat");
+    const chatCelular = chats.map(blocoCelular).find(Boolean) as HTMLElement;
+    expect(visivel(chatCelular)).toBe(true);
   });
 
   it("sem lead_id: estado vazio normal, sem aviso", async () => {

@@ -127,4 +127,80 @@ describe("IniciarConversaModal", () => {
     expect(screen.queryByLabelText("Número")).toBeNull();
     expect(templatesChamados()).toHaveLength(0);
   });
+
+  /** Abre o modal, escolhe canal-2 e o modelo, e devolve o botão Enviar. */
+  async function prontoParaEnviar(props: { onClose?: () => void; onIniciada?: (id: string) => unknown }) {
+    render(
+      <IniciarConversaModal
+        leadId="L1"
+        onClose={props.onClose ?? vi.fn()}
+        onIniciada={(props.onIniciada ?? vi.fn()) as (id: string) => void}
+      />,
+    );
+    fireEvent.change(await screen.findByLabelText("Número"), { target: { value: "canal-2" } });
+    fireEvent.click(await screen.findByText("modelo_dois"));
+    return screen.getByRole("button", { name: "Enviar" }) as HTMLButtonElement;
+  }
+  const posts = () => fetchMock.mock.calls.filter((c) => c[1]?.method === "POST");
+  const fundo = () => screen.getByRole("dialog").parentElement as HTMLElement;
+
+  it("depois do envio certo, Enviar fica travado em 'Enviado' e não manda de novo", async () => {
+    const onIniciada = vi.fn();
+    const enviar = await prontoParaEnviar({ onIniciada });
+    fireEvent.click(enviar);
+    await waitFor(() => expect(onIniciada).toHaveBeenCalledTimes(1));
+    const travado = (await screen.findByRole("button", { name: "Enviado" })) as HTMLButtonElement;
+    await new Promise((r) => setTimeout(r, 0));
+    expect(travado.disabled).toBe(true);
+    fireEvent.click(travado);
+    expect(posts()).toHaveLength(1);
+  });
+
+  it("onIniciada assíncrono é aguardado: enquanto não termina, fundo, X e Cancelar não fecham", async () => {
+    let terminar!: () => void;
+    const onIniciada = vi.fn(() => new Promise<void>((r) => { terminar = r; }));
+    const onClose = vi.fn();
+    const enviar = await prontoParaEnviar({ onIniciada, onClose });
+    fireEvent.click(enviar);
+    await waitFor(() => expect(onIniciada).toHaveBeenCalledWith("conv-novo"));
+    await new Promise((r) => setTimeout(r, 0));
+    fireEvent.click(fundo());
+    fireEvent.click(screen.getByRole("button", { name: "Fechar" }));
+    fireEvent.click(screen.getByRole("button", { name: "Cancelar" }));
+    expect(onClose).not.toHaveBeenCalled();
+    terminar();
+    const travado = (await screen.findByRole("button", { name: "Enviado" })) as HTMLButtonElement;
+    expect(travado.disabled).toBe(true);
+    fireEvent.click(screen.getByRole("button", { name: "Fechar" }));
+    expect(onClose).toHaveBeenCalledTimes(1);
+    expect(posts()).toHaveLength(1);
+  });
+
+  it("durante o POST, fundo e X não fecham o modal", async () => {
+    let responder!: (r: Resposta) => void;
+    const pendente = new Promise<Resposta>((r) => { responder = r; });
+    const onClose = vi.fn();
+    const enviar = await prontoParaEnviar({ onClose });
+    fetchMock.mockImplementationOnce(() => pendente);
+    fireEvent.click(enviar);
+    expect(await screen.findByRole("button", { name: "Enviando..." })).toBeTruthy();
+    fireEvent.click(fundo());
+    fireEvent.click(screen.getByRole("button", { name: "Fechar" }));
+    expect(onClose).not.toHaveBeenCalled();
+    responder(resp(200, { conversation_id: "conv-novo" }));
+    expect(await screen.findByRole("button", { name: "Enviado" })).toBeTruthy();
+  });
+
+  it("falha incerta (502 com conversation_id): mostra o aviso e não deixa reenviar", async () => {
+    postResposta = resp(502, {
+      error: "Não deu para confirmar o envio. Confira a conversa antes de tentar de novo.",
+      conversation_id: "conv-novo",
+    });
+    const enviar = await prontoParaEnviar({});
+    fireEvent.click(enviar);
+    expect(await screen.findByText(/Não deu para confirmar o envio/)).toBeTruthy();
+    expect(enviar.disabled).toBe(true);
+    fireEvent.click(enviar);
+    expect(posts()).toHaveLength(1);
+  });
 });

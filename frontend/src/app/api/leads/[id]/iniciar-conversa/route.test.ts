@@ -11,6 +11,7 @@ vi.mock("@/lib/supabase/channel-access", () => {
   return { getAllowedChannelIds: vi.fn(async () => null), ChannelAccessError };
 });
 vi.mock("@/lib/meta-template", () => ({
+  MetaRecusou: class MetaRecusou extends Error {},
   sendTemplateViaMeta: vi.fn(async () => ({ messages: [{ id: "wamid.X" }] })),
   registrarTemplateEnviado: vi.fn(async () => {}),
   wamidDaResposta: (j: { messages?: { id?: string }[] } | null) => j?.messages?.[0]?.id ?? null,
@@ -20,7 +21,7 @@ import { GET, POST } from "./route";
 import { getServiceSupabase } from "@/lib/supabase/api";
 import { isLeadBlocked } from "@/lib/supabase/lead-blocked";
 import { getAllowedChannelIds, ChannelAccessError } from "@/lib/supabase/channel-access";
-import { sendTemplateViaMeta, registrarTemplateEnviado } from "@/lib/meta-template";
+import { sendTemplateViaMeta, registrarTemplateEnviado, MetaRecusou } from "@/lib/meta-template";
 
 type Row = Record<string, unknown>;
 type Tabelas = Record<"leads" | "channels" | "conversations" | "messages", Row[]>;
@@ -43,8 +44,12 @@ function base(): Tabelas {
   };
 }
 
-/** Supabase falso por tabela: filtra por eq, ordena, e registra inserts e deletes. */
-function instalar(tabelas: Tabelas) {
+/**
+ * Supabase falso por tabela: filtra por eq/is, ordena, e registra inserts e deletes.
+ * O delete apaga de verdade só as linhas que casam com TODOS os filtros do comando.
+ * `falhaSelect`: tabelas cujo select (maybeSingle) devolve erro.
+ */
+function instalar(tabelas: Tabelas, falhaSelect: (keyof Tabelas)[] = []) {
   const inseridos: { tabela: string; row: Row }[] = [];
   const apagados: { tabela: string; filtros: [string, unknown][] }[] = [];
   const from = (tabela: keyof Tabelas) => {
@@ -54,7 +59,7 @@ function instalar(tabelas: Tabelas) {
     let ordem: string | null = null;
     let novo: Row | null = null;
     const linhas = () => {
-      const rs = tabelas[tabela].filter((r) => filtros.every(([c, v]) => r[c] === v));
+      const rs = tabelas[tabela].filter((r) => filtros.every(([c, v]) => (r[c] ?? null) === v));
       if (ordem) rs.sort((a, b) => String(a[ordem!]).localeCompare(String(b[ordem!])));
       return rs;
     };
@@ -64,6 +69,7 @@ function instalar(tabelas: Tabelas) {
       return b;
     };
     b.eq = (c: string, v: unknown) => (filtros.push([c, v]), b);
+    b.is = (c: string, v: unknown) => (filtros.push([c, v]), b);
     b.order = (c: string) => ((ordem = c), b);
     b.limit = () => b;
     b.insert = (row: Row) => {
@@ -75,11 +81,16 @@ function instalar(tabelas: Tabelas) {
     };
     b.delete = () => ((modo = "delete"), b);
     b.single = async () => ({ data: modo === "insert" ? novo : linhas()[0] ?? null, error: null });
-    b.maybeSingle = async () => ({ data: linhas()[0] ?? null, error: null });
+    b.maybeSingle = async () =>
+      falhaSelect.includes(tabela)
+        ? { data: null, error: { message: `falha em ${tabela}` } }
+        : { data: linhas()[0] ?? null, error: null };
     b.then = (ok: (r: unknown) => unknown, ko?: (e: unknown) => unknown) => {
       let r: unknown;
       if (modo === "delete") {
         apagados.push({ tabela, filtros: [...filtros] });
+        const alvo = new Set(linhas());
+        tabelas[tabela] = tabelas[tabela].filter((row) => !alvo.has(row));
         r = { data: null, error: null };
       } else if (contar) {
         r = { data: null, count: linhas().length, error: null };
@@ -241,12 +252,19 @@ describe("POST iniciar-conversa — envio", () => {
   });
 
   it("Meta recusa com conversa criada agora: apaga só ela (sem mensagens) e devolve 502", async () => {
-    const { apagados } = instalar(base());
-    vi.mocked(sendTemplateViaMeta).mockRejectedValue(new Error("Meta API 400: template inválido"));
+    const t = base();
+    const { apagados } = instalar(t);
+    vi.mocked(sendTemplateViaMeta).mockRejectedValue(new MetaRecusou("Meta API 400: template inválido"));
     const res = await post(CORPO);
     expect(res.status).toBe(502);
     expect((await res.json()).error).toBe("Meta API 400: template inválido");
-    expect(apagados).toEqual([{ tabela: "conversations", filtros: [["id", "conversations-nova"]] }]);
+    expect(apagados).toEqual([
+      {
+        tabela: "conversations",
+        filtros: [["id", "conversations-nova"], ["status", "active"], ["last_msg_at", null]],
+      },
+    ]);
+    expect(t.conversations).toHaveLength(0);
     expect(registrarTemplateEnviado).not.toHaveBeenCalled();
   });
 
@@ -254,10 +272,89 @@ describe("POST iniciar-conversa — envio", () => {
     const t = base();
     t.conversations.push({ id: "conv-old", lead_id: "lead-1", channel_id: "ch-a", status: "active", stage: "secretaria" });
     const { apagados } = instalar(t);
-    vi.mocked(sendTemplateViaMeta).mockRejectedValue(new Error("Meta API 400: x"));
+    vi.mocked(sendTemplateViaMeta).mockRejectedValue(new MetaRecusou("Meta API 400: x"));
     const res = await post(CORPO);
     expect(res.status).toBe(502);
     expect(apagados).toHaveLength(0);
     expect(registrarTemplateEnviado).not.toHaveBeenCalled();
+  });
+
+  it("falha incerta (rede/timeout/JSON): não apaga a conversa criada; 502 pedindo para conferir", async () => {
+    const t = base();
+    const { apagados } = instalar(t);
+    vi.mocked(sendTemplateViaMeta).mockRejectedValue(new TypeError("fetch failed"));
+    const res = await post(CORPO);
+    expect(res.status).toBe(502);
+    expect(await res.json()).toEqual({
+      error: "Não deu para confirmar o envio. Confira a conversa antes de tentar de novo.",
+      conversation_id: "conversations-nova",
+    });
+    expect(apagados).toHaveLength(0);
+    expect(t.conversations.map((c) => c.id)).toEqual(["conversations-nova"]);
+    expect(registrarTemplateEnviado).not.toHaveBeenCalled();
+  });
+
+  it("Meta recusa, conversa criada agora mas já com mensagem: não apaga", async () => {
+    const t = base();
+    const { apagados } = instalar(t);
+    vi.mocked(sendTemplateViaMeta).mockImplementation(async () => {
+      // Outro processo grava na conversa enquanto a Meta responde.
+      t.messages.push({ id: "m1", conversation_id: "conversations-nova" });
+      throw new MetaRecusou("Meta API 400: x");
+    });
+    const res = await post(CORPO);
+    expect(res.status).toBe(502);
+    expect(apagados).toHaveLength(0);
+    expect(t.conversations.map((c) => c.id)).toEqual(["conversations-nova"]);
+  });
+
+  it("Meta recusa, conversa criada agora já com last_msg_at: o delete condicionado não apaga", async () => {
+    const t = base();
+    instalar(t);
+    vi.mocked(sendTemplateViaMeta).mockImplementation(async () => {
+      // Mensagem chegou e marcou a conversa (a linha da mensagem ainda não é visível).
+      const conv = t.conversations.find((c) => c.id === "conversations-nova")!;
+      conv.last_msg_at = "2026-10-31T10:00:00Z";
+      throw new MetaRecusou("Meta API 400: x");
+    });
+    const res = await post(CORPO);
+    expect(res.status).toBe(502);
+    expect(t.conversations.map((c) => c.id)).toEqual(["conversations-nova"]);
+  });
+});
+
+describe("POST iniciar-conversa — erro ao buscar a conversa do par", () => {
+  it("select da conversa existente dá erro → 500, sem criar nem enviar", async () => {
+    const { inseridos } = instalar(base(), ["conversations"]);
+    const res = await post(CORPO);
+    expect(res.status).toBe(500);
+    expect(inseridos).toHaveLength(0);
+    expect(sendTemplateViaMeta).not.toHaveBeenCalled();
+  });
+});
+
+describe("sendTemplateViaMeta (real, fetch dublê)", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("resposta não-ok da Meta vira MetaRecusou com a mesma mensagem", async () => {
+    const real = await vi.importActual<typeof import("@/lib/meta-template")>("@/lib/meta-template");
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("template inválido", { status: 400 })));
+    const erro = await real.sendTemplateViaMeta(CFG, "5534988861441", "x", "pt_BR", null).catch((e) => e);
+    expect(erro).toBeInstanceOf(real.MetaRecusou);
+    expect(erro).toBeInstanceOf(Error);
+    expect((erro as Error).message).toBe("Meta API 400: template inválido");
+  });
+
+  it("falha de rede e JSON inválido NÃO são MetaRecusou", async () => {
+    const real = await vi.importActual<typeof import("@/lib/meta-template")>("@/lib/meta-template");
+    vi.stubGlobal("fetch", vi.fn(async () => { throw new TypeError("fetch failed"); }));
+    const rede = await real.sendTemplateViaMeta(CFG, "5534988861441", "x", "pt_BR", null).catch((e) => e);
+    expect(rede).toBeInstanceOf(Error);
+    expect(rede).not.toBeInstanceOf(real.MetaRecusou);
+
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("<html>", { status: 200 })));
+    const json = await real.sendTemplateViaMeta(CFG, "5534988861441", "x", "pt_BR", null).catch((e) => e);
+    expect(json).toBeInstanceOf(Error);
+    expect(json).not.toBeInstanceOf(real.MetaRecusou);
   });
 });

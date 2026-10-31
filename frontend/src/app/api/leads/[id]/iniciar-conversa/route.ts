@@ -1,12 +1,18 @@
 // Iniciar conversa com lead sem conversa (cartão 70d844a6). Cria a conversa do par
 // lead+número e manda um modelo aprovado. Mesmos guards do disparo de modelo
-// (send-template), e mais: acesso ao número e telefone utilizável. Se a Meta recusar,
-// a conversa criada AQUI é desfeita — nunca a que já existia.
+// (send-template), e mais: acesso ao número e telefone utilizável. Só se a Meta RECUSAR
+// (MetaRecusou) a conversa criada AQUI é desfeita — nunca a que já existia. Falha
+// incerta (rede, timeout, JSON) não desfaz nada: a mensagem pode ter saído.
 import { NextResponse, type NextRequest } from "next/server";
 import { getServiceSupabase } from "@/lib/supabase/api";
 import { getAllowedChannelIds, ChannelAccessError } from "@/lib/supabase/channel-access";
 import { isLeadBlocked, MENSAGEM_LEAD_BLOQUEADO } from "@/lib/supabase/lead-blocked";
-import { sendTemplateViaMeta, registrarTemplateEnviado, wamidDaResposta } from "@/lib/meta-template";
+import {
+  MetaRecusou,
+  sendTemplateViaMeta,
+  registrarTemplateEnviado,
+  wamidDaResposta,
+} from "@/lib/meta-template";
 import { telefoneWhatsapp } from "@/lib/telefone-whatsapp";
 
 type Ctx = { params: Promise<{ id: string }> };
@@ -123,13 +129,17 @@ export async function POST(request: NextRequest, { params }: Ctx) {
 
   // 5. Conversa do par lead+número: usa a existente ou cria (como o
   // get_or_create_conversation do backend: secretaria, active, sem agent_profile_id).
-  const { data: existente } = await supabase
+  const { data: existente, error: erroExistente } = await supabase
     .from("conversations")
     .select("id, status, stage")
     .eq("lead_id", lead.id)
     .eq("channel_id", channel.id)
     .limit(1)
     .maybeSingle();
+  if (erroExistente) {
+    // Sem saber se a conversa existe, criar outra poderia duplicar o par.
+    return NextResponse.json({ error: erroExistente.message }, { status: 500 });
+  }
   if (existente?.status === "blocked") {
     return NextResponse.json({ error: MENSAGEM_LEAD_BLOQUEADO }, { status: 403 });
   }
@@ -165,18 +175,33 @@ export async function POST(request: NextRequest, { params }: Ctx) {
       ),
     );
   } catch (e: unknown) {
-    // 7. Meta recusou: desfaz só a conversa criada nesta requisição, e só se vazia.
+    if (!(e instanceof MetaRecusou)) {
+      // Rede, timeout ou JSON inválido: a Meta pode ter aceitado. Não desfaz nada.
+      return NextResponse.json(
+        {
+          error: "Não deu para confirmar o envio. Confira a conversa antes de tentar de novo.",
+          conversation_id: conversationId,
+        },
+        { status: 502 },
+      );
+    }
+    // 7. Meta recusou: desfaz só a conversa criada nesta requisição, e só se ainda
+    // estiver intocada (sem mensagens, active, sem last_msg_at — checado no próprio delete).
     if (criada) {
       const { count, error: countError } = await supabase
         .from("messages")
         .select("id", { count: "exact", head: true })
         .eq("conversation_id", conversationId);
       if (!countError && count === 0) {
-        await supabase.from("conversations").delete().eq("id", conversationId);
+        await supabase
+          .from("conversations")
+          .delete()
+          .eq("id", conversationId)
+          .eq("status", "active")
+          .is("last_msg_at", null);
       }
     }
-    const msg = e instanceof Error ? e.message : "Failed to send template";
-    return NextResponse.json({ error: msg }, { status: 502 });
+    return NextResponse.json({ error: e.message }, { status: 502 });
   }
 
   await registrarTemplateEnviado(supabase, {
