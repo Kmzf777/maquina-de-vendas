@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { createClient } from "@/lib/supabase/client";
@@ -10,12 +10,11 @@ import { ContactDetail } from "@/components/conversas/contact-detail";
 import { setActiveConversation } from "@/lib/active-conversation";
 import { useMediaQuery } from "@/hooks/use-media-query";
 import { useMenuLateral } from "@/components/menu-lateral";
-import {
-  conversationsListUrl,
-  type ConversationsPage,
-} from "@/app/api/conversations/list-params";
+import { conversationsListUrl } from "@/app/api/conversations/list-params";
+import { LeadSemConversaAviso } from "@/components/conversas/lead-sem-conversa-aviso";
 import { ConversasQueryProvider } from "./query-provider";
 import { useConversationList } from "./use-conversation-list";
+import { useDeepLinkLead } from "./use-deep-link-lead";
 import type { Conversation, Channel, Tag, Lead } from "@/lib/types";
 
 /**
@@ -41,7 +40,6 @@ function ConversasContent() {
   const queryClient = useQueryClient();
   const searchParams = useSearchParams();
   const router = useRouter();
-  const deepLinkApplied = useRef(false);
   const [selectedChannelId, setSelectedChannelId] = useState<string>("");
   const [pendingScrollMessageId, setPendingScrollMessageId] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState("todos");
@@ -111,40 +109,28 @@ function ConversasContent() {
   }, [selectedConvId, selectedLeadId]);
   useEffect(() => () => setActiveConversation({ conversationId: null, leadId: null }), []);
 
-  // Deep-link: pre-select conversation by lead_id from URL param
-  useEffect(() => {
-    if (deepLinkApplied.current || convPending) return;
-    const leadId = searchParams.get("lead_id");
-    if (!leadId) return;
-
-    deepLinkApplied.current = true;
-    const match = conversations.find((c) => (c.leads as Lead | undefined | null)?.id === leadId);
-    if (match) {
-      setSelectedId(match.id);
-      router.replace("/conversas");
-      return;
-    }
-
-    // Lead fora da lista carregada (teto de linhas do PostgREST): busca sob
-    // demanda em vez de ignorar o link em silêncio.
-    void (async () => {
-      try {
-        const res = await fetch(conversationsListUrl({ leadId }));
-        if (!res.ok) return;
-        const data = (await res.json()) as ConversationsPage<Conversation>;
-        const conv = Array.isArray(data?.conversations) ? data.conversations[0] : null; // a rota já ordena por last_msg_at desc
-        if (!conv) return;
-        ensureInList(conv);
-        setSelectedId(conv.id);
-      } catch {
-        // deep-link é conveniência: falha silenciosa mantém a lista utilizável
-      } finally {
-        router.replace("/conversas");
-      }
-    })();
-  }, [conversations, convPending, searchParams, router, ensureInList, setSelectedId]);
+  // Deep-link /conversas?lead_id= (cartão 70d844a6): abre a conversa do lead, no
+  // celular inclusive, e avisa quando o lead não tem conversa.
+  const { leadSemConversa, dispensar: dispensarAvisoSemConversa } = useDeepLinkLead({
+    leadId: searchParams.get("lead_id"),
+    ready: !convPending,
+    conversations,
+    ensureInList,
+    onFound: (conv) => {
+      setSelectedId(conv.id);
+      setPendingScrollMessageId(null);
+      setMobileView("chat");
+    },
+    onNotFound: () => {
+      setSelectedId(null);
+      setMobileView("list");
+    },
+    clearUrl: () => router.replace("/conversas"),
+  });
+  const avisoSemConversa = leadSemConversa && !selectedConversation ? leadSemConversa : null;
 
   function handleSelectConversation(conv: Conversation) {
+    dispensarAvisoSemConversa();
     // A lista pode entregar um resultado da busca server-side, que não está no
     // cache — sem injetar, a seleção derivada abriria o chat anterior.
     ensureInList(conv);
@@ -154,6 +140,7 @@ function ConversasContent() {
   }
 
   async function handleSelectMessageResult(conversationId: string, messageId: string) {
+    dispensarAvisoSemConversa();
     if (!conversations.some((c) => c.id === conversationId)) {
       // Conversa fora da lista carregada: busca antes de selecionar. Antes isso
       // era um `return` mudo — o clique no resultado simplesmente não fazia nada.
@@ -180,6 +167,7 @@ function ConversasContent() {
   }
 
   function handleChannelChange(channelId: string) {
+    dispensarAvisoSemConversa();
     setSelectedChannelId(channelId);
     setSelectedId(null);
     setMobileView("list");
@@ -353,6 +341,7 @@ function ConversasContent() {
 
       {/* Mobile: one panel at a time */}
       <div className={`md:hidden flex-1 min-w-0 flex-col h-full ${mobileView === "list" ? "flex" : "hidden"}`}>
+        {avisoSemConversa && <LeadSemConversaAviso leadId={avisoSemConversa} />}
         <ChatList
           conversations={conversations}
           channels={channels}
@@ -470,27 +459,33 @@ function ConversasContent() {
           </>
         ) : (
           <div className="flex-1 flex items-center justify-center bg-[#faf9f6]">
-            <div className="text-center">
-              <svg
-                className="w-16 h-16 mx-auto mb-4 text-[#dedbd6]"
-                fill="none"
-                stroke="currentColor"
-                viewBox="0 0 24 24"
-              >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={1.5}
-                  d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"
-                />
-              </svg>
-              <p className="text-[#111111] text-[16px] font-medium">
-                Selecione uma conversa
-              </p>
-              <p className="text-[#7b7b78] text-[14px] mt-1">
-                {openTotal} conversa{openTotal !== 1 ? "s" : ""} aberta{openTotal !== 1 ? "s" : ""}
-              </p>
-            </div>
+            {avisoSemConversa ? (
+              <div className="w-full max-w-sm">
+                <LeadSemConversaAviso leadId={avisoSemConversa} />
+              </div>
+            ) : (
+              <div className="text-center">
+                <svg
+                  className="w-16 h-16 mx-auto mb-4 text-[#dedbd6]"
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={1.5}
+                    d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"
+                  />
+                </svg>
+                <p className="text-[#111111] text-[16px] font-medium">
+                  Selecione uma conversa
+                </p>
+                <p className="text-[#7b7b78] text-[14px] mt-1">
+                  {openTotal} conversa{openTotal !== 1 ? "s" : ""} aberta{openTotal !== 1 ? "s" : ""}
+                </p>
+              </div>
+            )}
           </div>
         )}
       </div>
