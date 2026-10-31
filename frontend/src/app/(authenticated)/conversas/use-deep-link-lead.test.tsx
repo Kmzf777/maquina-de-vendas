@@ -109,4 +109,40 @@ describe("useDeepLinkLead", () => {
     result.current.dispensar();
     await waitFor(() => expect(result.current.leadSemConversa).toBeNull());
   });
+  // Revisão do cartão 70d844a6: a resposta de um link antigo não pode limpar a URL
+  // (isso zera a marca e faz o link novo ser descartado, calado).
+  it("resposta de um link antigo não mexe em nada, nem na URL", async () => {
+    const pendentes: Record<string, (c: Conversation[]) => void> = {};
+    vi.stubGlobal("fetch", vi.fn((url: string) => new Promise((resolve) => {
+      const lead = new URL(url, "http://x").searchParams.get("lead_id") as string;
+      pendentes[lead] = (conversations) =>
+        resolve({ ok: true, status: 200, json: async () => ({ conversations, next_cursor: null }) });
+    })));
+    const o = opcoes({ leadId: "LA" });
+    const { rerender, result } = renderHook((p: DeepLinkLeadOptions) => useDeepLinkLead(p), { initialProps: o });
+    rerender({ ...o, leadId: "LB" });
+    await waitFor(() => expect(pendentes.LB).toBeDefined());
+
+    pendentes.LA([]); // LA "sem conversa", mas chegou atrasada
+    await new Promise((r) => setTimeout(r, 0));
+    expect(o.clearUrl).not.toHaveBeenCalled();
+    expect(o.onNotFound).not.toHaveBeenCalled();
+    expect(result.current.leadSemConversa).toBeNull();
+
+    pendentes.LB([conv("cB", "LB")]);
+    await waitFor(() => expect(o.onFound).toHaveBeenCalledWith(expect.objectContaining({ id: "cB" })));
+    expect(o.clearUrl).toHaveBeenCalledTimes(1);
+  });
+
+  it("um link novo apaga o aviso do lead anterior (mesmo se a busca falhar)", async () => {
+    apiResponde([]);
+    const o = opcoes({ leadId: "L0" });
+    const { rerender, result } = renderHook((p: DeepLinkLeadOptions) => useDeepLinkLead(p), { initialProps: o });
+    await waitFor(() => expect(result.current.leadSemConversa).toBe("L0"));
+
+    apiResponde([], false);
+    rerender({ ...o, leadId: null });
+    rerender({ ...o, leadId: "L2" });
+    await waitFor(() => expect(result.current.leadSemConversa).toBeNull());
+  });
 });

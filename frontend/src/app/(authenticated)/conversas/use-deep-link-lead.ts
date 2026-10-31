@@ -43,6 +43,19 @@ export function useDeepLinkLead({
   clearUrl,
 }: DeepLinkLeadOptions): { leadSemConversa: string | null; dispensar: () => void } {
   const aplicado = useRef<string | null>(null);
+  // Cada link aplicado ganha um número; a busca só age se ainda for o link atual.
+  // Sem isso, a resposta atrasada de um link antigo limpava a URL e o link novo
+  // era descartado calado.
+  const pedidoAtual = useRef(0);
+  // Página desmontada (o usuário saiu antes da resposta): não puxa de volta para
+  // /conversas. Ref ligado no efeito para sobreviver ao duplo efeito do StrictMode.
+  const montado = useRef(false);
+  useEffect(() => {
+    montado.current = true;
+    return () => {
+      montado.current = false;
+    };
+  }, []);
   const [leadSemConversa, setLeadSemConversa] = useState<string | null>(null);
 
   // Callbacks por ref: a página recria as funções a cada render, e o efeito não
@@ -59,6 +72,9 @@ export function useDeepLinkLead({
     }
     if (!ready || aplicado.current === leadId) return;
     aplicado.current = leadId;
+    const pedido = ++pedidoAtual.current;
+    // O aviso era do link anterior; este ainda não tem resposta.
+    setLeadSemConversa(null);
 
     const match = conversations.find((c) => (c.leads as Lead | undefined | null)?.id === leadId);
     if (match) {
@@ -68,12 +84,13 @@ export function useDeepLinkLead({
     }
 
     // Lead fora da lista carregada (paginação): busca sob demanda.
+    const vigente = () => montado.current && pedidoAtual.current === pedido;
     void (async () => {
       try {
         const res = await fetch(conversationsListUrl({ leadId }));
         if (!res.ok) return;
         const data = (await res.json()) as ConversationsPage<Conversation>;
-        if (aplicado.current !== leadId) return; // chegou outro link no meio
+        if (!vigente()) return; // chegou outro link no meio, ou a página saiu
         const conv = Array.isArray(data?.conversations) ? data.conversations[0] : null; // a rota ordena por last_msg_at desc
         if (!conv) {
           setLeadSemConversa(leadId);
@@ -85,7 +102,7 @@ export function useDeepLinkLead({
       } catch {
         // falha de rede: lista continua utilizável, sem aviso de "sem conversa"
       } finally {
-        cb.current.clearUrl();
+        if (vigente()) cb.current.clearUrl();
       }
     })();
   }, [leadId, ready, conversations]);
