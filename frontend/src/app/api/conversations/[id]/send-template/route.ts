@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { getServiceSupabase } from "@/lib/supabase/api";
 import { isLeadBlocked, MENSAGEM_LEAD_BLOQUEADO } from "@/lib/supabase/lead-blocked";
+import { registrarTemplateEnviado, sendTemplateViaMeta, wamidDaResposta } from "@/lib/meta-template";
 
 export async function POST(
   request: NextRequest,
@@ -55,174 +56,29 @@ export async function POST(
 
   let sentWamid: string | null = null;
   try {
-    const metaJson = (await sendTemplateViaMeta(
-      channel.provider_config,
-      lead.phone,
-      template_name,
-      template_language_code,
-      template_variables ?? null,
-    )) as { messages?: { id?: string }[] } | null;
-    sentWamid = metaJson?.messages?.[0]?.id ?? null;
+    sentWamid = wamidDaResposta(
+      await sendTemplateViaMeta(
+        channel.provider_config,
+        lead.phone,
+        template_name,
+        template_language_code,
+        template_variables ?? null,
+      ),
+    );
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : "Failed to send template";
     return NextResponse.json({ error: msg }, { status: 502 });
   }
 
-  // Resolve template body text for the message record.
-  // Priority: (1) body passed by client (already fetched by modal), (2) local DB, (3) Meta API.
-  let content = `[Template: ${template_name}]`;
-
-  if (providedBody && typeof providedBody === "string" && providedBody.trim()) {
-    content = providedBody;
-  } else {
-    // 1. Local message_templates table
-    try {
-      const { data: tplRow } = await supabase
-        .from("message_templates")
-        .select("components")
-        .eq("name", template_name)
-        .limit(1)
-        .maybeSingle();
-
-      if (tplRow?.components) {
-        const bodyComp = (tplRow.components as { type: string; text?: string }[]).find(
-          (c) => c.type === "BODY"
-        );
-        if (bodyComp?.text) content = bodyComp.text;
-      }
-    } catch {
-      // continue to Meta API fallback
-    }
-
-    // 2. Meta API fallback — mirrors _render_template_body in the broadcast worker
-    if (content === `[Template: ${template_name}]`) {
-      const cfg = channel.provider_config;
-      const wabaId = cfg.waba_id;
-      const accessToken = cfg.access_token;
-      const apiVersion = cfg.api_version ?? "v21.0";
-
-      if (wabaId && accessToken) {
-        try {
-          const metaRes = await fetch(
-            `https://graph.facebook.com/${apiVersion}/${wabaId}/message_templates?name=${encodeURIComponent(template_name)}`,
-            { headers: { Authorization: `Bearer ${accessToken}` } }
-          );
-          if (metaRes.ok) {
-            const metaData = await metaRes.json();
-            const tplData = (metaData.data ?? [])[0] as {
-              id?: string; language?: string; category?: string;
-              components?: { type: string; text?: string }[];
-            } | undefined;
-            if (tplData?.components) {
-              const bodyComp = tplData.components.find((c) => c.type === "BODY");
-              if (bodyComp?.text) {
-                content = bodyComp.text;
-                // Auto-sync to local DB so next call hits the fast path
-                supabase.from("message_templates").insert({
-                  channel_id: channel.id,
-                  name: template_name,
-                  language: tplData.language ?? template_language_code,
-                  requested_category: tplData.category ?? "UTILITY",
-                  category: tplData.category ?? "UTILITY",
-                  components: tplData.components,
-                  meta_template_id: tplData.id,
-                  status: "approved",
-                }).then(() => {}, () => {});
-              }
-            }
-          }
-        } catch {
-          // Meta API fallback failed — keep placeholder
-        }
-      }
-    }
-  }
-
-  // Template mandado à mão pelo vendedor no CRM é mensagem DO VENDEDOR (sent_by='seller'):
-  // conta como "closer assumiu" (D4) e fecha a rodada de SLA. O selo `metadata.template`
-  // separa do texto livre. Disparo em massa continua 'broadcast' (outro caminho).
-  const insertData: Record<string, unknown> = {
-    lead_id: lead.id,
-    conversation_id: conversationId,
-    role: "assistant",
-    content,
-    sent_by: "seller",
-    metadata: { template: true, template_name },
-  };
-  if (sentWamid) {
-    insertData.wamid = sentWamid;
-    insertData.delivery_status = "accepted";
-  }
-  await supabase.from("messages").insert(insertData);
-
-  await supabase
-    .from("conversations")
-    .update({
-      status: "template_sent",
-      last_msg_at: new Date().toISOString(),
-    })
-    .eq("id", conversationId);
+  await registrarTemplateEnviado(supabase, {
+    conversationId,
+    leadId: lead.id,
+    channel,
+    templateName: template_name,
+    templateLanguageCode: template_language_code,
+    templateBody: providedBody,
+    sentWamid,
+  });
 
   return NextResponse.json({ status: "sent" });
-}
-
-async function sendTemplateViaMeta(
-  config: Record<string, string>,
-  to: string,
-  templateName: string,
-  languageCode: string,
-  variables: Record<string, string> | null,
-) {
-  const phoneNumberId = config.phone_number_id ?? "";
-  const accessToken = config.access_token ?? "";
-  const apiVersion = config.api_version ?? "v21.0";
-
-  const template: Record<string, unknown> = {
-    name: templateName,
-    language: { code: languageCode },
-  };
-
-  const bodyVars = variables
-    ? Object.entries(variables).filter(([k]) => !k.startsWith("__"))
-    : [];
-  if (bodyVars.length > 0) {
-    const paramsType = variables?.["__params_type__"] ?? "named";
-    let parameters: Record<string, unknown>[];
-    if (paramsType === "positional") {
-      parameters = bodyVars
-        .sort(([a], [b]) => (parseInt(a) || 999) - (parseInt(b) || 999))
-        .map(([, v]) => ({ type: "text", text: String(v) }));
-    } else {
-      parameters = bodyVars.map(([k, v]) => ({
-        type: "text",
-        parameter_name: k,
-        text: String(v),
-      }));
-    }
-    template.components = [{ type: "body", parameters }];
-  }
-
-  const res = await fetch(
-    `https://graph.facebook.com/${apiVersion}/${phoneNumberId}/messages`,
-    {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${accessToken}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        messaging_product: "whatsapp",
-        to,
-        type: "template",
-        template,
-      }),
-    }
-  );
-
-  if (!res.ok) {
-    const err = await res.text();
-    throw new Error(`Meta API ${res.status}: ${err}`);
-  }
-
-  return res.json();
 }
