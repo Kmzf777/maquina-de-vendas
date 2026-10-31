@@ -31,6 +31,7 @@ import {
   type Row,
 } from "@/lib/lead-overview-rows";
 import { mapRepasseOverview } from "@/lib/repasse-resposta";
+import { leadTemConversa } from "@/lib/lead-has-conversation";
 
 /** Trilhas longas não cabem na tela nem no orçamento de payload. */
 const MAX_EVENTS = 100;
@@ -102,6 +103,9 @@ export async function GET(
     ({ data, error }) => (error ? null : mapRepasseOverview(data as Row | null)),
     () => null,
   );
+
+  // Painel desabilita "Abrir conversa" quando o lead não tem conversa (cartão 70d844a6).
+  const hasConversationPromise = leadTemConversa(sb, id);
 
   const [deals, sales, events, notes, messages, cadences, broadcasts, followups] = await Promise.all([
     section(
@@ -242,6 +246,7 @@ export async function GET(
   ]);
 
   const repasse = await repassePromise;
+  const has_conversation = await hasConversationPromise;
 
   const payload: LeadOverview & { partial: string[] } = {
     lead: mapLead(leadRaw as unknown as Row),
@@ -254,6 +259,7 @@ export async function GET(
     broadcasts,
     followups,
     repasse,
+    has_conversation,
     partial,
   };
 

@@ -132,6 +132,11 @@ export interface LeadOverview {
   followups: OverviewFollowup[];
   /** Linha de vw_repasse_resposta. null = sem repasse, ou view indisponível. */
   repasse?: OverviewRepasse | null;
+  /**
+   * Existe conversa não bloqueada deste lead (cartão 70d844a6)? false desabilita
+   * "Abrir conversa" no painel; null/ausente = desconhecido, botão habilitado.
+   */
+  has_conversation?: boolean | null;
 }
 
 // ─── Formatação ────────────────────────────────────────────────────────────────

@@ -44,9 +44,9 @@ const TARGET: CampaignLeadPanelTarget = {
   utm_source: null, utm_medium: null, utm_campaign: null,
 };
 
-function mockFetch() {
+function mockFetch(payload: LeadOverview = PAYLOAD) {
   vi.stubGlobal("fetch", vi.fn(async (url: string) => {
-    const body = url === "/api/leads/L1/overview" ? PAYLOAD : { campanhas: [] };
+    const body = url === "/api/leads/L1/overview" ? payload : { campanhas: [] };
     return { ok: true, status: 200, json: async () => body };
   }));
 }
@@ -85,5 +85,32 @@ describe("CampaignLeadPanel — vendas pela D7", () => {
     expect(receita.textContent).toContain("2 pedidos");
     const ticket = blocoDe(screen.getByText("Ticket médio"));
     expect(ticket.textContent).toContain("R$ 650,00");
+  });
+});
+
+// Cartão 70d844a6: lead sem conversa (ex.: importado do Bling) não pode levar a um
+// /conversas calado. O botão fica à vista, desabilitado, com o motivo escrito.
+describe("CampaignLeadPanel — botão de conversa", () => {
+  it("lead sem conversa: botão desabilitado com 'Sem conversa no WhatsApp'", async () => {
+    mockFetch({ ...PAYLOAD, has_conversation: false });
+    render(<CampaignLeadPanel target={TARGET} onClose={() => {}} />);
+    const botao = await screen.findByRole("button", { name: /Sem conversa no WhatsApp/ });
+    expect((botao as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.queryByRole("button", { name: /Abrir conversa/ })).toBeNull();
+  });
+
+  it("lead com conversa: 'Abrir conversa' habilitado", async () => {
+    mockFetch({ ...PAYLOAD, has_conversation: true });
+    render(<CampaignLeadPanel target={TARGET} onClose={() => {}} />);
+    await screen.findByText("Vendas");
+    const botao = screen.getByRole("button", { name: /Abrir conversa/ });
+    expect((botao as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it("sem a informação (payload antigo ou erro): continua habilitado", async () => {
+    mockFetch(PAYLOAD);
+    render(<CampaignLeadPanel target={TARGET} onClose={() => {}} />);
+    await screen.findByText("Vendas");
+    expect((screen.getByRole("button", { name: /Abrir conversa/ }) as HTMLButtonElement).disabled).toBe(false);
   });
 });
