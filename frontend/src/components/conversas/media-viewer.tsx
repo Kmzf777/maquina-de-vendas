@@ -38,9 +38,9 @@ export function MediaViewer({ kind, src, name, downloadHref, onClose }: MediaVie
       role="dialog"
       aria-modal="true"
       aria-label={name}
-      className="fixed inset-0 z-[100] flex flex-col bg-black/85"
+      className="fixed inset-0 z-[100] flex flex-col bg-black/90"
     >
-      <div className="flex items-center gap-3 px-4 py-3 text-white">
+      <div className="flex items-center gap-3 bg-black px-4 py-3 text-white">
         <span className="min-w-0 flex-1 truncate text-[14px]">{name}</span>
         {downloadLink}
         <button
