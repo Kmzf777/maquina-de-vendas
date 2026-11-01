@@ -61,9 +61,11 @@ async def _google(aud: Audience, pessoas: list[Pessoa], dry_run: bool, store, go
     ativos = await asyncio.to_thread(store.membros_ativos, aud.key)
     _, saem = diff.diff_identificadores(set(ativos), set(atuais))
 
-    membros = [google_mod.build_member(p) for p in pessoas]
+    # Membro sem identificador faz a Data Manager recusar o lote inteiro.
+    membros = [m for m in (google_mod.build_member(p) for p in pessoas)
+               if m["userData"]["userIdentifiers"]]
     resp_ingest: list = []
-    if pessoas:
+    if membros:
         resp_ingest = await asyncio.to_thread(google_mod.ingest, aud.audience_id, membros,
                                               validate_only=dry_run)
     resp_remove: list = []
@@ -80,7 +82,7 @@ async def _google(aud: Audience, pessoas: list[Pessoa], dry_run: bool, store, go
             await asyncio.to_thread(store.upsert_membros, aud.key, rows)
         if saem:
             await asyncio.to_thread(store.marcar_removidos, aud.key, sorted(saem), quando)
-    return {"linhas_enviadas": len(membros) if pessoas else 0, "removidos": len(saem),
+    return {"linhas_enviadas": len(membros), "removidos": len(saem),
             "api_response": {"ingest": resp_ingest, "remove": resp_remove}}
 
 

@@ -284,3 +284,15 @@ def test_worker_registra_audience_sync():
     from app.worker import main
     spec = next(s for s in main.TASK_SPECS if s[0] == "audience-sync")
     assert spec[1] == "periodic" and spec[3] == 600
+
+
+async def test_google_pula_pessoa_sem_identificador():
+    # Membro sem userIdentifiers faz a Data Manager recusar o lote inteiro.
+    store = FakeStore([_fato("a", pipeline_pl=True),
+                       _fato("b", pipeline_pl=True, lead_phone=None, lead_email=None)])
+    g = FakeGoogle()
+    await _run(store, google=g)
+    (_, membros, _), = [x for x in g.ingests if x[0] == "9496018532"]
+    assert len(membros) == 1 and all(m["userData"]["userIdentifiers"] for m in membros)
+    run = next(r for r in store.runs if r["audience_key"] == "google_pl")
+    assert run["pessoas"] == 2 and run["linhas_enviadas"] == 1
