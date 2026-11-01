@@ -5,6 +5,8 @@ import { senderBadge } from "@/lib/sender-badge";
 import { readButtonClick } from "@/lib/button-click";
 import { mediaCaption, reactionExtraText } from "@/lib/message-visible-text";
 import { isMediaExpired } from "@/lib/media-expired";
+import { mediaDownloadHref, mediaFileName, documentPreviewKind } from "@/lib/media-download";
+import { MediaViewer, type MediaViewerKind } from "./media-viewer";
 import {
   carrosselCorpo,
   readInterativo,
@@ -289,6 +291,7 @@ function MessageBubbleImpl({ message, isGrouped, conversationId, onReply, onReac
   const [imgError, setImgError] = useState(false);
   const [videoError, setVideoError] = useState(false);
   const [audioError, setAudioError] = useState(false);
+  const [viewerOpen, setViewerOpen] = useState(false);
   const [reactionPickerOpen, setReactionPickerOpen] = useState(false);
   const badge = senderBadge(message);
 
@@ -355,6 +358,23 @@ function MessageBubbleImpl({ message, isGrouped, conversationId, onReply, onReac
       : `/api/media?media_id=${encodeURIComponent(message.media_url)}&conversation_id=${encodeURIComponent(conversationId)}`
     : null;
   const mediaExpired = isMediaExpired(message);
+
+  // Pré-visualização do anexo (janela por cima do chat) + link de download com nome.
+  const docName = message.document_name || message.content || "Documento";
+  const attachment: { kind: MediaViewerKind; name: string; fileName: string } | null = isImage
+    ? { kind: "image", name: "Imagem", fileName: mediaFileName("image", null) }
+    : isVideo
+      ? { kind: "video", name: "Vídeo", fileName: mediaFileName("video", null) }
+      : isDocument
+        ? {
+            kind: documentPreviewKind(message.document_name || message.content),
+            name: docName,
+            fileName: mediaFileName("document", message.document_name || message.content),
+          }
+        : isAudio
+          ? { kind: "file", name: "Áudio", fileName: mediaFileName("audio", null) }
+          : null;
+  const downloadHref = mediaSrc && attachment ? mediaDownloadHref(mediaSrc, attachment.fileName) : null;
 
   const replyBtn = onReply && !isTemp ? (
     <button
@@ -462,12 +482,23 @@ function MessageBubbleImpl({ message, isGrouped, conversationId, onReply, onReac
             mediaExpired || audioError ? (
               <ExpiredMedia />
             ) : (
-              <audio
-                controls
-                src={mediaSrc}
-                className="h-10 max-w-[240px]"
-                onError={() => setAudioError(true)}
-              />
+              <div className="flex flex-col">
+                <audio
+                  controls
+                  src={mediaSrc}
+                  className="h-10 max-w-[240px]"
+                  onError={() => setAudioError(true)}
+                />
+                {downloadHref && (
+                  <a
+                    href={downloadHref}
+                    download={attachment?.fileName}
+                    className="text-[11px] underline opacity-70 hover:opacity-100 mt-0.5 self-start"
+                  >
+                    Baixar
+                  </a>
+                )}
+              </div>
             )
           ) : (
             <div className="flex items-center gap-2 py-1">
@@ -482,12 +513,25 @@ function MessageBubbleImpl({ message, isGrouped, conversationId, onReply, onReac
             mediaExpired || videoError ? (
               <ExpiredMedia />
             ) : (
-              <video
-                controls
-                src={mediaSrc}
-                className="max-w-[320px] max-h-[400px] rounded-[4px] block"
-                onError={() => setVideoError(true)}
-              />
+              <div className="relative">
+                <video
+                  controls
+                  src={mediaSrc}
+                  className="max-w-[320px] max-h-[400px] rounded-[4px] block"
+                  onError={() => setVideoError(true)}
+                />
+                <button
+                  type="button"
+                  aria-label="Ampliar vídeo"
+                  title="Ampliar"
+                  onClick={() => setViewerOpen(true)}
+                  className="absolute top-1.5 right-1.5 rounded-md bg-black/50 p-1 text-white hover:bg-black/70"
+                >
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                    <path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7" />
+                  </svg>
+                </button>
+              </div>
             )
           ) : (
             <div className="flex items-center gap-2 py-1">
@@ -502,12 +546,19 @@ function MessageBubbleImpl({ message, isGrouped, conversationId, onReply, onReac
             mediaExpired || imgError ? (
               <ExpiredMedia />
             ) : (
-              <img
-                src={mediaSrc}
-                alt="Imagem enviada"
-                className="max-w-[240px] max-h-[320px] object-contain rounded-[4px] block"
-                onError={() => setImgError(true)}
-              />
+              <button
+                type="button"
+                aria-label="Ampliar imagem"
+                onClick={() => setViewerOpen(true)}
+                className="block cursor-zoom-in p-0"
+              >
+                <img
+                  src={mediaSrc}
+                  alt="Imagem enviada"
+                  className="max-w-[240px] max-h-[320px] object-contain rounded-[4px] block"
+                  onError={() => setImgError(true)}
+                />
+              </button>
             )
           ) : (
             <div className="flex items-center gap-2 py-1">
@@ -518,42 +569,34 @@ function MessageBubbleImpl({ message, isGrouped, conversationId, onReply, onReac
             </div>
           )
         ) : isDocument ? (
-          (() => {
-            const docName = message.document_name || message.content || "Documento";
-            const downloadHref = mediaSrc
-              ? (() => {
-                  if (mediaSrc.startsWith("http") || mediaSrc.startsWith("blob:")) {
-                    return mediaSrc;
-                  }
-                  const url = new URL(mediaSrc, "http://x");
-                  url.searchParams.set("download", "1");
-                  url.searchParams.set("filename", docName);
-                  return url.pathname + url.search;
-                })()
-              : null;
-            return (
-              <div className="flex items-center gap-2 py-1">
-                <svg className="w-5 h-5 opacity-60 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5.586a1 1 0 0 1 .707.293l5.414 5.414a1 1 0 0 1 .293.707V19a2 2 0 0 1-2 2z" />
-                </svg>
-                <div className="flex flex-col min-w-0">
-                  <span className="text-[13px] truncate max-w-[180px]">{docName}</span>
-                  {downloadHref && mediaExpired ? (
-                    <span className="text-[11px] opacity-60 mt-0.5">Arquivo expirado</span>
-                  ) : downloadHref && (
-                    <a
-                      href={downloadHref}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="text-[11px] underline opacity-70 hover:opacity-100 mt-0.5"
-                    >
-                      Baixar
-                    </a>
-                  )}
-                </div>
-              </div>
-            );
-          })()
+          <div className="flex items-center gap-2 py-1">
+            <svg className="w-5 h-5 opacity-60 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5.586a1 1 0 0 1 .707.293l5.414 5.414a1 1 0 0 1 .293.707V19a2 2 0 0 1-2 2z" />
+            </svg>
+            <div className="flex flex-col min-w-0">
+              <span className="text-[13px] truncate max-w-[180px]">{docName}</span>
+              {downloadHref && mediaExpired ? (
+                <span className="text-[11px] opacity-60 mt-0.5">Arquivo expirado</span>
+              ) : downloadHref && (
+                <span className="flex items-center gap-2 text-[11px] mt-0.5">
+                  <button
+                    type="button"
+                    onClick={() => setViewerOpen(true)}
+                    className="underline opacity-70 hover:opacity-100"
+                  >
+                    Abrir
+                  </button>
+                  <a
+                    href={downloadHref}
+                    download={attachment?.fileName}
+                    className="underline opacity-70 hover:opacity-100"
+                  >
+                    Baixar
+                  </a>
+                </span>
+              )}
+            </div>
+          </div>
         ) : isSticker ? (
           mediaSrc ? (
             mediaExpired || imgError ? (
@@ -768,6 +811,15 @@ function MessageBubbleImpl({ message, isGrouped, conversationId, onReply, onReac
         {interativo?.tipo === "lista" && <InteractiveList lista={interativo} />}
         {reactionBadge}
       </div>
+      {viewerOpen && mediaSrc && downloadHref && attachment && (
+        <MediaViewer
+          kind={attachment.kind}
+          src={mediaSrc}
+          name={attachment.name}
+          downloadHref={downloadHref}
+          onClose={() => setViewerOpen(false)}
+        />
+      )}
     </div>
   );
 }

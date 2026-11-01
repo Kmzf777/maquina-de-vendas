@@ -348,3 +348,76 @@ describe("MessageBubble — arquivo expirado", () => {
     expect(container.querySelector("audio")).toBeNull();
   });
 });
+
+describe("MessageBubble — pré-visualizar anexo", () => {
+  const STORAGE = "https://supabase.canastrainteligencia.com/storage/v1/object/public/media/x";
+
+  it("clicar na imagem abre a janela com a imagem e Baixar", () => {
+    renderBubble({ message_type: "image", media_url: `${STORAGE}/foto.jpg` });
+    expect(screen.queryByRole("dialog")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Ampliar imagem" }));
+    const dialog = screen.getByRole("dialog");
+    expect(dialog.querySelector("img")?.getAttribute("src")).toBe(`${STORAGE}/foto.jpg`);
+    const baixar = screen.getAllByRole("link", { name: "Baixar" })[0];
+    expect(new URL(baixar.getAttribute("href")!).searchParams.get("download")).toBe("imagem.jpg");
+  });
+
+  it("vídeo tem botão de ampliar que abre o player na janela", () => {
+    renderBubble({ message_type: "video", media_url: `${STORAGE}/v.mp4` });
+    fireEvent.click(screen.getByRole("button", { name: "Ampliar vídeo" }));
+    expect(screen.getByRole("dialog").querySelector("video")).toBeTruthy();
+  });
+
+  it("documento PDF: Abrir mostra o PDF na janela; Baixar baixa com o nome", () => {
+    renderBubble({
+      message_type: "document",
+      media_url: `${STORAGE}/n.pdf`,
+      document_name: "Pedido Café.pdf",
+    });
+    const baixar = screen.getByRole("link", { name: "Baixar" });
+    expect(new URL(baixar.getAttribute("href")!).searchParams.get("download")).toBe("Pedido Café.pdf");
+    fireEvent.click(screen.getByRole("button", { name: "Abrir" }));
+    expect(screen.getByTitle("Pedido Café.pdf").tagName).toBe("IFRAME");
+  });
+
+  it("documento sem document_name usa o content como nome e abre como PDF", () => {
+    renderBubble({ message_type: "document", media_url: `${STORAGE}/n.pdf`, content: "boleto.pdf" });
+    fireEvent.click(screen.getByRole("button", { name: "Abrir" }));
+    expect(screen.getByTitle("boleto.pdf").tagName).toBe("IFRAME");
+  });
+
+  it("documento .psd abre a janela sem prévia", () => {
+    renderBubble({ message_type: "document", media_url: `${STORAGE}/a.psd`, document_name: "arte.psd" });
+    fireEvent.click(screen.getByRole("button", { name: "Abrir" }));
+    expect(screen.getByText("Sem pré-visualização para este tipo de arquivo")).toBeTruthy();
+  });
+
+  it("documento legado (media_id) baixa pelo proxy com download=1", () => {
+    // created_at de agora: media_id do cliente com mais de 7 dias vira "Arquivo expirado".
+    renderBubble({
+      message_type: "document",
+      media_url: "123456",
+      document_name: "nota.pdf",
+      created_at: new Date().toISOString(),
+    });
+    const href = screen.getByRole("link", { name: "Baixar" }).getAttribute("href")!;
+    const u = new URL(href, "http://x");
+    expect(u.pathname).toBe("/api/media");
+    expect(u.searchParams.get("download")).toBe("1");
+    expect(u.searchParams.get("filename")).toBe("nota.pdf");
+  });
+
+  it("áudio continua tocando no balão e ganha Baixar", () => {
+    const { container } = renderBubble({ message_type: "audio", media_url: `${STORAGE}/a.ogg` });
+    expect(container.querySelector("audio")).toBeTruthy();
+    const baixar = screen.getByRole("link", { name: "Baixar" });
+    expect(new URL(baixar.getAttribute("href")!).searchParams.get("download")).toBe("audio.ogg");
+  });
+
+  it("Esc fecha a janela", () => {
+    renderBubble({ message_type: "image", media_url: `${STORAGE}/foto.jpg` });
+    fireEvent.click(screen.getByRole("button", { name: "Ampliar imagem" }));
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+});
