@@ -76,19 +76,27 @@ class FakeRedis:
 
 class FakeMeta:
     build_rows = staticmethod(meta_real.build_rows)
+    identidade = staticmethod(meta_real.identidade)
 
     def __init__(self, falha=False):
         self.falha = falha
-        self.replaces = []
+        self.adds = []
+        self.removes = []
         self.checks = []
 
-    def replace(self, audience_id, pessoas, **kw):
+    def add_users(self, audience_id, rows, **kw):
         if self.falha:
             raise RuntimeError("Meta caiu")
-        pessoas = list(pessoas)
-        self.replaces.append((audience_id, pessoas))
-        return {"num_received": len(pessoas), "num_invalid_entries": 0, "session_id": 1,
-                "lotes": 1, "linhas": len(pessoas), "respostas": []}
+        self.adds.append((audience_id, list(rows)))
+        return {"num_received": len(rows), "num_invalid_entries": 0, "lotes": 1, "linhas": len(rows),
+                "respostas": []}
+
+    def remove_users(self, audience_id, idents, **kw):
+        if self.falha:
+            raise RuntimeError("Meta caiu")
+        self.removes.append((audience_id, list(idents)))
+        return {"num_received": len(idents), "num_invalid_entries": 0, "lotes": 1,
+                "linhas": len(idents), "respostas": []}
 
     def check_audience(self, audience_id, **kw):
         if self.falha:
@@ -158,7 +166,7 @@ async def test_lock_ocupado_nao_envia_nada():
     m, g = FakeMeta(), FakeGoogle()
     res = await _run(store, redis=FakeRedis(ocupado=True), meta=m, google=g)
     assert res == {"status": "lock"}
-    assert not m.replaces and not m.checks and not g.ingests and not store.runs
+    assert not m.adds and not m.checks and not g.ingests and not store.runs
 
 
 async def test_lock_e_liberado_so_se_ainda_for_meu():
@@ -183,13 +191,13 @@ async def test_dry_run_meta_so_check_google_validate_only_sem_gravar():
                       ativos={"google_pl": {diff.ident_hash(sai): sai}})
     m, g = FakeMeta(), FakeGoogle()
     await _run(store, dry_run=True, meta=m, google=g)
-    assert not m.replaces
+    assert not m.adds and not m.removes
     assert set(m.checks) == {"120252789539440163", "120252789580640163"}
     assert g.ingests and all(v is True for _, _, v in g.ingests)
     assert g.removes and all(v is True for _, _, v in g.removes)
     assert not store.upserts and not store.removidos
     meta_pl = next(r for r in store.runs if r["audience_key"] == "meta_pl")
-    assert meta_pl["linhas_enviadas"] == 1 and meta_pl["api_response"] == {"id": "120252789539440163", "name": "x"}
+    assert meta_pl["linhas_enviadas"] == 1 and meta_pl["api_response"] == {"audience": {"id": "120252789539440163", "name": "x"}}
     assert all(r["dry_run"] is True for r in store.runs)
 
 
@@ -211,12 +219,28 @@ async def test_quem_saiu_e_removido_no_google_e_marcado():
     assert not [x for x in g.ingests if x[0] == "9496602202"]
 
 
-async def test_meta_real_usa_replace_com_pessoas_do_segmento():
+async def test_meta_real_acrescenta_sem_substituir():
     store = FakeStore([_fato("a", pipeline_pl=True), _fato("b", pipeline_atacado=True)])
     m = FakeMeta()
     await _run(store, meta=m)
-    por_id = {aid: [p.lead_id for p in ps] for aid, ps in m.replaces}
-    assert por_id == {"120252789539440163": ["a"], "120252789580640163": ["b"]}
+    por_id = {aid: len(rows) for aid, rows in m.adds}
+    assert por_id == {"120252789539440163": 1, "120252789580640163": 1}
+    assert not m.removes  # ninguém saiu: o que a Tati subiu à mão fica intacto
+    up = dict(store.upserts)["meta_pl"]
+    assert [r["lead_id"] for r in up] == ["a"]
+    assert up[0]["ident"] == {"row": meta_real.identidade(m.adds[0][1][0])}
+
+
+async def test_meta_remove_so_quem_o_job_enviou_e_saiu():
+    velho = {"row": ["e"] + [""] * 7}
+    h = diff.ident_hash(velho)
+    store = FakeStore([_fato("a", pipeline_pl=True)], ativos={"meta_pl": {h: velho}})
+    m = FakeMeta()
+    await _run(store, meta=m)
+    assert m.removes == [("120252789539440163", [velho["row"]])]
+    assert ("meta_pl", {h}) in [(k, hs) for k, hs, _ in store.removidos]
+    run = next(r for r in store.runs if r["audience_key"] == "meta_pl")
+    assert run["removidos"] == 1 and run["linhas_enviadas"] == 1
 
 
 async def test_contagem_do_resumo():

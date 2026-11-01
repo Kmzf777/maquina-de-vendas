@@ -139,3 +139,22 @@ O `META_ADS_ACCESS_TOKEN` não é alterado.
 - Telefone fixo como identificador.
 - Limpar no Google o conteúdo antigo subido à mão (decisão 3).
 - Tela no CRM para ver as rodadas: o log fica na tabela.
+
+## Ajuste de 01/11 (pedido do Rafael antes da produção)
+
+> "o atenção que você me disse, explique para a tati, e faça de uma maneira que nao prejudique a situação atual das campanhas"
+
+- **Problema:** os 2 públicos do Meta mostram ~1.000 pessoas hoje (o que a Tati subiu à mão). O `usersreplace` deixaria 78 no PL e 412 no Atacado, e isso pode derrubar a entrega das campanhas que usam esses públicos.
+- **O que muda:** o Meta deixa de usar `usersreplace` e passa a funcionar como o Google:
+  - `POST /{id}/users` acrescenta os compradores atuais todo dia, com o valor atualizado;
+  - `DELETE /{id}/users` tira só as linhas que o próprio job enviou antes e que saíram, como quem passou de 365 dias.
+  - O controle fica em `audience_sync_members`, com `ident = {"row": <linha sem o valor>}`.
+- **Efeito:** nenhum público encolhe na estreia. O conteúdo antigo da Tati continua lá até ela decidir limpar.
+  - No Meta não há expiração automática.
+  - No Google, a associação expira em 540 dias.
+- **Explicação para a Tati:** arquivo `prints/agente-4e0494e0/explicacao-tati-publicos.md`, que o Rafael encaminha.
+- **Teste em modo teste:**
+  1. Dry-run com dados reais: o Meta só lê o público e o Google usa `validateOnly`.
+  2. Um teste real de formato no Meta, num público de cada (PL e Atacado): `POST /users` com 1 linha de e-mail com hash aleatório, que não casa com ninguém, e logo depois `DELETE` da mesma linha.
+  3. Conferir que `approximate_count` não mudou.
+- **Fica de fora:** substituir o conteúdo, agora ou depois. Se um dia a Tati quiser limpar a base antiga, isso vira uma rodada única decidida por ela.

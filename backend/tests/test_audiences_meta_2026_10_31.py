@@ -60,47 +60,59 @@ def test_pessoa_sem_contato_e_pulada():
     assert meta.build_rows([_p(emails=(), celulares=())]) == []
 
 
-def test_lotes_com_max_rows():
-    rows = [["r1"], ["r2"], ["r3"]]
-    lotes = meta.build_batches(rows, "S1", max_rows=2)
-    assert len(lotes) == 2
-    assert [b["session"]["batch_seq"] for b in lotes] == [1, 2]
-    assert [b["session"]["last_batch_flag"] for b in lotes] == [False, True]
-    assert all(b["session"]["estimated_num_total"] == 3 for b in lotes)
-    assert all(b["session"]["session_id"] == "S1" for b in lotes)
-    assert lotes[0]["payload"] == {"schema": meta.SCHEMA, "data": [["r1"], ["r2"]]}
-    assert lotes[1]["payload"]["data"] == [["r3"]]
+def test_identidade_tira_o_valor():
+    row = meta.build_rows([_p()])[0]
+    assert meta.identidade(row) == row[:-1]
+    assert meta.SCHEMA_ID == meta.SCHEMA[:-1]
 
 
-def test_zero_linhas_vira_um_lote_vazio_final():
-    lotes = meta.build_batches([], "S1")
-    assert len(lotes) == 1
-    assert lotes[0]["payload"]["data"] == []
-    assert lotes[0]["session"]["last_batch_flag"] is True
-
-
-def test_replace_soma_num_received(monkeypatch):
+def test_add_users_em_lotes_soma_num_received(monkeypatch):
     _env(monkeypatch)
     monkeypatch.setattr(meta, "MAX_ROWS", 1)
     seen = []
 
     def handler(req):
         seen.append(req)
-        return httpx.Response(200, json={"num_received": 1, "num_invalid_entries": 0, "session_id": 7})
+        return httpx.Response(200, json={"audience_id": "AUD1", "num_received": 1, "num_invalid_entries": 0})
 
-    out = meta.replace("AUD1", [_p(emails=("a@x.com", "b@x.com"))], session_id=7,
-                       transport=httpx.MockTransport(handler))
+    rows = meta.build_rows([_p(emails=("a@x.com", "b@x.com"))])
+    out = meta.add_users("AUD1", rows, transport=httpx.MockTransport(handler))
     assert out["num_received"] == 2 and out["num_invalid_entries"] == 0
-    assert out["lotes"] == 2 and out["linhas"] == 2 and out["session_id"] == 7
-    assert len(out["respostas"]) == 2
+    assert out["lotes"] == 2 and out["linhas"] == 2 and len(out["respostas"]) == 2
     req = seen[0]
     assert req.method == "POST"
-    assert str(req.url) == "https://graph.facebook.com/v25.0/AUD1/usersreplace"
+    assert str(req.url) == "https://graph.facebook.com/v25.0/AUD1/users"
     assert TOKEN not in str(req.url)
-    form = _form(req)
-    assert json.loads(form["payload"])["schema"] == meta.SCHEMA
-    assert json.loads(form["session"])["batch_seq"] == 1
-    assert json.loads(_form(seen[1])["session"])["last_batch_flag"] is True
+    payload = json.loads(_form(req)["payload"])
+    assert payload == {"schema": meta.SCHEMA, "data": [rows[0]]}
+    assert "session" not in _form(req)
+
+
+def test_add_users_vazio_nao_chama_api(monkeypatch):
+    _env(monkeypatch)
+    t = httpx.MockTransport(lambda r: pytest.fail("não devia chamar"))
+    assert meta.add_users("AUD1", [], transport=t)["lotes"] == 0
+
+
+def test_remove_users_usa_delete_sem_valor(monkeypatch):
+    _env(monkeypatch)
+    seen = []
+
+    def handler(req):
+        seen.append(req)
+        return httpx.Response(200, json={"num_received": 1, "num_invalid_entries": 0})
+
+    ident = meta.identidade(meta.build_rows([_p()])[0])
+    out = meta.remove_users("AUD1", [ident], transport=httpx.MockTransport(handler))
+    assert out["num_received"] == 1
+    req = seen[0]
+    assert req.method == "DELETE" and req.url.path == "/v25.0/AUD1/users"
+    assert json.loads(_form(req)["payload"]) == {"schema": meta.SCHEMA_ID, "data": [ident]}
+
+
+def test_meta_nao_tem_mais_usersreplace():
+    # 01/11: substituir derrubaria o público de ~1.000 para 78 e prejudicaria as campanhas.
+    assert not hasattr(meta, "replace")
 
 
 def test_erro_400_vira_runtimeerror_sem_token(monkeypatch):
@@ -108,7 +120,7 @@ def test_erro_400_vira_runtimeerror_sem_token(monkeypatch):
     t = httpx.MockTransport(lambda req: httpx.Response(
         400, json={"error": {"message": "Invalid parameter", "code": 100}}))
     with pytest.raises(RuntimeError) as exc:
-        meta.replace("AUD1", [_p()], transport=t)
+        meta.add_users("AUD1", meta.build_rows([_p()]), transport=t)
     assert "Invalid parameter" in str(exc.value)
     assert TOKEN not in str(exc.value)
 
@@ -116,7 +128,8 @@ def test_erro_400_vira_runtimeerror_sem_token(monkeypatch):
 def test_sem_token_runtimeerror(monkeypatch):
     monkeypatch.delenv("META_AUDIENCES_ACCESS_TOKEN", raising=False)
     with pytest.raises(RuntimeError, match="META_AUDIENCES_ACCESS_TOKEN não configurado"):
-        meta.replace("AUD1", [_p()], transport=httpx.MockTransport(lambda r: httpx.Response(200)))
+        meta.add_users("AUD1", meta.build_rows([_p()]),
+                       transport=httpx.MockTransport(lambda r: httpx.Response(200)))
 
 
 def test_check_audience(monkeypatch):

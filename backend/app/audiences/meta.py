@@ -1,7 +1,8 @@
-"""Troca do conteúdo dos públicos personalizados do Meta via `usersreplace` (cartão 4e0494e0).
+"""Acrescenta e remove pessoas nos públicos personalizados do Meta (cartão 4e0494e0).
 
-`usersreplace` substitui a lista inteira numa sessão de lotes: o último lote (`last_batch_flag`)
-fecha a troca. Com 0 pessoas manda 1 lote vazio: esvaziar é o certo quando ninguém se qualifica.
+Sem `usersreplace` de propósito (ajuste de 01/11): substituir derrubaria os públicos em uso de
+~1.000 pessoas (o que a Tati subiu à mão) para 78 no PL e prejudicaria a entrega das campanhas.
+`POST /users` só acrescenta; `DELETE /users` tira só as linhas que este job enviou e saíram.
 
 Token no header `Authorization`, nunca na URL nem em mensagem de erro: o httpx loga a URL em INFO.
 """
@@ -9,7 +10,6 @@ from __future__ import annotations
 
 import json
 import os
-import random
 from itertools import zip_longest
 from typing import Any, Iterable
 
@@ -21,6 +21,7 @@ from app.conversions.hashing import meta_email_hash, meta_phone_hash
 
 GRAPH = "https://graph.facebook.com"
 SCHEMA = ["EMAIL", "PHONE", "FN", "LN", "CT", "ST", "ZIP", "COUNTRY", "LOOKALIKE_VALUE"]
+SCHEMA_ID = SCHEMA[:-1]  # a remoção casa pela pessoa, sem o valor (que muda todo dia)
 MAX_ROWS = 10000
 _TIMEOUT = 60.0
 _CHECK_FIELDS = "name,operation_status,approximate_count_lower_bound,approximate_count_upper_bound,is_value_based"
@@ -46,17 +47,9 @@ def build_rows(pessoas: Iterable[Pessoa]) -> list[list]:
     return rows
 
 
-def build_batches(rows: list[list], session_id: int | str, max_rows: int = MAX_ROWS) -> list[dict]:
-    pedacos = [rows[i:i + max_rows] for i in range(0, len(rows), max_rows)] or [[]]
-    n = len(pedacos)
-    return [
-        {
-            "payload": {"schema": SCHEMA, "data": dados},
-            "session": {"session_id": session_id, "batch_seq": i, "last_batch_flag": i == n,
-                        "estimated_num_total": len(rows)},
-        }
-        for i, dados in enumerate(pedacos, start=1)
-    ]
+def identidade(row: list) -> list:
+    """A linha sem o `LOOKALIKE_VALUE`: é o que identifica a pessoa para diff e remoção."""
+    return row[:-1]
 
 
 def _error_message(resp: httpx.Response) -> str:
@@ -73,39 +66,44 @@ def _raise_if_error(resp: httpx.Response, token: str) -> None:
         raise RuntimeError(_error_message(resp).replace(token, "***"))
 
 
-def replace(audience_id: str, pessoas: Iterable[Pessoa], *, transport: httpx.BaseTransport | None = None,
-            session_id: int | None = None) -> dict[str, Any]:
+def _enviar(method: str, audience_id: str, schema: list[str], rows: list[list], *,
+            transport: httpx.BaseTransport | None) -> dict[str, Any]:
     token = _token()
-    if session_id is None:
-        session_id = random.randint(1, 2**62)
-    rows = build_rows(pessoas)
-    lotes = build_batches(rows, session_id, max_rows=MAX_ROWS)
-    url = f"{GRAPH}/{_version()}/{audience_id}/usersreplace"
+    pedacos = [rows[i:i + MAX_ROWS] for i in range(0, len(rows), MAX_ROWS)]
+    url = f"{GRAPH}/{_version()}/{audience_id}/users"
     headers = {"Authorization": f"Bearer {token}"}
     respostas: list[dict] = []
-    with httpx.Client(timeout=_TIMEOUT, transport=transport) as client:
-        for lote in lotes:
-            try:
-                resp = client.post(url, headers=headers, data={
-                    "payload": json.dumps(lote["payload"]),
-                    "session": json.dumps(lote["session"]),
-                })
-            except httpx.HTTPError as exc:
-                raise RuntimeError(f"Meta rede: {type(exc).__name__}".replace(token, "***")) from None
-            _raise_if_error(resp, token)
-            try:
-                body = resp.json()
-            except ValueError:
-                body = {"raw": resp.text[:500]}
-            respostas.append(body if isinstance(body, dict) else {"raw": body})
+    if pedacos:
+        with httpx.Client(timeout=_TIMEOUT, transport=transport) as client:
+            for dados in pedacos:
+                try:
+                    resp = client.request(method, url, headers=headers, data={
+                        "payload": json.dumps({"schema": schema, "data": dados})})
+                except httpx.HTTPError as exc:
+                    raise RuntimeError(f"Meta rede: {type(exc).__name__}") from None
+                _raise_if_error(resp, token)
+                try:
+                    body = resp.json()
+                except ValueError:
+                    body = {"raw": resp.text[:500]}
+                respostas.append(body if isinstance(body, dict) else {"raw": body})
     return {
-        "session_id": session_id,
-        "lotes": len(lotes),
+        "lotes": len(pedacos),
         "linhas": len(rows),
         "num_received": sum(int(r.get("num_received") or 0) for r in respostas),
         "num_invalid_entries": sum(int(r.get("num_invalid_entries") or 0) for r in respostas),
         "respostas": respostas,
     }
+
+
+def add_users(audience_id: str, rows: list[list], *,
+              transport: httpx.BaseTransport | None = None) -> dict[str, Any]:
+    return _enviar("POST", audience_id, SCHEMA, rows, transport=transport)
+
+
+def remove_users(audience_id: str, identidades: list[list], *,
+                 transport: httpx.BaseTransport | None = None) -> dict[str, Any]:
+    return _enviar("DELETE", audience_id, SCHEMA_ID, identidades, transport=transport)
 
 
 def check_audience(audience_id: str, *, transport: httpx.BaseTransport | None = None) -> dict[str, Any]:

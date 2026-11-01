@@ -44,13 +44,39 @@ def _do_segmento(pessoas: list[Pessoa], seg: str) -> list[Pessoa]:
     return [p for p in pessoas if (p.pl if seg == "pl" else p.atacado)]
 
 
-async def _meta(aud: Audience, pessoas: list[Pessoa], dry_run: bool, meta_mod) -> dict[str, Any]:
+async def _gravar_membros(store, aud: Audience, atuais: dict, saem: set[str]) -> None:
+    quando = _agora_iso()
+    if atuais:
+        rows = [{"ident_hash": h, "ident": v[0], "lead_id": v[1], "ultimo_envio": quando}
+                for h, v in atuais.items()]
+        await asyncio.to_thread(store.upsert_membros, aud.key, rows)
+    if saem:
+        await asyncio.to_thread(store.marcar_removidos, aud.key, sorted(saem), quando)
+
+
+async def _meta(aud: Audience, pessoas: list[Pessoa], dry_run: bool, store, meta_mod) -> dict[str, Any]:
+    # Só acrescenta e tira o que o próprio job enviou: o conteúdo antigo do público fica.
+    atuais: dict[str, tuple[dict, str, list]] = {}
+    for p in pessoas:
+        for row in meta_mod.build_rows([p]):
+            ident = {"row": meta_mod.identidade(row)}
+            atuais[diff.ident_hash(ident)] = (ident, p.lead_id, row)
+    ativos = await asyncio.to_thread(store.membros_ativos, aud.key)
+    _, saem = diff.diff_identificadores(set(ativos), set(atuais))
     if dry_run:
         resp = await asyncio.to_thread(meta_mod.check_audience, aud.audience_id)
-        return {"linhas_enviadas": len(meta_mod.build_rows(pessoas)), "removidos": 0,
-                "api_response": resp}
-    resp = await asyncio.to_thread(meta_mod.replace, aud.audience_id, pessoas)
-    return {"linhas_enviadas": resp.get("linhas"), "removidos": 0, "api_response": resp}
+        return {"linhas_enviadas": len(atuais), "removidos": len(saem), "api_response": {"audience": resp}}
+
+    resp_add = resp_rem = None
+    if atuais:
+        resp_add = await asyncio.to_thread(meta_mod.add_users, aud.audience_id,
+                                           [v[2] for v in atuais.values()])
+    if saem:
+        resp_rem = await asyncio.to_thread(meta_mod.remove_users, aud.audience_id,
+                                           [ativos[h]["row"] for h in sorted(saem)])
+    await _gravar_membros(store, aud, atuais, saem)
+    return {"linhas_enviadas": len(atuais), "removidos": len(saem),
+            "api_response": {"add": resp_add, "remove": resp_rem}}
 
 
 async def _google(aud: Audience, pessoas: list[Pessoa], dry_run: bool, store, google_mod) -> dict[str, Any]:
@@ -75,13 +101,7 @@ async def _google(aud: Audience, pessoas: list[Pessoa], dry_run: bool, store, go
             [google_mod.remove_member(ativos[h]) for h in sorted(saem)], validate_only=dry_run)
 
     if not dry_run:
-        quando = _agora_iso()
-        if atuais:
-            rows = [{"ident_hash": h, "ident": ident, "lead_id": lead_id, "ultimo_envio": quando}
-                    for h, (ident, lead_id) in atuais.items()]
-            await asyncio.to_thread(store.upsert_membros, aud.key, rows)
-        if saem:
-            await asyncio.to_thread(store.marcar_removidos, aud.key, sorted(saem), quando)
+        await _gravar_membros(store, aud, atuais, saem)
     return {"linhas_enviadas": len(membros), "removidos": len(saem),
             "api_response": {"ingest": resp_ingest, "remove": resp_remove}}
 
@@ -146,7 +166,7 @@ async def _executar(run_id: str, *, trigger, dry_run, store, agora, meta_mod, go
                                 "api_response": None, "erro": None}
         try:
             if aud.platform == "meta":
-                info.update(await _meta(aud, seg, dry_run, meta_mod))
+                info.update(await _meta(aud, seg, dry_run, store, meta_mod))
             else:
                 info.update(await _google(aud, seg, dry_run, store, google_mod))
         except Exception as exc:  # noqa: BLE001 — uma plataforma não para as outras
