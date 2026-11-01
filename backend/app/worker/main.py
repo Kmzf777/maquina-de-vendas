@@ -106,6 +106,11 @@ async def _media_retention_tick() -> None:
     await asyncio.to_thread(service.run_retention)
 
 
+async def _audience_sync_tick() -> None:
+    from app.audiences.service import tick
+    await tick()
+
+
 def _bling_varredura_intervalo() -> int:
     from app.bling.config import varredura_intervalo_segundos
     return varredura_intervalo_segundos()
@@ -142,6 +147,9 @@ TASK_SPECS = [
     # (Meta, 7 dias) torna essa latência irrelevante.
     ("conversions-sweep", "periodic", _conversions_sweep_tick, 1800),
     ("conversions-send", "periodic", _conversions_send_tick, 300),
+    # Públicos PL/Atacado no Meta e no Google (cartão 4e0494e0): confere a cada 10 min e roda
+    # 1x/dia depois da 01:00 (SP); desligado sem AUDIENCE_SYNC_ENABLED.
+    ("audience-sync", "periodic", _audience_sync_tick, 600),
 ]
 
 
