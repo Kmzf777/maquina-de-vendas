@@ -8,6 +8,7 @@ import type { CampaignRow } from "@/components/trafego/campaign-report-table";
 import { CampaignKpis } from "@/components/trafego/campaign-kpis";
 import { CampaignTimeseries, type TsPoint } from "@/components/trafego/campaign-timeseries";
 import { CampaignLeadsTable, type CampaignLead } from "@/components/trafego/campaign-leads-table";
+import { FRASE_MODO, modoDaUrl } from "@/lib/traffic-mode";
 
 type Detail = { summary: CampaignRow; leads: CampaignLead[]; timeseries: TsPoint[] };
 
@@ -38,7 +39,8 @@ function Inner() {
   const channel = sp.get("channel") || "";
   const campaign = sp.get("campaign") || "";
   const period = sp.get("period") || "30d";
-  const mode = sp.get("mode") || "lead";
+  // Sem ?mode= abre "por venda", como a página principal, os proxies e o backend (frente F1).
+  const mode = modoDaUrl(sp.get("mode"));
   const dateFrom = sp.get("date_from") || "";
   const dateTo = sp.get("date_to") || "";
   const [detail, setDetail] = useState<Detail | null>(null);
@@ -92,6 +94,7 @@ function Inner() {
             {campaign}
           </h1>
         </div>
+        <p data-testid="frase-modo" className="text-[12px] text-[#7b7b78] mt-1">{FRASE_MODO[mode]}</p>
       </div>
 
       {/* Content */}

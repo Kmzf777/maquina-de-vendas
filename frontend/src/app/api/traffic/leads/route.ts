@@ -1,30 +1,20 @@
-import { getCurrentUser } from "@/lib/supabase/pipeline-access";
+// Proxy admin-only do /trafego (leads). Repassa o JWT do admin (adminProxy): o backend exige
+// `exigir_admin` em todas as rotas de tráfego desde a frente F1 (06/11/2026) — o /leads
+// devolve nome e telefone de lead e ficava aberto a quem chamasse o backend direto.
+// Modo padrão "sale" (por venda), igual ao backend e à página.
+import { adminProxy } from "@/app/api/valeria-flow/_shared";
 
 export async function GET(req: Request) {
-  try {
-    const { role } = await getCurrentUser();
-    if (role !== "admin") return Response.json({ error: "forbidden" }, { status: 403 });
-  } catch {
-    return Response.json({ error: "unauthorized" }, { status: 401 });
-  }
-
-  const { searchParams } = new URL(req.url);
-  const channel = searchParams.get("channel") || "";
-  const campaign = searchParams.get("campaign") || "";
-  const period = searchParams.get("period") || "30d";
-  const mode = searchParams.get("mode") || "lead";
-  const dateFrom = searchParams.get("date_from") || "";
-  const dateTo = searchParams.get("date_to") || "";
-  const params: Record<string, string> = { channel, campaign, period, mode };
+  const sp = new URL(req.url).searchParams;
+  const params: Record<string, string> = {
+    channel: sp.get("channel") || "",
+    campaign: sp.get("campaign") || "",
+    period: sp.get("period") || "30d",
+    mode: sp.get("mode") || "sale",
+  };
+  const dateFrom = sp.get("date_from");
+  const dateTo = sp.get("date_to");
   if (dateFrom) params.date_from = dateFrom;
   if (dateTo) params.date_to = dateTo;
-  const qs = new URLSearchParams(params).toString();
-  const backendUrl = (process.env.NEXT_PUBLIC_FASTAPI_URL || "http://localhost:8000").replace(/\/+$/, "");
-  try {
-    const resp = await fetch(`${backendUrl}/api/traffic/leads?${qs}`, { cache: "no-store" });
-    if (!resp.ok) return Response.json({ error: "leads_unavailable" }, { status: resp.status });
-    return Response.json(await resp.json());
-  } catch {
-    return Response.json({ error: "leads_unreachable" }, { status: 502 });
-  }
+  return adminProxy(`/api/traffic/leads?${new URLSearchParams(params).toString()}`);
 }

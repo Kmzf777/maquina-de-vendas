@@ -1,19 +1,7 @@
-// Proxy admin-gated: dispara o sync do investimento do Google Ads sob demanda (botão Atualizar).
-import { getCurrentUser } from "@/lib/supabase/pipeline-access";
+// Proxy admin-only: dispara o sync do investimento (Google + Meta) sob demanda (botão Atualizar).
+// Repassa o JWT do admin (adminProxy): o backend exige `exigir_admin` desde a frente F1.
+import { adminProxy } from "@/app/api/valeria-flow/_shared";
 
 export async function POST() {
-  try {
-    const { role } = await getCurrentUser();
-    if (role !== "admin") return Response.json({ error: "forbidden" }, { status: 403 });
-  } catch {
-    return Response.json({ error: "unauthorized" }, { status: 401 });
-  }
-  const backendUrl = (process.env.NEXT_PUBLIC_FASTAPI_URL || "http://localhost:8000").replace(/\/+$/, "");
-  try {
-    const resp = await fetch(`${backendUrl}/api/traffic/sync-ads`, { method: "POST", cache: "no-store" });
-    if (!resp.ok) return Response.json({ error: "sync_unavailable" }, { status: resp.status });
-    return Response.json(await resp.json());
-  } catch {
-    return Response.json({ error: "sync_unreachable" }, { status: 502 });
-  }
+  return adminProxy("/api/traffic/sync-ads", { method: "POST" });
 }
