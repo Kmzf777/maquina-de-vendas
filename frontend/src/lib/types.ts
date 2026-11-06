@@ -83,6 +83,9 @@ export interface Deal {
   assigned_to: string | null;
   closed_at: string | null;
   lost_reason: string | null;
+  /** F4: motivo estruturado (lib/lost-reason.ts). null = perda antiga ou deal aberto. */
+  lost_reason_code?: string | null;
+  lost_competitor?: string | null;
   created_at: string;
   updated_at: string;
   // Joined fields

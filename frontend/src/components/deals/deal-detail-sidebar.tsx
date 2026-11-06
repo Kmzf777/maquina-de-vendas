@@ -6,6 +6,7 @@ import type { Deal, Pipeline, PipelineStage } from "@/lib/types";
 import { DEAL_CATEGORIES } from "@/lib/constants";
 import { SaleCreateModal } from "@/components/sales/sale-create-modal";
 import { StageTargetPicker } from "@/components/deals/stage-target-picker";
+import { lostReasonLabel, type LostReasonValue } from "@/lib/lost-reason";
 import { useCurrentUserEmail } from "@/hooks/use-current-user";
 import { VendedorSelect, nomeDoVendedor, useVendedores } from "@/components/vendedor-select";
 
@@ -40,6 +41,8 @@ export function DealDetailSidebar({ deal, stages, pipelines, onClose, onUpdate, 
     pipeline_id: deal.pipeline_id || "",
     stage_id: deal.stage_id || "",
   });
+  // F4: motivo dado no modal ao escolher uma etapa de perda; vai no mesmo PATCH da etapa.
+  const [lost, setLost] = useState<LostReasonValue | null>(null);
   const [notesDraft, setNotesDraft] = useState(deal.leads?.notes || "");
 
   // Sincronizar form quando o deal atualizar via realtime (sem modo edição ativo).
@@ -56,6 +59,7 @@ export function DealDetailSidebar({ deal, stages, pipelines, onClose, onUpdate, 
         pipeline_id: deal.pipeline_id || "",
         stage_id: deal.stage_id || "",
       });
+      setLost(null);
     }
   }, [deal, editing]);
 
@@ -99,6 +103,11 @@ export function DealDetailSidebar({ deal, stages, pipelines, onClose, onUpdate, 
       // e mantém o payload limpo quando o usuário só editou outro campo.
       if (form.stage_id && form.stage_id !== deal.stage_id) {
         dealUpdates.stage_id = form.stage_id;
+        // O picker só deixa escolher etapa de perda depois do modal: se há etapa nova
+        // de perda, `lost` está preenchido. Etapa nova que não é de perda limpa o motivo
+        // antigo (card reaberto).
+        if (lost) Object.assign(dealUpdates, lost);
+        else if (deal.lost_reason_code) Object.assign(dealUpdates, { lost_reason_code: null, lost_competitor: null });
       }
       if (form.pipeline_id && form.pipeline_id !== deal.pipeline_id) {
         dealUpdates.pipeline_id = form.pipeline_id;
@@ -177,7 +186,11 @@ export function DealDetailSidebar({ deal, stages, pipelines, onClose, onUpdate, 
                 localStages={stages}
                 currentStageId={deal.stage_id}
                 autoSelectFirstStage
-                onChange={(pipeline_id, stage_id) => setForm((f) => ({ ...f, pipeline_id, stage_id }))}
+                askLostReason
+                onChange={(pipeline_id, stage_id, lostValue) => {
+                  setForm((f) => ({ ...f, pipeline_id, stage_id }));
+                  setLost(lostValue ?? null);
+                }}
               />
             </div>
             {/* Observações no topo do formulário de edição */}
@@ -281,10 +294,18 @@ export function DealDetailSidebar({ deal, stages, pipelines, onClose, onUpdate, 
             <span className="text-[12px] text-[#7b7b78]">Criado em</span>
             <span className="text-[13px] text-[#111111]">{new Date(deal.created_at).toLocaleDateString("pt-BR")}</span>
           </div>
-          {deal.lost_reason && (
+          {(deal.lost_reason_code || deal.lost_reason) && (
             <div className="mt-2 p-3 bg-[#faf9f6] border border-[#dedbd6] rounded-[6px]">
               <span className="text-[11px] uppercase tracking-[0.6px] text-[#7b7b78] block mb-1">Motivo da perda</span>
-              <p className="text-[13px] text-[#111111]">{deal.lost_reason}</p>
+              {deal.lost_reason_code && (
+                <p className="text-[13px] text-[#111111]">
+                  {lostReasonLabel(deal.lost_reason_code) ?? deal.lost_reason_code}
+                  {deal.lost_competitor ? ` — ${deal.lost_competitor}` : ""}
+                </p>
+              )}
+              {deal.lost_reason && (
+                <p className={deal.lost_reason_code ? "text-[12px] text-[#7b7b78] mt-1" : "text-[13px] text-[#111111]"}>{deal.lost_reason}</p>
+              )}
             </div>
           )}
         </div>

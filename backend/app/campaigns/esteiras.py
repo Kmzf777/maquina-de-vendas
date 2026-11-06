@@ -196,6 +196,7 @@ _REPOSICAO = _esteira(
             # um seed nao pode adivinhar qual e o id de "perdido" em cada instalacao.
             "stage_id": None,
             "lost_reason": "sem resposta na esteira de reposicao",
+            "lost_reason_code": "sem_resposta",
         }),
         _end("reposicao", "fim"),
     ],

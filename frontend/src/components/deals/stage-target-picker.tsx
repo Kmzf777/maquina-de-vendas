@@ -3,6 +3,8 @@
 import { useEffect, useState } from "react";
 import type { Pipeline, PipelineStage } from "@/lib/types";
 import { selectableStages } from "@/lib/bulk-move-deals";
+import { isLostStage, type LostReasonValue } from "@/lib/lost-reason";
+import { LostReasonModal } from "@/components/deals/lost-reason-modal";
 
 interface StageTargetPickerProps {
   pipelines: Pipeline[];
@@ -18,7 +20,15 @@ interface StageTargetPickerProps {
   /** Se true, seleciona a primeira etapa ao trocar de funil. Se false, zera a escolha. */
   autoSelectFirstStage: boolean;
   disabled?: boolean;
-  onChange: (pipelineId: string, stageId: string) => void;
+  /**
+   * F4: se true, escolher uma etapa de perda (key perdido/fechado_perdido) abre o modal de
+   * motivo, e a escolha só vale depois de confirmado — o motivo chega no 3º argumento do
+   * onChange. Cancelar o modal mantém a etapa anterior. Qualquer outra escolha manda
+   * `null` no 3º argumento (descarta um motivo dado antes). Opt-in porque só quem grava o
+   * motivo junto pode pedir: o lote e a criação de lead ainda não gravam.
+   */
+  askLostReason?: boolean;
+  onChange: (pipelineId: string, stageId: string, lost?: LostReasonValue | null) => void;
 }
 
 export function StageTargetPicker({
@@ -30,8 +40,11 @@ export function StageTargetPicker({
   currentStageId,
   autoSelectFirstStage,
   disabled = false,
+  askLostReason = false,
   onChange,
 }: StageTargetPickerProps) {
+  // Etapa de perda escolhida, esperando o motivo no modal.
+  const [pendingLostStageId, setPendingLostStageId] = useState<string | null>(null);
   // As etapas carregadas viajam junto com o id do funil que as originou. Sem esse
   // par, trocar do funil remoto A para o remoto B deixava as etapas de A no estado
   // enquanto B carregava — e o auto-select gravava uma etapa de A junto com o
@@ -98,6 +111,17 @@ export function StageTargetPicker({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [remoteStages, isLocal, autoSelectFirstStage, stageId, pipelineId, currentStageId]);
 
+  function handleStageChange(nextStageId: string) {
+    const stage = options.find((s) => s.id === nextStageId);
+    // A etapa ATUAL do deal não pede motivo de novo: o card já está perdido.
+    if (askLostReason && isLostStage(stage) && nextStageId !== currentStageId) {
+      setPendingLostStageId(nextStageId);
+      return;
+    }
+    if (askLostReason) onChange(pipelineId, nextStageId, null);
+    else onChange(pipelineId, nextStageId);
+  }
+
   const selectClass =
     "bg-white border border-[#dedbd6] rounded-[6px] px-3 py-2 text-[14px] text-[#111111] focus:border-[#111111] focus:outline-none w-full disabled:opacity-50";
 
@@ -121,7 +145,7 @@ export function StageTargetPicker({
         <select
           value={stageId}
           disabled={disabled || loading}
-          onChange={(e) => onChange(pipelineId, e.target.value)}
+          onChange={(e) => handleStageChange(e.target.value)}
           className={selectClass}
         >
           {loading && <option value="">Carregando...</option>}
@@ -131,6 +155,16 @@ export function StageTargetPicker({
           ))}
         </select>
       </div>
+      {pendingLostStageId && (
+        <LostReasonModal
+          onCancel={() => setPendingLostStageId(null)}
+          onConfirm={(value) => {
+            const stageId = pendingLostStageId;
+            setPendingLostStageId(null);
+            onChange(pipelineId, stageId, value);
+          }}
+        />
+      )}
     </div>
   );
 }

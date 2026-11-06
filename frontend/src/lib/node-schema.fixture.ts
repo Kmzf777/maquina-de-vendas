@@ -160,7 +160,8 @@ export const NODE_SCHEMA_FIXTURE: NodeSchema = {
       na_paleta: true, requer_um_de: [],
       campos: [
         campo("stage_id", "etapa_id", "Etapa de perda", { obrigatorio: true }),
-        campo("lost_reason", "texto", "Motivo da perda (opcional)"),
+        campo("lost_reason_code", "motivo_perda", "Motivo da perda"),
+        campo("lost_reason", "texto", "Observacao da perda (opcional)"),
       ],
     },
     {

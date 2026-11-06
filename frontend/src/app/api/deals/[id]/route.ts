@@ -3,6 +3,7 @@ import { getServiceSupabase } from "@/lib/supabase/api";
 import { assertCanWriteDealsInPipeline, getAllowedPipelineIds } from "@/lib/supabase/pipeline-access";
 import { resolveEffectivePipelineId } from "@/lib/deal-patch-guard";
 import { FK_VIOLATION, validarVendedorId } from "@/lib/vendedor-id";
+import { isLostStage, validateLostReasonPatch } from "@/lib/lost-reason";
 
 export async function GET(
   _request: NextRequest,
@@ -42,6 +43,10 @@ export async function PATCH(
   const { id } = await params;
   const body = await request.json();
   const supabase = await getServiceSupabase();
+
+  // F4: motivo estruturado. Ausente é aceito (o lote ainda move sem modal); fora da lista, não.
+  const lostError = validateLostReasonPatch(body);
+  if (lostError) return NextResponse.json({ error: lostError }, { status: 400 });
 
   const updates: Record<string, unknown> = { ...body, updated_at: new Date().toISOString() };
   if ("assigned_to" in body) {
@@ -95,7 +100,7 @@ export async function PATCH(
     }
 
     newStageKey = stage?.key ?? null;
-    if (stage?.key === "fechado_ganho" || stage?.key === "fechado_perdido") {
+    if (stage?.key === "fechado_ganho" || isLostStage(stage)) {
       updates.closed_at = new Date().toISOString();
     }
   }
@@ -128,7 +133,8 @@ export async function PATCH(
           }),
         }),
       ];
-      if (newStageKey === "fechado_perdido") {
+      // 'perdido' também (funis da Valéria): antes o evento só saía para 'fechado_perdido'.
+      if (isLostStage({ key: newStageKey })) {
         triggerPromises.push(
           fetch(`${backendUrl}/api/automation/trigger`, {
             method: "POST",
@@ -136,7 +142,7 @@ export async function PATCH(
             body: JSON.stringify({
               event_type: "deal_closed_lost",
               lead_id: leadId,
-              data: { deal_id: id },
+              data: { deal_id: id, lost_reason_code: body.lost_reason_code ?? null },
             }),
           })
         );

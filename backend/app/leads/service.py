@@ -1703,14 +1703,22 @@ def _perdido_target_for_category(sb, category: str | None) -> tuple[str | None, 
     return pipeline_id, _perdido_stage_id(sb, pipeline_id)
 
 
-def move_lead_deals_to_perdido(lead_id: str, reason: str) -> None:
+def move_lead_deals_to_perdido(lead_id: str, reason: str, *, codigo: str | None = None,
+                               concorrente: str | None = None) -> None:
     """Move os deals do lead para o stage 'Perdido' do PROPRIO pipeline (Soft Rejection).
 
     Diferente do opt-out (que joga tudo no pipeline Blacklist), uma rejeicao branda mantem o
     deal no pipeline de origem e so o move para o stage Perdido daquele pipeline, registrando
     lost_reason/closed_at. Se o lead ainda nao tem deal, cria um no Perdido do pipeline da sua
     categoria. Fail-soft: nunca levanta (descarte nao pode quebrar por problema de deal).
+
+    F4: grava tambem `lost_reason_code` (vocabulario fechado de `motivo_perda`; ausente ou
+    invalido vira 'outro') e `lost_competitor`, e emite `deal_closed_lost` por deal perdido.
     """
+    from app.leads import motivo_perda
+    # Sem código (o agente ainda não manda um): inferido do texto do motivo, e na dúvida 'outro'.
+    estruturado = motivo_perda.campos_de_perda(
+        motivo_perda.normalizar_codigo(codigo) or motivo_perda.inferir_codigo(reason), concorrente)
     try:
         sb = get_supabase()
         now_iso = datetime.now(timezone.utc).isoformat()
@@ -1721,12 +1729,15 @@ def move_lead_deals_to_perdido(lead_id: str, reason: str) -> None:
                 update: dict[str, Any] = {
                     "stage": "perdido",
                     "lost_reason": reason,
+                    **estruturado,
                     "closed_at": now_iso,
                     "updated_at": now_iso,
                 }
                 if stage_id:
                     update["stage_id"] = stage_id
                 sb.table("deals").update(update).eq("id", deal["id"]).execute()
+                motivo_perda.emitir_deal_closed_lost(
+                    lead_id, deal["id"], estruturado["lost_reason_code"])
             logger.info(
                 "move_lead_deals_to_perdido: %d deal(s) movidos para Perdido para lead %s",
                 len(deals.data), lead_id,
@@ -1737,7 +1748,7 @@ def move_lead_deals_to_perdido(lead_id: str, reason: str) -> None:
             category = segmento_do_lead(lead)
             lead_name = lead.get("name") or lead.get("phone") or "Lead"
             pipeline_id, stage_id = _perdido_target_for_category(sb, category)
-            sb.table("deals").insert({
+            criado = sb.table("deals").insert({
                 "lead_id": lead_id,
                 "title": f"{lead_name} - Sem interesse",
                 "stage": "perdido",
@@ -1745,8 +1756,12 @@ def move_lead_deals_to_perdido(lead_id: str, reason: str) -> None:
                 "pipeline_id": pipeline_id,
                 "stage_id": stage_id,
                 "lost_reason": reason,
+                **estruturado,
                 "closed_at": now_iso,
             }).execute()
+            linhas = getattr(criado, "data", None)
+            novo_id = linhas[0].get("id") if isinstance(linhas, list) and linhas and isinstance(linhas[0], dict) else None
+            motivo_perda.emitir_deal_closed_lost(lead_id, novo_id, estruturado["lost_reason_code"])
             logger.info(
                 "move_lead_deals_to_perdido: nenhum deal existente — deal Perdido criado para lead %s",
                 lead_id,

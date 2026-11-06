@@ -710,8 +710,21 @@ def _execute_action(enrollment: dict, node: dict, lead: dict) -> bool:
             # era preenchido por automação.
             if action_type == "mark_deal_lost" and cfg.get("lost_reason"):
                 update["lost_reason"] = cfg["lost_reason"]
+            perda: dict = {}
+            if action_type == "mark_deal_lost":
+                # F4: motivo estruturado sempre (sem código no nó = inferido do texto,
+                # e na dúvida 'outro') e o evento `deal_closed_lost`, que até aqui só
+                # a rota do Next emitia.
+                from app.leads import motivo_perda
+                codigo = (motivo_perda.normalizar_codigo(cfg.get("lost_reason_code"))
+                          or motivo_perda.inferir_codigo(cfg.get("lost_reason")))
+                perda = motivo_perda.campos_de_perda(codigo)
+                update.update(perda)
             sb.table("deals").update(update).eq("id", deal_id).execute()
             agiu = True
+            if perda:
+                motivo_perda.emitir_deal_closed_lost(
+                    enrollment.get("lead_id"), deal_id, perda["lost_reason_code"])
             # A conversão de anúncio da etapa de destino não sai mais daqui — a varredura
             # de app/conversions/sweep.py enfileira em `ad_conversions`.
         # deal_id continua None (nenhum deal do enrollment nem do lead): sem alvo,

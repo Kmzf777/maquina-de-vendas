@@ -17,6 +17,7 @@ import { DealKanbanFilters } from "@/components/deals/deal-kanban-filters";
 import { DealCreateModal } from "@/components/deals/deal-create-modal";
 import { DealDetailSidebar } from "@/components/deals/deal-detail-sidebar";
 import { LostReasonModal } from "@/components/deals/lost-reason-modal";
+import { isLostStage, type LostReasonValue } from "@/lib/lost-reason";
 import { PipelineSwitcher } from "@/components/deals/pipeline-switcher";
 import { PipelineCreateModal } from "@/components/deals/pipeline-create-modal";
 import { PipelineEditModal } from "@/components/deals/pipeline-edit-modal";
@@ -246,7 +247,8 @@ function VendasPageInner() {
     const newStageId = over.id as string;
     if (deal.stage_id === newStageId) return;
     const newStage = stages.find((s) => s.id === newStageId);
-    if (newStage?.key === "fechado_perdido") {
+    // F4: 'perdido' também — os funis da Valéria usam essa key (20260626_valeria_unify_stage_keys).
+    if (isLostStage(newStage)) {
       setLostDeal({ deal, stageId: newStageId });
       return;
     }
@@ -258,12 +260,12 @@ function VendasPageInner() {
     if (!res.ok) alert("Erro ao mover deal. Tente novamente.");
   }
 
-  async function handleLostConfirm(reason: string) {
+  async function handleLostConfirm(lost: LostReasonValue) {
     if (!lostDeal) return;
     const res = await fetch(`/api/deals/${lostDeal.deal.id}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ stage_id: lostDeal.stageId, lost_reason: reason }),
+      body: JSON.stringify({ stage_id: lostDeal.stageId, ...lost }),
     });
     if (!res.ok) { alert("Erro ao registrar perda. Tente novamente."); return; }
     setLostDeal(null);

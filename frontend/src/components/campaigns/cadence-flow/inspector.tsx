@@ -261,6 +261,7 @@ export function Inspector({ node, saving, data, onSave, onDelete, onClose }: Ins
       case "politica_resposta":
       case "severidade":
       case "falante":
+      case "motivo_perda":
         // Vocabulário FECHADO: sai de `VALORES_FIXOS`, no backend. A tela não tem
         // cópia — foi a cópia que fez o <select> oferecer coluna de Kanban onde o
         // motor lia segmento de lead.

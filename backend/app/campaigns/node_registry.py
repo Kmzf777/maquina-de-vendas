@@ -105,6 +105,8 @@ VOCABULARIOS = {
     #             proprio, renderizador escolhido pelo VOCABULARIO e nunca pelo nome
     #             do campo.
     "mapa", "falante", "mapa_botoes",
+    # F4: `deals.lost_reason_code` (app/leads/motivo_perda.py).
+    "motivo_perda",
 }
 
 # Dado puro, sem importar `app.leads.segmento` (que importa o cliente do banco): o
@@ -169,6 +171,19 @@ VALORES_FIXOS: dict[str, tuple[tuple[str, str], ...]] = {
         ("info", "Informativo"),
         ("warning", "Atencao"),
         ("critical", "Critico"),
+    ),
+    # `deals.lost_reason_code` — mesma lista e ordem de app/leads/motivo_perda.MOTIVOS
+    # (dado puro aqui pelo mesmo motivo de _FASE_LEAD; o teste da F4 amarra as duas).
+    "motivo_perda": (
+        ("preco_margem", "Preço / margem não fechou"),
+        ("frete", "Frete"),
+        ("pedido_minimo", "Pedido mínimo alto"),
+        ("condicao_bonificacao", "Faltou condição / bonificação"),
+        ("comprou_outro", "Comprou de outro fornecedor"),
+        ("ainda_pesquisando", "Ainda pesquisando"),
+        ("consumidor_final", "Era consumidor final (uso próprio)"),
+        ("sem_resposta", "Sem resposta"),
+        ("outro", "Outro"),
     ),
     # RPC get_deals_stage_stagnant, parametro p_last_speaker.
     "falante": (
@@ -410,8 +425,11 @@ _ACOES: tuple[TipoDeNo, ...] = (
         tipo="action", subtipo="mark_deal_lost", rotulo="Marcar card como perdido", icone="💔",
         campos=(
             Campo("stage_id", "etapa_id", "Etapa de perda", obrigatorio=True),
-            Campo("lost_reason", "texto", "Motivo da perda (opcional)",
-                  ajuda="Grava `deals.lost_reason` — aparece no card e nos relatorios."),
+            Campo("lost_reason_code", "motivo_perda", "Motivo da perda",
+                  ajuda="Grava `deals.lost_reason_code` (lista fechada, F4). Vazio = "
+                        "inferido da observacao abaixo; na duvida, 'Outro'."),
+            Campo("lost_reason", "texto", "Observacao da perda (opcional)",
+                  ajuda="Grava `deals.lost_reason` — aparece no card."),
         ),
     ),
     TipoDeNo(
