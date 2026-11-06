@@ -701,10 +701,11 @@ async def _executar_turno(
     saida = _Saida(provider=provider, lead=lead, conversation=conversation,
                    channel=channel, conteudo=conteudo, catalogo=catalogo)
     efetiva = await _enviar(decisao, saida, estado=estado, no=no)
-    await v1.aplicar_criterios(lead_id, decisao.criterios, rotulo=_rotulo_do_turno(evento_motor),
-                               lead=lead)
-
     campos = proximo_estado_v2(estado, efetiva, viu=saida.viu)
+    # `ramo` (F3): o clique no ramo de atacado/PL é o que torna o lead B2B para o
+    # score; sem ele o lead do anúncio (ainda sem segmento) não ganhava score.
+    await v1.aplicar_criterios(lead_id, decisao.criterios, rotulo=_rotulo_do_turno(evento_motor),
+                               lead=lead, ramo=_ramo(campos, no))
     if deal and deal.get("stage_id"):
         campos["deal_stage_id"] = deal["stage_id"]
     if efetiva.efeitos.handoff:

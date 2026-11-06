@@ -496,7 +496,8 @@ async def _persistir_estado(conversation: dict, estado, campos: dict) -> None:
 
 # ── O score (o objetivo do ramo de atacado) ─────────────────────────────────
 async def aplicar_criterios(lead_id: str, criterios: dict,
-                            *, rotulo: str = "", lead: dict | None = None) -> None:
+                            *, rotulo: str = "", lead: dict | None = None,
+                            ramo: str | None = None) -> None:
     """Grava o snapshot de score que o clique revelou. Fail-soft.
 
     Sem isto o ramo de atacado roda inteiro e não qualifica ninguém — que é
@@ -520,7 +521,12 @@ async def aplicar_criterios(lead_id: str, criterios: dict,
     (`segmento_do_lead`, que cai no `stage` antigo antes do backfill) ou
     `fn_lead_b2b` verdadeiro (deal em funil Atacado/PL, CNPJ no Bling). Ter score
     não torna ninguém B2B. `lead` é o dict que o turno já tem; sem ele (chamador
-    antigo, como o v2) o runner lê `segmento`/`stage` do banco.
+    antigo) o runner lê `segmento`/`stage` do banco.
+
+    `ramo` é o ramo dos botões em que o clique aconteceu (F3, 06/11/2026): quem
+    está no ramo de atacado ou de PL é B2B pelo próprio clique. Sem isso a trava
+    acima barrava justamente o lead do anúncio, que só ganha `segmento` no
+    repasse — o score parou de ser gravado em 24/10 ("não é B2B (segmento=None)").
 
     Quando o snapshot fecha `final_score >= 5` definitivo, grava o evento
     `qualificado` (criterio='score'). O dedupe_key é 1 por lead, então repetir a
@@ -531,10 +537,14 @@ async def aplicar_criterios(lead_id: str, criterios: dict,
     if lead is None:
         lead = await asyncio.to_thread(_ler_lead_para_score, lead_id)
     segmento = segmento_do_lead(lead)
-    if segmento not in SEGMENTOS_B2B and not await asyncio.to_thread(lead_e_b2b, lead_id):
-        logger.info("%s score não gravado p/ lead %s: não é B2B (segmento=%s)",
-                    _LOG, lead_id, segmento)
-        return
+    if segmento not in SEGMENTOS_B2B:
+        if ramo in SEGMENTOS_B2B:
+            # O clique no ramo B2B diz o segmento (o lead ainda não tem um).
+            segmento = ramo
+        elif not await asyncio.to_thread(lead_e_b2b, lead_id):
+            logger.info("%s score não gravado p/ lead %s: não é B2B (segmento=%s, ramo=%s)",
+                        _LOG, lead_id, segmento, ramo)
+            return
     evidencia = None
     if rotulo and rotulo.strip():
         evidencia = {campo: {"text": rotulo} for campo in criterios}
@@ -1078,8 +1088,10 @@ async def _executar_turno(
     await _enviar(decisao, lead=lead, conversation=conversation, channel=channel,
                   provider=provider, nos=nos, terminais=terminais,
                   rotulo_lista=rotulo_lista)
+    no_do_clique = nos.get(no) if no else None
     await aplicar_criterios(lead_id, decisao.criterios,
-                            rotulo=_rotulo_clicado(evento), lead=lead)
+                            rotulo=_rotulo_clicado(evento), lead=lead,
+                            ramo=getattr(no_do_clique, "ramo", None))
 
     campos = proximo_estado(estado, decisao.proximo_no,
                             marcar_nudge=decisao.marcar_nudge)

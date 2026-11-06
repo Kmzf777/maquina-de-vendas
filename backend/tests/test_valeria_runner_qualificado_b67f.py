@@ -115,3 +115,33 @@ async def test_falha_ao_registrar_qualificado_nao_derruba(dubles, monkeypatch):
     await runner.aplicar_criterios("l1", {"purchase_intent": "clear"},
                                    lead={"id": "l1", "segmento": "atacado"})
     assert len(dubles["gravados"]) == 1
+
+
+# ── F3 (06/11/2026): o ramo dos botões diz o segmento ─────────────────────────
+# A trava acima barrava o lead do anúncio, que só ganha `segmento` no repasse: o
+# score parou de ser gravado em 24/10 ("não é B2B (segmento=None)").
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("ramo", ["atacado", "private_label"])
+async def test_lead_sem_segmento_no_ramo_b2b_grava_sem_rpc(dubles, ramo):
+    await runner.aplicar_criterios("l1", {"segment": "cafeteria"}, ramo=ramo,
+                                   lead={"id": "l1", "segmento": None, "stage": "pending"})
+    assert len(dubles["gravados"]) == 1
+    assert dubles["b2b_rpc"] == [], "o clique no ramo B2B já basta"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("ramo", [None, "consumo", "exportacao", "entrada"])
+async def test_ramo_que_nao_e_b2b_continua_barrado(dubles, ramo):
+    dubles["b2b"] = False
+    await runner.aplicar_criterios("l1", {"segment": "cafeteria"}, ramo=ramo,
+                                   lead={"id": "l1", "segmento": None, "stage": "pending"})
+    assert dubles["gravados"] == []
+
+
+@pytest.mark.asyncio
+async def test_qualificado_pelo_score_leva_o_segmento_do_ramo(dubles):
+    dubles["snapshot"] = {"final_score": 7, "is_provisional": False}
+    await runner.aplicar_criterios("l1", {"purchase_intent": "clear"}, ramo="atacado",
+                                   lead={"id": "l1", "segmento": None})
+    assert dubles["qualificados"][0]["segmento"] == "atacado"
