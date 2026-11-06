@@ -235,18 +235,74 @@ async def _retry_message_status(wamid: str, status: str) -> None:
     )
 
 
+def _record_delivery_error(sb, wamid: str, errors: list | None, timestamp: str | None) -> bool:
+    """Grava o motivo da falha da Meta em messages.metadata.delivery_error (merge).
+
+    Antes só o caminho de broadcast guardava o erro; mensagens do vendedor ficavam com o
+    ícone vermelho sem motivo (cartão 7c6b70e7). O merge preserva as demais chaves do
+    metadata (ex.: metadata.interativo).
+
+    True  → nada mais a fazer (gravou, ou não há erro para gravar).
+    False → a linha ainda não existe (corrida com a persistência) — retentar.
+    """
+    if not errors:
+        return True
+    err = errors[0] or {}
+    row = sb.table("messages").select("id, metadata").eq("wamid", wamid).limit(1).execute()
+    if not row.data:
+        return False
+    try:
+        at = datetime.fromtimestamp(int(timestamp), tz=timezone.utc) if timestamp else datetime.now(timezone.utc)
+    except (TypeError, ValueError, OverflowError, OSError):
+        at = datetime.now(timezone.utc)
+    metadata = dict(row.data[0].get("metadata") or {})
+    metadata["delivery_error"] = {
+        "code": err.get("code"),
+        "title": err.get("title") or err.get("message"),
+        "details": (err.get("error_data") or {}).get("details"),
+        "at": at.strftime("%Y-%m-%dT%H:%M:%SZ"),
+    }
+    sb.table("messages").update({"metadata": metadata}).eq("id", row.data[0]["id"]).execute()
+    return True
+
+
+async def _retry_record_delivery_error(wamid: str, errors: list, timestamp: str | None) -> None:
+    """Retenta gravar delivery_error até a persistência da mensagem alcançar o webhook."""
+    for delay in _STATUS_RETRY_DELAYS:
+        await asyncio.sleep(delay)
+        try:
+            if _record_delivery_error(get_supabase(), wamid, errors, timestamp):
+                return
+        except Exception as e:
+            logger.warning("[DELIVERY] retentativa de delivery_error falhou p/ wamid=%s: %s", wamid, e)
+    logger.warning("[DELIVERY] delivery_error nunca casou com mensagem persistida (wamid=%s)", wamid)
+
+
 async def _handle_delivery_status(
-    wamid: str, status: str, errors: list | None = None, recipient_id: str | None = None
+    wamid: str,
+    status: str,
+    errors: list | None = None,
+    recipient_id: str | None = None,
+    timestamp: str | None = None,
 ) -> None:
     """Handle Meta delivery status events: updates messages.delivery_status and broadcast counters."""
     if status not in ("sent", "delivered", "read", "failed"):
         return
+    sb = None
     try:
         sb = get_supabase()
         if not _apply_message_status(sb, wamid, status):
             asyncio.create_task(_retry_message_status(wamid, status))
     except Exception as e:
         logger.warning("[DELIVERY] Failed to update message delivery_status for wamid=%s: %s", wamid, e)
+
+    # Motivo da falha (ex.: 131026) gravado em metadata.delivery_error para o CRM exibir.
+    if status == "failed" and errors and sb is not None:
+        try:
+            if not _record_delivery_error(sb, wamid, errors, timestamp):
+                asyncio.create_task(_retry_record_delivery_error(wamid, errors, timestamp))
+        except Exception as e:
+            logger.warning("[DELIVERY] Failed to record delivery_error for wamid=%s: %s", wamid, e)
 
     # Prova de tráfego REAL: delivered/read comprova que a Meta trafega dados por este
     # endereço. É AQUI (e no inbound), não na resposta síncrona do envio, que o wa_id ganha
@@ -581,7 +637,9 @@ async def receive_meta_webhook(request: Request, background_tasks: BackgroundTas
         errors = status_event.get("errors") or []
         recipient_id = status_event.get("recipient_id")
         if wamid and status:
-            background_tasks.add_task(_handle_delivery_status, wamid, status, errors, recipient_id)
+            background_tasks.add_task(
+                _handle_delivery_status, wamid, status, errors, recipient_id, status_event.get("timestamp")
+            )
 
     if _status_has_backfillable_contact(payload):
         background_tasks.add_task(_backfill_phone_from_status, payload)
