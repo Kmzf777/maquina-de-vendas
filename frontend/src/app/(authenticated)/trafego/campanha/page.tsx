@@ -9,6 +9,7 @@ import { CampaignKpis } from "@/components/trafego/campaign-kpis";
 import { CampaignTimeseries, type TsPoint } from "@/components/trafego/campaign-timeseries";
 import { CampaignLeadsTable, type CampaignLead } from "@/components/trafego/campaign-leads-table";
 import { FRASE_MODO, modoDaUrl } from "@/lib/traffic-mode";
+import { detalheCampanhaUrl } from "@/lib/traffic-jornada";
 
 type Detail = { summary: CampaignRow; leads: CampaignLead[]; timeseries: TsPoint[] };
 
@@ -43,6 +44,8 @@ function Inner() {
   const mode = modoDaUrl(sp.get("mode"));
   const dateFrom = sp.get("date_from") || "";
   const dateTo = sp.get("date_to") || "";
+  // F5: aberto pela "Primeira origem" no /trafego, o detalhe usa a mesma atribuição.
+  const atribuicao = sp.get("atribuicao") === "primeira" ? "primeira" : "";
   const [detail, setDetail] = useState<Detail | null>(null);
   const [loading, setLoading] = useState(true);
 
@@ -53,12 +56,13 @@ function Inner() {
     const params: Record<string, string> = { channel, campaign, period, mode };
     if (dateFrom) params.date_from = dateFrom;
     if (dateTo) params.date_to = dateTo;
-    fetch(`/api/traffic/campaign?${new URLSearchParams(params).toString()}`)
+    if (atribuicao) params.atribuicao = atribuicao;
+    fetch(detalheCampanhaUrl(new URLSearchParams(params).toString(), atribuicao))
       .then(r => r.json())
       .then((d: Detail) => setDetail(d))
       .catch(() => setDetail(null))
       .finally(() => setLoading(false));
-  }, [channel, campaign, period, mode, dateFrom, dateTo, role, roleLoading]);
+  }, [channel, campaign, period, mode, dateFrom, dateTo, atribuicao, role, roleLoading]);
 
   const backQs = new URLSearchParams({
     ...(period ? { period } : {}),

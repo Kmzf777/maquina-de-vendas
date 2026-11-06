@@ -12,8 +12,15 @@ import { ConversoesEnviadas } from "@/components/trafego/conversoes-enviadas";
 import { ReportSummaryPanel } from "@/components/trafego/report-summary";
 import type { ReportSummary } from "@/lib/traffic-summary";
 import { FRASE_MODO, MODO_PADRAO, linhaSync, type RodadaSync, type TrafficMode } from "@/lib/traffic-mode";
+// F5 (jornada do lead): atribuição pela primeira/última origem, jornadas e "Sem rastreio".
+import { AtribuicaoSelect } from "@/components/trafego/atribuicao-select";
+import { JornadasMulticanal } from "@/components/trafego/jornadas-multicanal";
+import { SemRastreioDetalhe } from "@/components/trafego/sem-rastreio-detalhe";
+import { escolherAtribuicao, type Atribuicao, type JornadasResumo, type ParteAtribuida, type SemRastreioResumo } from "@/lib/traffic-jornada";
 
-type Report = { mode: string; period: string; rows: CampaignRow[]; total: ReportTotal; channel_subtotals: ChannelSubtotals; summary?: ReportSummary };
+type Report = { mode: string; period: string; rows: CampaignRow[]; total: ReportTotal; channel_subtotals: ChannelSubtotals; summary?: ReportSummary;
+  por_atribuicao?: Partial<Record<Atribuicao, ParteAtribuida<CampaignRow, ReportTotal, ChannelSubtotals, ReportSummary>>>;
+  jornadas?: JornadasResumo; sem_rastreio?: SemRastreioResumo };
 
 export default function TrafegoPage() {
   const { role, loading: roleLoading } = useCurrentRole();
@@ -25,6 +32,8 @@ export default function TrafegoPage() {
   // toda venda do período, na mesma tela. "Por turma" (coorte) é a opção para ver a conversão
   // de quem entrou no período.
   const [mode, setMode] = useState<TrafficMode>(MODO_PADRAO);
+  // Padrão: última origem, como a Tati trabalha. Troca sem nova consulta (o backend manda as duas).
+  const [atribuicao, setAtribuicao] = useState<Atribuicao>("ultima");
   const [view, setView] = useState<"campanhas" | "conversoes">("campanhas");
   const router = useRouter();
   const [report, setReport] = useState<Report | null>(null);
@@ -101,6 +110,18 @@ export default function TrafegoPage() {
       .finally(() => setLoading(false));
   }, [period, mode, dateFrom, dateTo, role, roleLoading, refreshTick, view]);
 
+  const parte = report ? escolherAtribuicao(report, atribuicao) : null;
+  // "Ver leads" do Sem rastreio abre a maior linha dele (a lista vem com o motivo provável).
+  const semRastreio = (parte?.rows ?? []).filter((r) => r.channel === "Sem rastreio")
+    .sort((a, b) => b.leads - a.leads)[0];
+  const abrirLinha = (r: CampaignRow) => {
+    const params: Record<string, string> = { channel: r.channel, campaign: r.campaign, period, mode };
+    if (dateFrom) params.date_from = dateFrom;
+    if (dateTo) params.date_to = dateTo;
+    if (atribuicao !== "ultima") params.atribuicao = atribuicao;
+    router.push(`/trafego/campanha?${new URLSearchParams(params).toString()}`);
+  };
+
   if (!roleLoading && role !== "admin") {
     return <div className="p-8 text-[14px] text-[#7b7b78]">Acesso restrito a administradores.</div>;
   }
@@ -142,6 +163,7 @@ export default function TrafegoPage() {
               <span data-testid="frase-modo" className="text-[12px] leading-[1.35] text-[#7b7b78]">{FRASE_MODO[mode]}</span>
             </div>
           )}
+          {view === "campanhas" && <AtribuicaoSelect value={atribuicao} onChange={setAtribuicao} />}
           <Select value={dateMode} onValueChange={(v) => {
             setDateMode(v as "preset" | "mes" | "custom");
             setDateFrom(""); setDateTo("");
@@ -212,23 +234,22 @@ export default function TrafegoPage() {
           </>
         ) : (
           <>
-            {report?.summary && (
+            {parte?.summary && (
               <div className="flex-shrink-0">
-                <ReportSummaryPanel summary={report.summary} mode={mode} />
+                <ReportSummaryPanel summary={parte.summary} mode={mode} />
               </div>
             )}
+            <div className="flex-shrink-0 grid gap-4 md:grid-cols-2">
+              <JornadasMulticanal jornadas={report?.jornadas} />
+              <SemRastreioDetalhe resumo={report?.sem_rastreio} onAbrir={semRastreio ? () => abrirLinha(semRastreio) : undefined} />
+            </div>
             <div className="bg-white border border-[#dedbd6] rounded-[8px] flex-1 min-h-[420px] flex flex-col overflow-hidden">
             <CampaignReportTable
-              rows={report?.rows ?? []}
-              total={report?.total}
-              subtotals={report?.channel_subtotals ?? {}}
+              rows={parte?.rows ?? []}
+              total={parte?.total}
+              subtotals={parte?.channel_subtotals ?? {}}
               periodo={mode === "periodo"}
-              onRowClick={(r) => {
-                const params: Record<string, string> = { channel: r.channel, campaign: r.campaign, period, mode };
-                if (dateFrom) params.date_from = dateFrom;
-                if (dateTo) params.date_to = dateTo;
-                router.push(`/trafego/campanha?${new URLSearchParams(params).toString()}`);
-              }}
+              onRowClick={abrirLinha}
             />
             </div>
           </>

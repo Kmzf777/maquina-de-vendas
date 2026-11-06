@@ -1,6 +1,8 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+
+vi.mock("next/navigation", () => ({ useRouter: () => ({ push: vi.fn() }) }));
 import { AtribuicaoSelect } from "@/components/trafego/atribuicao-select";
 import { JornadasMulticanal } from "@/components/trafego/jornadas-multicanal";
 import { SemRastreioDetalhe } from "@/components/trafego/sem-rastreio-detalhe";
