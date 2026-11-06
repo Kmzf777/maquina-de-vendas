@@ -68,6 +68,11 @@ class DecisaoV2(v1.Decisao):
     # Se a mensagem 2 não puder ser montada (catálogo vazio), o runner aplica o
     # mesmo desvio da vitrine (aviso + handoff do ramo).
     tabela_antes: bool = False
+    # F3 (06/11/2026): motivo estruturado de desqualificação do turno
+    # (`r.MOTIVOS_DESQUALIFICACAO`), quando o clique leva a um destino que não
+    # repassa: consumo (C1) ou sem CNPJ (`T_SEM_CNPJ`). O runner grava o evento
+    # `lead_events.desqualificado` com o nó onde o lead estava.
+    desqualificacao: str | None = None
 
 
 ID_HUMANO = v1.ID_HUMANO
@@ -131,6 +136,9 @@ def decidir(
         if destino in VITRINES:
             return ctx.ir_para(destino, vitrine="completa",
                                memoria={"ramo": r.RAMO_DO_NO[destino]})
+        if destino == r.NO_PERGUNTAS_ATACADO:
+            # F3: o anúncio de atacado abre as perguntas, não a vitrine.
+            return ctx.ir_para(destino, memoria={"ramo": "atacado"})
         return ctx.ir_para(destino)
 
     # 3. Nó desconhecido: flow_state corrompido nunca estoura.
@@ -152,6 +160,12 @@ def decidir(
     conteudo = _conteudo(evento)
     if conteudo is not None and no_atual in nos:
         destino = primeira_tela(conteudo)
+        if destino == r.NO_PERGUNTAS_ATACADO:
+            # F3: quem já passou do CNPJ volta à vitrine; quem não passou, às perguntas.
+            if ctx.respostas.get("QA_CNPJ") in r.CNPJ_OK:
+                destino = r.VITRINE_DO_RAMO["atacado"]
+            else:
+                return ctx.ir_para(destino, memoria={"ramo": "atacado", "ruidos": 0})
         if destino in VITRINES:
             return ctx.ir_para(destino, vitrine="completa",
                                memoria={"ramo": r.RAMO_DO_NO[destino], "ruidos": 0})
@@ -355,7 +369,18 @@ class _Ctx:
             qp1 = qp1 if isinstance(qp1, str) else None
             destino = r.REGRA_QP2.get((qp1, botao.id), "T_HANDOFF_PL")
 
+        if destino == "regra:QA1":
+            destino = r.destino_qa1(respostas)
+
         extra: dict = {}
+        # F3: o clique que muda de ramo (QA_USO "Consumo próprio" → C1) muda o ramo
+        # da conversa; sem isso o lead da loja seguiria "atacado" no estado.
+        ramo_destino = r.RAMO_DO_NO.get(destino)
+        if ramo_destino and ramo_destino != "entrada" and destino not in VITRINES:
+            memoria["ramo"] = ramo_destino
+        desq = r.DESQUALIFICA_NO_DESTINO.get(destino)
+        if desq:
+            extra["desqualificacao"] = desq
         if destino in r.DUVIDAS_DO_RAMO.values():
             memoria["retorno"] = self.no_atual
         if destino in VITRINES:
@@ -432,8 +457,18 @@ class _Ctx:
         ramo = self.ramo
         if ramo is None:
             return self.n0_preco(memoria={"ruidos": 0})
+        no = self.nos.get(self.no_atual)
+        if self.no_atual in r.NOS_ANTES_DA_VITRINE and no is not None:
+            # F3: antes da vitrine, a 1ª pergunta de preço repete a pergunta com um
+            # "já te mando". Na 2ª a tabela sai: quem insiste não fica sem resposta.
+            if not _int(self.est.get("preco_antes")):
+                return DecisaoV2(
+                    proximo_no=self.no_atual,
+                    mensagem=Mensagem(corpo=f"{r.PREFIXO_PRECO_ANTES}\n\n{no.corpo}",
+                                      botoes=no.botoes),
+                    memoria={"ruidos": 0, "preco_antes": 1})
+            return self.tabela(memoria={"ruidos": 0, "preco_antes": 2})
         if ramo in r.VITRINE_DO_RAMO:
-            no = self.nos.get(self.no_atual)
             if self.no_atual in _NOS_QUALIFICACAO and no is not None:
                 # Tabela e a MESMA pergunta de novo; o nó fica (ver `tabela_antes`).
                 return DecisaoV2(proximo_no=self.no_atual, tabela_antes=True,

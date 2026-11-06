@@ -43,7 +43,7 @@ def _decidir(no, evento, estado=None, **kw) -> DecisaoV2:
 
 # ── 1. primeira_tela ────────────────────────────────────────────────────────
 @pytest.mark.parametrize("texto,tela", [
-    (MSG_ATACADO, "VA"), (MSG_ATACADO_2, "VA"), (MSG_PL, "VP"), (MSG_PL_2, "VP"),
+    (MSG_ATACADO, "QA_USO"), (MSG_ATACADO_2, "QA_USO"), (MSG_PL, "VP"), (MSG_PL_2, "VP"),
     ("oi", "N0"), ("", "N0"),
 ])
 def test_primeira_tela_mensagens_prontas(texto, tela):
@@ -57,7 +57,7 @@ def test_primeira_tela_mensagens_prontas(texto, tela):
     "  OLÁ!  Tenho um comércio,  e quero revender café especial!! ",
 ])
 def test_primeira_tela_ignora_pontuacao_e_espacos(texto):
-    assert motor.primeira_tela(texto) == "VA"
+    assert motor.primeira_tela(texto) == "QA_USO"
 
 
 def test_primeira_tela_pl_sem_travessao():
@@ -69,12 +69,14 @@ def test_primeira_tela_variacao_editada_vai_para_n0():
 
 
 # ── 2. Primeiro contato ─────────────────────────────────────────────────────
-def test_primeiro_contato_mensagem_pronta_atacado_vai_para_vitrine_completa():
+def test_primeiro_contato_mensagem_pronta_atacado_vai_para_as_perguntas():
+    """F3: a mensagem pronta do atacado abre o "para quê", sem vitrine nem preço."""
     d = _decidir(None, Texto(MSG_ATACADO))
-    assert d.proximo_no == "VA"
-    assert d.vitrine == "completa"
+    assert d.proximo_no == "QA_USO"
+    assert d.vitrine == "nenhuma"
     assert d.memoria == {"ramo": "atacado"}
-    assert d.mensagem.botoes == NOS["VA"].botoes
+    assert d.mensagem.botoes == NOS["QA_USO"].botoes
+    assert "R$" not in d.mensagem.corpo
 
 
 def test_primeiro_contato_mensagem_pronta_pl_vai_para_vp():
@@ -323,9 +325,9 @@ def test_vk_quero_kit_vai_para_t_kit_com_motivo():
 
 
 @pytest.mark.parametrize("no,botao,vitrine,ramo", [
-    ("N0", "negocio", "VA", "atacado"),
     ("N0", "marca", "VP", "private_label"),
-    ("C1", "quantidade", "VA", "atacado"),
+    ("QA_CNPJ", "cnpj", "VA", "atacado"),
+    ("QA_CNPJ", "mei", "VA", "atacado"),
 ])
 def test_clique_que_entra_na_vitrine_mostra_completa_e_grava_ramo(no, botao, vitrine, ramo):
     d = _decidir(no, _clique(botao), _est(no, ramo=None))
@@ -725,3 +727,96 @@ def test_mensagem_pronta_em_t_adiar_nao_reabre_vitrine():
 def test_mensagem_pronta_em_terminal_encerrado_ignora():
     d = _decidir("T_HANDOFF", Texto(MSG_ATACADO), _est("T_HANDOFF"))
     assert d.ignorar is True
+
+
+# ── F3 (06/11/2026): perguntas antes da vitrine e desqualificação ───────────
+@pytest.mark.parametrize("no,botao", [("N0", "negocio"), ("C1", "quantidade")])
+def test_quem_ja_disse_que_revende_vai_ao_volume(no, botao):
+    d = _decidir(no, _clique(botao), _est(no, ramo=None))
+    assert d.proximo_no == "QA_VOL"
+    assert d.memoria["ramo"] == "atacado"
+    assert d.vitrine == "nenhuma"
+
+
+def test_caminho_feliz_uso_volume_cnpj_vitrine_pedido_handoff():
+    est = _est("QA_USO")
+    d = _decidir("QA_USO", _clique("revender"), est)
+    assert d.proximo_no == "QA_VOL" and d.desqualificacao is None
+    est = {**est, **d.memoria, "node": "QA_VOL"}
+    d = _decidir("QA_VOL", _clique("ate100"), est)
+    assert d.proximo_no == "QA_CNPJ" and d.criterios == {"monthly_volume_kg": 65}
+    est = {**est, **d.memoria, "node": "QA_CNPJ"}
+    d = _decidir("QA_CNPJ", _clique("mei"), est)
+    assert d.proximo_no == "VA" and d.vitrine == "completa"
+    est = {**est, **d.memoria, "node": "VA"}
+    d = _decidir("VA", _clique("pedido"), est)
+    assert d.proximo_no == "QA1"
+    est = {**est, **d.memoria, "node": "QA1"}
+    # Volume já veio do QA_VOL: QA1 vai direto ao João, sem perguntar de novo.
+    d = _decidir("QA1", _clique("cafeteria", "Cafeteria"), est)
+    assert d.proximo_no == "T_HANDOFF" and d.efeitos.handoff is True
+    assert d.repasse_motivo == 'clicou "Cafeteria"'
+
+
+def test_qa1_sem_volume_anterior_ainda_pergunta_o_qa2():
+    d = _decidir("QA1", _clique("cafeteria"), _est("QA1"))
+    assert d.proximo_no == "QA2"
+
+
+def test_consumo_proprio_vai_a_loja_desqualificado_sem_repasse():
+    d = _decidir("QA_USO", _clique("consumo"), _est("QA_USO"))
+    assert d.proximo_no == "C1"
+    assert d.desqualificacao == "consumidor_final"
+    assert d.efeitos.handoff is False
+    assert d.memoria["ramo"] == "consumo"
+
+
+def test_n0_consumo_tambem_e_consumidor_final():
+    d = _decidir("N0", _clique("consumo"), _est("N0", ramo=None))
+    assert d.proximo_no == "C1" and d.desqualificacao == "consumidor_final"
+
+
+def test_sem_cnpj_vai_ao_terminal_com_tag_e_sem_repasse():
+    d = _decidir("QA_CNPJ", _clique("sem_cnpj"), _est("QA_CNPJ"))
+    assert d.proximo_no == "T_SEM_CNPJ"
+    assert d.desqualificacao == "sem_cnpj"
+    assert d.efeitos.handoff is False
+    assert d.efeitos.tags == ("Atacado sem CNPJ",)
+    assert d.repasse_motivo is None
+
+
+def test_t_sem_cnpj_encerra():
+    d = _decidir("T_SEM_CNPJ", Texto("abri o mei"), _est("T_SEM_CNPJ"))
+    assert d.ignorar is True
+
+
+@pytest.mark.parametrize("no", ["QA_USO", "QA_VOL", "QA_CNPJ"])
+def test_preco_antes_da_vitrine_primeira_vez_repete_a_pergunta(no):
+    d = _decidir(no, _tc("FAQ", "quanto custa?", faq_id="preco"), _est(no))
+    assert d.proximo_no == no
+    assert d.vitrine == "nenhuma" and d.tabela_antes is False
+    assert d.mensagem.corpo.startswith(r.PREFIXO_PRECO_ANTES)
+    assert d.mensagem.corpo.endswith(NOS[no].corpo)
+    assert d.mensagem.botoes == NOS[no].botoes
+    assert d.memoria["preco_antes"] == 1
+
+
+def test_preco_antes_da_vitrine_segunda_vez_manda_a_tabela():
+    d = _decidir("QA_VOL", _tc("FAQ", "me passa o preço", faq_id="preco"),
+                 _est("QA_VOL", preco_antes=1))
+    assert d.proximo_no == "VA" and d.vitrine == "tabela"
+
+
+def test_faq_antes_da_vitrine_responde_e_volta_a_pergunta():
+    d = _decidir("QA_CNPJ", _tc("FAQ", "qual o mínimo?", faq_id="minimo"), _est("QA_CNPJ"))
+    assert d.faq == "minimo" and d.proximo_no == "QA_CNPJ"
+
+
+def test_mensagem_pronta_no_meio_volta_as_perguntas_se_nao_passou_do_cnpj():
+    d = _decidir("QA_VOL", Texto(MSG_ATACADO), _est("QA_VOL"))
+    assert d.proximo_no == "QA_USO" and d.vitrine == "nenhuma"
+
+
+def test_mensagem_pronta_no_meio_volta_a_vitrine_se_ja_passou_do_cnpj():
+    d = _decidir("QA1", Texto(MSG_ATACADO), _est("QA1", respostas={"QA_CNPJ": "cnpj"}))
+    assert d.proximo_no == "VA" and d.vitrine == "completa"

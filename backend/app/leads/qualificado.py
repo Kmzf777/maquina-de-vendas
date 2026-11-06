@@ -63,3 +63,45 @@ def registrar_qualificado(*, lead_id: str, criterio: str, source: str, occurred_
         else:
             logger.warning("registrar_qualificado: evento do lead %s não gravado: %s", lead_id, exc)
         return False
+
+
+# ── Desqualificação com motivo (F3, 06/11/2026) ─────────────────────────────
+# A Valéria não gravava por que um lead NÃO foi ao vendedor: "ninguém é
+# desqualificado, eles somem". Vocabulário fechado, o mesmo de
+# `valeria_registry_v2.MOTIVOS_DESQUALIFICACAO` (repetido aqui de propósito: este
+# módulo não importa o fluxo de botões).
+MOTIVOS_DESQUALIFICACAO = ("consumidor_final", "sem_cnpj",
+                           "sumiu_antes_da_tabela", "sumiu_depois_da_tabela")
+
+
+def registrar_desqualificado(*, lead_id: str, motivo: str, no: str | None, source: str,
+                             conversation_id: str | None = None, ramo: str | None = None,
+                             chave: str | None = None) -> bool:
+    """Evento `lead_events.desqualificado` com o motivo e o NÓ onde o lead parou.
+
+    `chave` completa o dedupe (`desqualificado:<lead>:<motivo>:<chave>`): o mesmo
+    lead pode sumir, voltar e sumir de novo; o chamador passa algo que distingue
+    as ocorrências (o `last_customer_message_at`, por exemplo). Não mexe em
+    `qualificado` nem em nada que vá para Meta/Google. Fail-soft.
+    """
+    if not lead_id or motivo not in MOTIVOS_DESQUALIFICACAO:
+        logger.warning("registrar_desqualificado: lead %s motivo %r inválido", lead_id, motivo)
+        return False
+    evento: dict[str, Any] = {
+        "lead_id": lead_id,
+        "event_type": "desqualificado",
+        "new_value": motivo,
+        "source": source,
+        "dedupe_key": f"desqualificado:{lead_id}:{motivo}:{chave or no or ''}",
+        "metadata": {"motivo": motivo, "no": no, "ramo": ramo,
+                     "conversation_id": conversation_id},
+    }
+    try:
+        get_supabase().table("lead_events").insert(evento).execute()
+        return True
+    except Exception as exc:
+        if _duplicado(exc):
+            logger.info("registrar_desqualificado: lead %s já marcado (%s)", lead_id, motivo)
+        else:
+            logger.warning("registrar_desqualificado: lead %s não gravado: %s", lead_id, exc)
+        return False

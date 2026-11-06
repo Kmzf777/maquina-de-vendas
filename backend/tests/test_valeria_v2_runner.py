@@ -173,6 +173,13 @@ def turno(monkeypatch):
     return _rodar
 
 
+async def _vitrine_atacado(turno):
+    """F3: a vitrine do atacado só sai depois do CNPJ. Parte do QA_CNPJ e toca "Sim"."""
+    turno.conversa["flow_state"] = _no(None, "QA_CNPJ", ramo="atacado",
+                                       respostas={"QA_USO": "revender", "QA_VOL": "ate30"})
+    return await turno("Sim, tenho CNPJ", payload="cnpj", titulo="Sim, tenho CNPJ")
+
+
 def _no(estado, node, **extra):
     base = {"flow": r2.FLOW_ID, "node": node, "nudges": 0}
     base.update(extra)
@@ -184,7 +191,7 @@ def _no(estado, node, **extra):
 # ═══════════════════════════════════════════════════════════════════════════
 @pytest.mark.asyncio
 async def test_primeiro_contato_atacado_manda_carrossel_tabela_e_acoes(turno):
-    estado = await turno(PRONTA_ATACADO)
+    estado = await _vitrine_atacado(turno)
 
     p = turno.provedor
     assert p.tipos() == ["carrossel", "texto", "botoes"]
@@ -253,7 +260,7 @@ async def test_um_card_so_vira_texto_e_segue_tabela_e_botoes(turno):
     # Só o Clássico resolve: Suave e Microlote somem do catálogo.
     turno.catalogo["linhas"] = [p for p in catalogo_producao()
                                 if "Suave" not in p["name"] and "Microlote" not in p["name"]]
-    await turno(PRONTA_ATACADO)
+    await _vitrine_atacado(turno)
     p = turno.provedor
     assert p.tipos() == ["texto", "texto", "botoes"]
     assert p.chamadas[0][1].startswith("Clássico · torra escura")
@@ -263,7 +270,7 @@ async def test_um_card_so_vira_texto_e_segue_tabela_e_botoes(turno):
 @pytest.mark.asyncio
 async def test_carrossel_recusado_vira_botoes_com_foto_e_sem_terceira_mensagem(turno):
     turno.provedor.carrossel_explode = True
-    estado = await turno(PRONTA_ATACADO)
+    estado = await _vitrine_atacado(turno)
     p = turno.provedor
     # A tabela primeiro; os botões (com a foto) por ÚLTIMO, onde o lead os vê.
     assert p.tipos() == ["texto", "botoes"]
@@ -293,7 +300,7 @@ async def test_pl_sem_o_sku_base_nao_derruba_a_vitrine(turno):
 async def test_atacado_com_preco_mas_sem_linha_de_tabela_nao_repassa(turno):
     turno.catalogo["linhas"] = [{"sector": "Atacado", "name": "SKU fora da tabela",
                                  "price_formatted": "R$ 10,00", "min_lot": None}]
-    estado = await turno(PRONTA_ATACADO)
+    estado = await _vitrine_atacado(turno)
     assert turno.provedor.tipos() == ["botoes"]
     assert turno.provedor.chamadas[0][1] == r2.CORPO_ACOES
     assert estado["node"] == "VA"
@@ -303,7 +310,7 @@ async def test_atacado_com_preco_mas_sem_linha_de_tabela_nao_repassa(turno):
 @pytest.mark.asyncio
 async def test_catalogo_vazio_avisa_e_repassa(turno):
     turno.catalogo["linhas"] = []
-    estado = await turno(PRONTA_ATACADO)
+    estado = await _vitrine_atacado(turno)
     p = turno.provedor
     # UMA mensagem só (sem o corpo do terminal) e o cartão do vendedor.
     assert p.tipos() == ["texto", "cartao"]
@@ -330,7 +337,7 @@ async def test_override_de_card_e_aplicado(turno, monkeypatch):
     chave = valeria_content.chave_do_card("VA", "classico")
     monkeypatch.setattr(valeria_content, "carregar",
                         lambda _f: {chave: {"corpo": "Clássico do editor {preco:Canastra Clássico — Moído 250g}"}})
-    await turno(PRONTA_ATACADO)
+    await _vitrine_atacado(turno)
     cards = turno.provedor.chamadas[0][2]
     assert cards[0]["body"] == "Clássico do editor R$ 28,70"
 
@@ -414,7 +421,7 @@ async def test_ruido_na_vitrine_reoferece_so_os_botoes_de_acao_com_o_nudge(turno
 
 @pytest.mark.asyncio
 async def test_classificador_recebe_cards_faqs_do_ramo_e_ultima_mensagem(turno):
-    await turno(PRONTA_ATACADO)
+    await _vitrine_atacado(turno)
     await turno("qual o mínimo?")
     kw = turno.classificar.await_args.kwargs
     assert kw["no_id"] == "VA" and kw["ramo"] == "atacado"
@@ -864,7 +871,7 @@ def com_metadata(turno, monkeypatch):
 @pytest.mark.asyncio
 async def test_carrossel_grava_os_cards_como_enviados(com_metadata):
     turno = com_metadata
-    await turno(PRONTA_ATACADO)
+    await _vitrine_atacado(turno)
     _, _corpo, cards = turno.provedor.chamadas[0]
     carrossel = turno.linhas[0]
     # O preview continua texto: sem `message_type` e com corpo + textos dos cards.
@@ -880,7 +887,7 @@ async def test_carrossel_grava_os_cards_como_enviados(com_metadata):
 @pytest.mark.asyncio
 async def test_vitrine_grava_os_botoes_de_acao_e_a_tabela_fica_texto(com_metadata):
     turno = com_metadata
-    await turno(PRONTA_ATACADO)
+    await _vitrine_atacado(turno)
     tabela, acoes = turno.linhas[1], turno.linhas[2]
     assert tabela.get("metadata") is None
     assert acoes["metadata"] == {"interativo": {
@@ -893,7 +900,7 @@ async def test_vitrine_grava_os_botoes_de_acao_e_a_tabela_fica_texto(com_metadat
 async def test_carrossel_recusado_grava_os_botoes_com_a_foto(com_metadata):
     turno = com_metadata
     turno.provedor.carrossel_explode = True
-    await turno(PRONTA_ATACADO)
+    await _vitrine_atacado(turno)
     botoes = turno.linhas[-1]
     assert botoes["metadata"]["interativo"] == {
         "tipo": "botoes", "imagem": "https://storage.exemplo/atacado/foto_1_classico.jpg",
@@ -906,7 +913,7 @@ async def test_cards_como_texto_nao_gravam_estrutura(com_metadata):
     turno = com_metadata
     turno.catalogo["linhas"] = [p for p in catalogo_producao()
                                 if "Suave" not in p["name"] and "Microlote" not in p["name"]]
-    await turno(PRONTA_ATACADO)
+    await _vitrine_atacado(turno)
     assert turno.linhas[0].get("metadata") is None
 
 
@@ -937,7 +944,7 @@ async def test_erro_ao_montar_o_carrossel_nao_custa_o_registro(com_metadata, mon
         raise RuntimeError("card estranho")
     monkeypatch.setattr(interativo, "carrossel", explode)
     turno = com_metadata
-    await turno(PRONTA_ATACADO)
+    await _vitrine_atacado(turno)
     assert turno.provedor.tipos() == ["carrossel", "texto", "botoes"]
     assert turno.linhas[0]["content"].startswith(r2.NOS["VA"].corpo)
     assert turno.linhas[0].get("metadata") is None

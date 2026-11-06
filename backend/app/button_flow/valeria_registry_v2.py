@@ -66,6 +66,28 @@ NO_ENTRADA = "N0"
 # que NÃO cria tag: se ela não estiver semeada em `tags`, o lead simplesmente não
 # é marcado (sem erro). Mesma armadilha documentada no bloco de tags da v1.
 TAG_KIT = "Botões: Kit amostra"
+# F3 (06/11/2026): quem quer atacado mas não tem CNPJ nem MEI não vai ao João.
+# Semeada por supabase/migrations/20261106_f3_valeria_qualifica_antes.sql.
+TAG_SEM_CNPJ = "Atacado sem CNPJ"
+
+# ─── Política de revenda (PENDENTE — decisão 2 do consolidado de 06/11/2026) ──
+#
+# Rafael e Arthur ainda não fecharam a política única de revenda (margem de
+# 35–40% para o revendedor, degrau de volume, vantagem do 1º pedido, pedido
+# mínimo único). Até lá, o que a Valéria AFIRMA hoje fica como está (os números
+# de §4 da spec v2) e cada ponto pendente está listado aqui. Quando a política
+# sair, o texto muda SEM DEPLOY pela chave `__regras_atacado__` (e pelas
+# `faq:atacado:minimo|frete|revenda`) em `valeria_flow_content`, na tela
+# "Fluxo da Valéria". Este dicionário é só a lista do que falta decidir; nada
+# daqui chega ao lead.
+POLITICA_REVENDA_PENDENTE: dict[str, str] = {
+    "pedido_minimo": "R$500 hoje no fluxo; outros canais dizem R$300, nenhum ou R$5.000",
+    "frete": "grátis acima de R$2.000 hoje; depende da política",
+    "margem": ("faixa de revenda ao consumidor sem conta de margem; falta a linha "
+               "'você compra X, revende Y, sobra Z' (precisa do preço sugerido)"),
+    "sem_cnpj": ("quem não tem CNPJ/MEI vai para a loja com cupom; se a política aceitar "
+                 "pessoa física com pedido mínimo, muda o destino do botão 'Não tenho CNPJ'"),
+}
 
 # 2º RUIDO seguido (texto que o classificador não entendeu) → repasse do ramo
 # (spec §7.2). Substitui o TETO_NUDGES da v1: lá o texto era sempre rebatido.
@@ -201,6 +223,11 @@ CHAVE_COMO_FUNCIONA_PL = "__como_funciona_pl__"
 
 # §6.1, mensagem 2: as 4 linhas de regra que fecham a tabela atacado. Os
 # números são os de §4 (mínimo, frete, pagamento, revenda).
+#
+# PENDENTE (POLITICA_REVENDA_PENDENTE): mínimo, frete e a linha de revenda/margem
+# esperam a política. O default fica IGUAL ao de produção de propósito: um
+# marcador "[a definir]" aqui chegaria ao lead se a chave não tiver override. A
+# troca é pela chave `__regras_atacado__` (sem deploy).
 REGRAS_ATACADO_DEFAULT = (
     "✅ pedido mínimo R$500 — pode misturar os cafés\n"
     "🚚 frete grátis acima de R$2.000; abaixo, pelo CEP\n"
@@ -283,8 +310,9 @@ CHAVES_TEXTO: frozenset[str] = frozenset(
 # Igualdade depois de `engine.normalizar`, contra esta tupla fechada. Qualquer
 # variação editada pelo lead vai para o N0. Nenhuma IA entra aqui.
 _MENSAGENS_PRONTAS: tuple[tuple[str, str], ...] = (
-    ("Olá! Tenho um comércio e quero revender café especial.", "VA"),
-    ("Olá! Quero saber mais sobre compra por atacado.", "VA"),
+    # F3: o atacado pergunta uso, volume e CNPJ ANTES da vitrine (QA_USO).
+    ("Olá! Tenho um comércio e quero revender café especial.", "QA_USO"),
+    ("Olá! Quero saber mais sobre compra por atacado.", "QA_USO"),
     ("Olá! Quero café com a minha marca — já tenho CNPJ", "VP"),
     ("Olá! Quero saber mais sobre ter a Marca Própria de Café.", "VP"),
 )
@@ -314,7 +342,8 @@ NOS: dict[str, No] = {
         corpo="oi! aqui é a Valéria, do comercial da Café Canastra ☕ me diz: o café é pra qual caso?",
         # Mesmas linhas e descrições da v1; "negocio" e "marca" levam às vitrines.
         botoes=(
-            replace(_N0_V1["negocio"], rotulo="Revender ou servir", destino="VA"),
+            # F3: "Revender ou servir" já respondeu o "para quê"; segue ao volume.
+            replace(_N0_V1["negocio"], rotulo="Revender ou servir", destino="QA_VOL"),
             replace(_N0_V1["marca"], destino="VP"),
             _N0_V1["consumo"],
             _N0_V1["exportacao"],
@@ -322,6 +351,42 @@ NOS: dict[str, No] = {
     ),
 
     # ── Ramo atacado ───────────────────────────────────────────────────────
+    # F3 (06/11/2026): três perguntas ANTES da vitrine. Em 2 semanas, 74 leads
+    # só mandaram a mensagem pronta e sumiram depois de receber carrossel, tabela
+    # e regras de uma vez; só 14 eram consumidor final. Agora a tabela só sai para
+    # quem revende ou serve E tem CNPJ ou MEI. Consumo vai para a loja (C1); sem
+    # CNPJ, para `T_SEM_CNPJ`. Nenhum dos dois é repassado ao João.
+    "QA_USO": No(
+        id="QA_USO", rotulo_interno="QA_USO · Para quê", tela="botoes", ramo="atacado",
+        # COMPOSTO pela F3 (06/11/2026), na voz do N0 (minúsculas, sem ponto final).
+        corpo=("oi! aqui é a Valéria, do comercial da Café Canastra ☕ pra eu te mandar "
+               "a tabela certa, me conta: o café é pra quê?"),
+        botoes=(
+            Botao("revender", "Pra revender", "QA_VOL"),
+            Botao("servir", "Servir no negócio", "QA_VOL"),
+            Botao("consumo", "Consumo próprio", "C1"),
+        ),
+    ),
+    "QA_VOL": No(
+        id="QA_VOL", rotulo_interno="QA_VOL · Volume por mês", tela="botoes", ramo="atacado",
+        # COMPOSTO pela F3. Mesmos ids e `grava` do QA2 (30/65/150 kg do score).
+        corpo="boa! e mais ou menos quanto café você vende ou usa por mês?",
+        botoes=(
+            Botao("ate30", "Até 30 kg", "QA_CNPJ", grava=(("monthly_volume_kg", 30),)),
+            Botao("ate100", "30 a 100 kg", "QA_CNPJ", grava=(("monthly_volume_kg", 65),)),
+            Botao("mais100", "Mais de 100 kg", "QA_CNPJ", grava=(("monthly_volume_kg", 150),)),
+        ),
+    ),
+    "QA_CNPJ": No(
+        id="QA_CNPJ", rotulo_interno="QA_CNPJ · CNPJ", tela="botoes", ramo="atacado",
+        # COMPOSTO pela F3.
+        corpo="última: a compra seria com CNPJ?",
+        botoes=(
+            Botao("cnpj", "Sim, tenho CNPJ", "VA"),
+            Botao("mei", "Sou MEI", "VA"),
+            Botao("sem_cnpj", "Não tenho CNPJ", "T_SEM_CNPJ"),
+        ),
+    ),
     "VA": No(
         id="VA", rotulo_interno="VA · Vitrine atacado", tela="carrossel", ramo="atacado",
         corpo=(
@@ -340,7 +405,9 @@ NOS: dict[str, No] = {
         id="QA1", rotulo_interno="QA1 · Tipo de negócio", tela="botoes", ramo="atacado",
         corpo="boa! pra eu já te passar pro João com tudo certo: que tipo de negócio você tem?",
         # Ids e `grava` idênticos aos do N1 da v1 (3 faixas do score).
-        botoes=tuple(replace(b, destino="QA2") for b in _NOS_V1["N1"].botoes),
+        # F3: quem já respondeu o volume antes da vitrine (QA_VOL) vai direto ao
+        # João; quem chegou à vitrine por outro caminho ainda passa pelo QA2.
+        botoes=tuple(replace(b, destino="regra:QA1") for b in _NOS_V1["N1"].botoes),
     ),
     "QA2": No(
         id="QA2", rotulo_interno="QA2 · Volume", tela="botoes", ramo="atacado",
@@ -451,7 +518,8 @@ NOS: dict[str, No] = {
     # ── Consumo e Exportação: copiados da v1 (§5) ──────────────────────────
     "C1": replace(
         _NOS_V1["C1"],
-        botoes=(replace(_C1_V1["quantidade"], destino="VA"), _C1_V1["duvida"]),
+        # F3: consumo que pede quantidade responde volume e CNPJ antes da tabela.
+        botoes=(replace(_C1_V1["quantidade"], destino="QA_VOL"), _C1_V1["duvida"]),
     ),
     "E1": _NOS_V1["E1"],
     "E2": _NOS_V1["E2"],
@@ -483,6 +551,37 @@ REGRA_QP2: dict[tuple[str, str], str] = {
     ("tenho_marca", "mais500"): "T_HANDOFF_PL",
 }
 
+# ─── F3 (06/11/2026): perguntas antes da vitrine e desqualificação ───────────
+NOS_ANTES_DA_VITRINE = frozenset({"QA_USO", "QA_VOL", "QA_CNPJ"})
+NO_PERGUNTAS_ATACADO = "QA_USO"
+# Respostas do QA_CNPJ que abrem a vitrine (o "não" vai a `T_SEM_CNPJ`).
+CNPJ_OK = frozenset({"cnpj", "mei"})
+
+# Preço perguntado ANTES da vitrine: a mesma pergunta de novo, com este começo.
+# Na 2ª vez a tabela sai (quem insiste não pode ficar sem resposta). COMPOSTO.
+PREFIXO_PRECO_ANTES = ("já te mando a tabela 🙂 só preciso disso antes, pra te passar "
+                       "o preço certo:")
+
+# Motivos estruturados de desqualificação (`lead_events.desqualificado`).
+# `consumidor_final` e `sem_cnpj` saem do clique; os dois "sumiu_*" saem da
+# varredura de parados (`valeria_repasse.marcar_sumidos`), pelo `viu` da conversa.
+DESQ_CONSUMIDOR_FINAL = "consumidor_final"
+DESQ_SEM_CNPJ = "sem_cnpj"
+DESQ_SUMIU_ANTES_DA_TABELA = "sumiu_antes_da_tabela"
+DESQ_SUMIU_DEPOIS_DA_TABELA = "sumiu_depois_da_tabela"
+MOTIVOS_DESQUALIFICACAO = (DESQ_CONSUMIDOR_FINAL, DESQ_SEM_CNPJ,
+                           DESQ_SUMIU_ANTES_DA_TABELA, DESQ_SUMIU_DEPOIS_DA_TABELA)
+# Destino do clique → motivo. C1 é a loja com cupom (consumo, sem repasse).
+DESQUALIFICA_NO_DESTINO: dict[str, str] = {
+    "C1": DESQ_CONSUMIDOR_FINAL,
+    "T_SEM_CNPJ": DESQ_SEM_CNPJ,
+}
+
+
+def destino_qa1(respostas: dict) -> str:
+    """Destino de QA1 (`regra:QA1`): direto ao João se o volume já veio do QA_VOL."""
+    return "T_HANDOFF" if isinstance(respostas.get("QA_VOL"), str) else "QA2"
+
 
 # ─── Os terminais ────────────────────────────────────────────────────────────
 #
@@ -503,5 +602,22 @@ TERMINAIS: dict[str, Terminal] = {
         tags=(TAG_KIT,),
         silenciar_ia=True,
         handoff=True,
+    ),
+    "T_SEM_CNPJ": Terminal(
+        id="T_SEM_CNPJ", rotulo_interno="Atacado sem CNPJ · loja + cupom",
+        # COMPOSTO pela F3 (06/11/2026). Sem repasse: o João vende para CNPJ/MEI.
+        # Link e cupom iguais aos do C1 (conferidos contra consumo.py). PENDENTE
+        # (POLITICA_REVENDA_PENDENTE["sem_cnpj"]): se a política aceitar pessoa
+        # física, este terminal vira outro destino. Editável na tela, sem deploy.
+        corpo=(
+            "entendi! a tabela de atacado é pra quem compra com CNPJ ou MEI 🙏\n\n"
+            "pra comprar agora, nossa linha completa tá na loja online com 10% de "
+            "desconto:\n"
+            "🔗 loja.cafecanastra.com\n"
+            "cupom: *ESPECIAL10*\n\n"
+            "se abrir um MEI (sai rapidinho pelo gov.br), me chama aqui que eu te mando "
+            "a tabela"
+        ),
+        tags=(TAG_SEM_CNPJ,),
     ),
 }
