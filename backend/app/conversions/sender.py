@@ -182,14 +182,24 @@ def _ready_platforms() -> list[str]:
     return prontas
 
 
+# Avisos de etapa do Google sem ação já dados neste processo. A falta da ação de `lead` é
+# proposital desde 13/10/2026: repetir o WARNING a cada tick (30 s) só enchia o log e escondia o
+# resto. Sai uma vez por processo para cada combinação de variáveis faltando; se a combinação
+# muda (alguém configurou ou tirou uma), o aviso novo sai de novo.
+_avisos_dados: set[str] = set()
+
+
 def _google_stages() -> list[str]:
     """Etapas do Google com ação configurada. As outras ficam na fila sem ser reivindicadas (o
-    aviso se repete a cada tick)."""
+    aviso sai uma vez por processo; nos ticks seguintes vai em DEBUG)."""
     prontas = [s for s in _STAGES if google.action_configured(s)]
     faltam = [google._action_env(s) for s in _STAGES if s not in prontas]
     if faltam:
-        logger.warning("[CONVERSOES] google: sem %s — as linhas dessas etapas ficam na fila",
-                       ", ".join(faltam))
+        chave = ", ".join(faltam)
+        nivel = logging.DEBUG if chave in _avisos_dados else logging.WARNING
+        _avisos_dados.add(chave)
+        logger.log(nivel, "[CONVERSOES] google: sem %s — as linhas dessas etapas ficam na fila",
+                   chave)
     return prontas
 
 

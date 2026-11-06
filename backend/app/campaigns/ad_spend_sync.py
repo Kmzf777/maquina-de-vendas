@@ -8,7 +8,8 @@ Fail-soft com RECIBO: um erro de API não derruba o worker, mas volta em `errors
 Atualizar. Sem isso, a versão v21 do Google Ads morreu em 11/08/2026 e o sync ficou dez dias
 respondendo "0 linhas" como se fosse dia sem gasto — foi o que escondeu o bug."""
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 
 from app.db.supabase import get_supabase
 from app.campaigns.google_ads import fetch_campaign_spend, google_ads_enabled, AdsFetchError
@@ -118,16 +119,125 @@ async def _sync_meta_ad_map(date_from: str, date_to: str) -> int:
         return 0
 
 
-async def sync_all_ad_spend(days: int = 30) -> dict[str, object]:
-    """Sincroniza Google + Meta (cada um env-gated/fail-soft).
+_TZ = ZoneInfo("America/Sao_Paulo")
+_PLATAFORMAS = ("google", "meta")
+_ALERTA_TIPO = "ad_spend_sync_failed"
+DEDUP_HORAS = 12
+_NOME = {"google": "Google Ads", "meta": "Meta Ads"}
 
-    Retorna {'google': n, 'meta': m, 'errors': {plataforma: motivo}} — `errors` vazio significa
-    que as APIs responderam; 0 linhas com `errors` vazio é dia sem gasto de verdade."""
+
+def _habilitada(platform: str) -> bool:
+    return google_ads_enabled() if platform == "google" else meta_ads_enabled()
+
+
+def _zero_suspeito(platform: str, hoje: date | None = None) -> str | None:
+    """0 linhas num dia útil com campanha ativa não é "dia sem gasto": foi assim que a v21 do
+    Google morreu em 11/08/2026 sem ninguém ver. "Ativa" = houve gasto gravado em ad_spend nos
+    últimos 7 dias. Devolve o motivo do aviso, ou None. Fail-soft (erro de leitura → None)."""
+    hoje = hoje or datetime.now(_TZ).date()
+    if hoje.weekday() >= 5:
+        return None
+    try:
+        res = (get_supabase().table("ad_spend").select("date").eq("platform", platform)
+               .gt("cost", 0).gte("date", (hoje - timedelta(days=7)).isoformat())
+               .limit(1).execute())
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("ad_spend_sync: checagem de zero suspeito falhou (%s): %s", platform, exc)
+        return None
+    if getattr(res, "data", None):
+        return "API respondeu 0 linhas em dia útil, mas houve gasto nos últimos 7 dias"
+    return None
+
+
+def _registrar_rodada(platform: str, status: str, linhas: int, motivo: str | None,
+                      origem: str) -> None:
+    """Grava a rodada em ad_spend_sync_runs. Fail-soft: sem a tabela (migração ainda não
+    aplicada) o sync segue igual, só sem o histórico."""
+    try:
+        get_supabase().table("ad_spend_sync_runs").insert({
+            "platform": platform, "status": status, "linhas": linhas,
+            "motivo": (motivo or None) and motivo[:500], "origem": origem,
+        }).execute()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("ad_spend_sync: não gravou a rodada de %s: %s", platform, exc)
+
+
+def ultimas_rodadas() -> dict[str, dict]:
+    """Última rodada de cada plataforma: {plataforma: {status, linhas, motivo, em}}.
+    Fail-soft: erro ou tabela ausente → {} (a tela só não mostra a linha)."""
+    out: dict[str, dict] = {}
+    for p in _PLATAFORMAS:
+        try:
+            res = (get_supabase().table("ad_spend_sync_runs")
+                   .select("status,linhas,motivo,criado_em").eq("platform", p)
+                   .order("criado_em", desc=True).limit(1).execute())
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("ad_spend_sync: leitura das rodadas falhou (%s): %s", p, exc)
+            continue
+        if getattr(res, "data", None):
+            r = res.data[0]
+            out[p] = {"status": r.get("status"), "linhas": r.get("linhas"),
+                      "motivo": r.get("motivo"), "em": r.get("criado_em")}
+    return out
+
+
+async def sync_all_ad_spend(days: int = 30, origem: str = "automatica") -> dict[str, object]:
+    """Sincroniza Google + Meta (cada um env-gated/fail-soft) e grava cada rodada.
+
+    Retorna {'google': n, 'meta': m, 'errors': {plataforma: motivo}, 'avisos': {plataforma:
+    motivo}} — `errors` vazio significa que as APIs responderam; `avisos` marca 0 linhas
+    suspeitas (dia útil com campanha ativa). 0 linhas sem erro nem aviso é dia sem gasto."""
     g, g_err = await _sync_google(days)
     m, m_err = await _sync_meta(days)
     errors: dict[str, str] = {}
-    if g_err:
-        errors["google"] = g_err
-    if m_err:
-        errors["meta"] = m_err
-    return {"google": g, "meta": m, "errors": errors}
+    avisos: dict[str, str] = {}
+    for platform, n, err in (("google", g, g_err), ("meta", m, m_err)):
+        if err:
+            errors[platform] = err
+            _registrar_rodada(platform, "falha", 0, err, origem)
+            continue
+        if not _habilitada(platform):
+            continue
+        aviso = _zero_suspeito(platform) if n == 0 else None
+        if aviso:
+            avisos[platform] = aviso
+            logger.warning("ad_spend_sync(%s): %s", platform, aviso)
+        _registrar_rodada(platform, "aviso" if aviso else "ok", n, aviso, origem)
+    return {"google": g, "meta": m, "errors": errors, "avisos": avisos}
+
+
+def _ja_alertado(platform: str, horas: int = DEDUP_HORAS) -> bool:
+    corte = (datetime.now(timezone.utc) - timedelta(hours=horas)).isoformat()
+    res = (get_supabase().table("system_alerts").select("id")
+           .eq("type", _ALERTA_TIPO).eq("resolved", False)
+           .eq("metadata->>plataforma", platform)
+           .gte("created_at", corte).limit(1).execute())
+    return bool(getattr(res, "data", None))
+
+
+def alertar_falhas(res: dict) -> list[str]:
+    """Cria um system_alert por plataforma que falhou (ou voltou 0 linhas suspeitas), com dedup
+    de 12 h por plataforma no estilo de bling/alertas.py. Devolve as plataformas alertadas.
+    Nunca levanta: alerta não derruba o tick."""
+    from app.alerts.service import create_system_alert
+    alertadas: list[str] = []
+    problemas = [(p, "falha", motivo) for p, motivo in (res.get("errors") or {}).items()]
+    problemas += [(p, "aviso", motivo) for p, motivo in (res.get("avisos") or {}).items()]
+    for platform, tipo, motivo in problemas:
+        try:
+            try:
+                if _ja_alertado(platform):
+                    continue
+            except Exception:  # noqa: BLE001 — melhor alerta duplicado que nenhum
+                logger.warning("ad_spend_sync: dedup do alerta falhou; gravando mesmo assim",
+                               exc_info=True)
+            nome = _NOME.get(platform, platform)
+            titulo = (f"Investimento do {nome} não sincronizou" if tipo == "falha"
+                      else f"Investimento do {nome} voltou zerado")
+            create_system_alert(_ALERTA_TIPO, titulo, str(motivo), severity="warning",
+                                metadata={"plataforma": platform, "motivo": str(motivo)[:500],
+                                          "tipo": tipo})
+            alertadas.append(platform)
+        except Exception:  # noqa: BLE001
+            logger.warning("ad_spend_sync: falha ao gravar o alerta de %s", platform, exc_info=True)
+    return alertadas

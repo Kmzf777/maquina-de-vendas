@@ -60,8 +60,11 @@ async def _reconcile_tick() -> None:
 
 
 async def _ad_spend_sync_tick() -> None:
-    from app.campaigns.ad_spend_sync import sync_all_ad_spend
-    await sync_all_ad_spend(days=30)
+    # Falha (ou 0 linhas suspeitas) vira system_alert, com dedup de 12 h por plataforma: a v21
+    # do Google morreu em 11/08/2026 e ninguém viu porque o erro só ia para o log.
+    from app.campaigns.ad_spend_sync import alertar_falhas, sync_all_ad_spend
+    res = await sync_all_ad_spend(days=30, origem="automatica")
+    await asyncio.to_thread(alertar_falhas, res)
 
 
 async def _bling_sync_tick() -> None:
