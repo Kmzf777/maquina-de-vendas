@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { getServiceSupabase } from "@/lib/supabase/api";
 import { isLeadBlocked, MENSAGEM_LEAD_BLOQUEADO } from "@/lib/supabase/lead-blocked";
+import { resolveSendTarget, LEAD_SEND_FIELDS, type SendTargetLead } from "@/lib/whatsapp/send-target";
 import { registrarTemplateEnviado, sendTemplateViaMeta, wamidDaResposta } from "@/lib/meta-template";
 
 export async function POST(
@@ -19,7 +20,7 @@ export async function POST(
 
   const { data: conv, error: convError } = await supabase
     .from("conversations")
-    .select("id, stage, leads(id, phone, opt_out), channels(id, provider, provider_config)")
+    .select(`id, stage, leads(id, ${LEAD_SEND_FIELDS}, opt_out), channels(id, provider, provider_config)`)
     .eq("id", conversationId)
     .single();
 
@@ -32,9 +33,12 @@ export async function POST(
     provider: string;
     provider_config: Record<string, string>;
   } | null;
-  const lead = conv.leads as unknown as { id: string; phone: string; opt_out?: boolean | null } | null;
+  const lead = conv.leads as unknown as ({ id: string; opt_out?: boolean | null } & SendTargetLead) | null;
 
-  if (!channel || !lead?.phone) {
+  // Modelo é disparo FRIO (pode ser o 1º contato): o wa_id só vale com procedência,
+  // senão vai para o phone E.164 — mesma regra do backend (require_inbound_provenance).
+  const target = resolveSendTarget(lead, { requireInboundProvenance: true });
+  if (!channel || !lead || !target) {
     return NextResponse.json({ error: "Invalid conversation data" }, { status: 400 });
   }
 
@@ -59,7 +63,7 @@ export async function POST(
     sentWamid = wamidDaResposta(
       await sendTemplateViaMeta(
         channel.provider_config,
-        lead.phone,
+        target,
         template_name,
         template_language_code,
         template_variables ?? null,
