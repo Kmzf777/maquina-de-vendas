@@ -119,6 +119,13 @@ SLA_DEFAULT_CFG = {"ini": 600, "fim": 960, "dias": [1, 2, 3, 4, 5]}
 # feriado de 1 dia. O "ancient" de HANDOFF_SLA_LOOKBACK_HOURS passa a valer para
 # quando a VIOLACAO comecou, nao para quando o cliente escreveu.
 HANDOFF_SLA_FETCH_LOOKBACK_HOURS = 96
+# F2 (06/11/2026): o escalonamento `critical` (o que sai no WhatsApp do admin) só conta
+# a conversa que ja e FALHA pela definicao comum dos estados da resposta: a ultima msg
+# e do lead e ja passaram 2 h uteis na janela do vendedor (`vendedor_nao_respondeu`,
+# o mesmo prazo de vw_repasse_resposta). O aviso de 04/11 10h20 escalou 10 conversas
+# da madrugada que tinham acabado de completar 20 min uteis — o Joao respondeu todas
+# entre 10h32 e 10h38. O breach `warning` (banner no CRM) continua nos 20 min uteis.
+HANDOFF_SLA_FALHA_MINUTES = 120
 
 # --- Check 6 (cadence_dead, incidente 26/06→09/07) -------------------------------
 # A cadencia 4-touch ficou MORTA por 13 dias (26/06→09/07): a constraint 23514
@@ -544,6 +551,28 @@ def _minutos_uteis(inicio: datetime, fim: datetime, cfg: dict) -> float:
     return total
 
 
+def _dentro_da_janela(now: datetime, cfg: dict) -> bool:
+    """True se `now` cai no horario do vendedor (`cfg` de `_carregar_cfg_sla`): dia
+    ativo, fora das folgas e entre `ini` e `fim` (minutos desde 00:00, America/Sao_Paulo).
+    """
+    local = now.astimezone(_SP_TZ)
+    dow = (local.weekday() + 1) % 7  # Python seg=0 → Postgres dom=0
+    if dow not in set(cfg.get("dias") or []):
+        return False
+    if local.date().isoformat() in (cfg.get("excluidas") or set()):
+        return False
+    minuto = local.hour * 60 + local.minute
+    return cfg["ini"] <= minuto < cfg["fim"]
+
+
+def _quando_escreveu(customer_ts: datetime, now: datetime) -> str:
+    """"HH:MM" (hoje) ou "HH:MM de DD/MM" (outro dia), no horario de Sao Paulo."""
+    local = customer_ts.astimezone(_SP_TZ)
+    if local.date() == now.astimezone(_SP_TZ).date():
+        return local.strftime("%H:%M")
+    return local.strftime("%H:%M de %d/%m")
+
+
 def _cfg_updated_at(row: dict) -> datetime:
     """updated_at da config SLA como datetime (ausente/invalido → minimo, perde o desempate)."""
     raw = row.get("updated_at")
@@ -688,6 +717,12 @@ def check_handoff_sla(now: datetime) -> int:
     sem consultar o banco. Retorna o total de conversas em violacao (dedup por
     conversa so decide o que entra no ALERTA, nao o que e reportado aqui — mesmo
     contrato dos Checks 1/2/`_alert_recently_fired`).
+
+    F2 (06/11/2026): dentro dessa janela larga, a conversa so conta quando `now` esta
+    no horario do VENDEDOR dela (`sla_seller_config`; padrao 10h-16h seg-sex) — o Joao
+    nao e cobrado as 8h nem as 19h. O texto diz quando o lead escreveu e ha quantos
+    minutos uteis espera, e o escalonamento `critical` so conta quem ja passou de
+    HANDOFF_SLA_FALHA_MINUTES (ver a constante).
     """
     if not _within_sla_window(now):
         return 0
@@ -742,8 +777,10 @@ def check_handoff_sla(now: datetime) -> int:
         _ultima_resposta_por_lead(sb, [r.get("lead_id") for r, _ in candidates if r.get("lead_id")])
         if candidates else {}
     )
+    # Mesmo vendedor de `_vendedores_fora_do_crm`: sem `assigned_to` (o repasse dos
+    # botoes nao o grava), vale o `metadata.handoff.vendedor_id` do repasse.
     cfg_by_user = (
-        _carregar_cfg_sla(sb, [_embed_one(r.get("leads")).get("assigned_to") for r, _ in candidates])
+        _carregar_cfg_sla(sb, [_vendedor_do_lead(_embed_one(r.get("leads"))) for r, _ in candidates])
         if candidates else {}
     )
 
@@ -754,15 +791,20 @@ def check_handoff_sla(now: datetime) -> int:
 
     violated: list[str] = []
     lead_names: dict[str, str] = {}
+    esperas: dict[str, tuple[datetime, float]] = {}
     for row, customer_ts in candidates:
         lead_seller_ts = seller_by_lead.get(row.get("lead_id"))
         if lead_seller_ts and lead_seller_ts >= customer_ts:
             continue  # respondeu em outra conversa do mesmo lead — ok
         lead = _embed_one(row.get("leads"))
-        if _vendedor_do_lead(lead) in fora_do_crm:
+        vendedor = _vendedor_do_lead(lead)
+        if vendedor in fora_do_crm:
             continue  # vendedor atende fora do CRM (Arthur, fixo) — nada a medir aqui
-        cfg = cfg_by_user.get(lead.get("assigned_to")) or cfg_by_user.get(None) or SLA_DEFAULT_CFG
-        if _minutos_uteis(customer_ts, now, cfg) <= HANDOFF_SLA_MINUTES:
+        cfg = cfg_by_user.get(vendedor) or cfg_by_user.get(None) or SLA_DEFAULT_CFG
+        if not _dentro_da_janela(now, cfg):
+            continue  # fora do horario DESTE vendedor: ninguem e cobrado agora
+        espera = _minutos_uteis(customer_ts, now, cfg)
+        if espera <= HANDOFF_SLA_MINUTES:
             continue
         if (
             customer_ts < lookback_floor
@@ -774,6 +816,19 @@ def check_handoff_sla(now: datetime) -> int:
             continue  # 👍 pos-resposta e encerramento social, nao pergunta pendente
         violated.append(conv_id)
         lead_names[conv_id] = (lead.get("name") or "").strip()
+        esperas[conv_id] = (customer_ts, espera)
+
+    def _casos(ids: list[str]) -> str:
+        """Ate 3 exemplos: "Sara: lead escreveu às 21:03 de 03/11 e espera há 21 min úteis"."""
+        partes = []
+        for cid in ids[:3]:
+            ts, mins = esperas[cid]
+            nome = (lead_names.get(cid) or "").split()
+            quem = nome[0] if nome else "sem nome"
+            partes.append(f"{quem}: lead escreveu às {_quando_escreveu(ts, now)} "
+                          f"e espera há {int(mins)} min úteis")
+        resto = len(ids) - len(partes)
+        return "; ".join(partes) + (f"; e mais {resto}" if resto > 0 else "")
 
     n = len(violated)
     if n:
@@ -781,36 +836,38 @@ def check_handoff_sla(now: datetime) -> int:
         already_alerted = _handoff_sla_alerted_conversation_ids(now)
         new_violations = [cid for cid in violated if cid not in already_alerted]
         if new_violations:
-            first_names = [
-                lead_names[cid].split()[0] for cid in new_violations if lead_names.get(cid)
-            ]
-            example = ", ".join(first_names[:3]) if first_names else "sem nome"
             create_system_alert(
                 "handoff_sla_breach",
                 "Lead aguardando resposta humana pós-handoff",
                 f"{len(new_violations)} conversa(s) no canal humano com mensagem do "
-                f"lead sem resposta há mais de {HANDOFF_SLA_MINUTES}min (ex.: {example}). "
-                "Casos reais: Juliana 02/07 ('o João visualiza e não responde').",
+                f"lead sem resposta há mais de {HANDOFF_SLA_MINUTES} min úteis no "
+                f"horário do vendedor. {_casos(new_violations)}.",
                 severity="warning",
-                metadata={"conversation_ids": new_violations[:10]},
+                metadata={
+                    "conversation_ids": new_violations[:10],
+                    "minutos_uteis": {cid: int(esperas[cid][1]) for cid in new_violations[:10]},
+                },
             )
         # Escalonamento por acúmulo: mede a fila EM PÉ (`violated` inteira, não só as
         # novas) — mesmo com todas as conversas já cobertas pelo dedup por conversa,
         # a fila parada re-escala a cada HANDOFF_SLA_ESCALATION_DEDUP_HOURS até o
         # plantão agir (foi o drumbeat que faltou nos 49 warnings ignorados de 11/07).
-        if n >= HANDOFF_SLA_ESCALATION_THRESHOLD and not _alert_recently_fired(
+        # Só entra quem já é FALHA (HANDOFF_SLA_FALHA_MINUTES úteis): a fila da
+        # madrugada às 10h20 não é.
+        falhas = [cid for cid in violated if esperas[cid][1] >= HANDOFF_SLA_FALHA_MINUTES]
+        nf = len(falhas)
+        if nf >= HANDOFF_SLA_ESCALATION_THRESHOLD and not _alert_recently_fired(
             "handoff_sla_escalation", dedup_hours=HANDOFF_SLA_ESCALATION_DEDUP_HOURS
         ):
             create_system_alert(
                 "handoff_sla_escalation",
-                f"Fila humana acumulando: {n} lead(s) sem resposta pós-handoff",
-                f"{n} conversa(s) no canal humano aguardando resposta do vendedor há "
-                f"mais de {HANDOFF_SLA_MINUTES}min — no limiar de escalonamento "
-                f"({HANDOFF_SLA_ESCALATION_THRESHOLD}+). O plantão precisa assumir a "
-                f"fila agora; este alerta repete a cada "
+                f"Fila humana acumulando: {nf} lead(s) sem resposta pós-handoff",
+                f"{nf} conversa(s) no canal humano esperando o vendedor há mais de "
+                f"{HANDOFF_SLA_FALHA_MINUTES // 60} h úteis (no horário dele). "
+                f"{_casos(falhas)}. Este alerta repete a cada "
                 f"{HANDOFF_SLA_ESCALATION_DEDUP_HOURS}h enquanto a fila não baixar.",
                 severity="critical",
-                metadata={"count": n, "conversation_ids": violated[:10]},
+                metadata={"count": nf, "conversation_ids": falhas[:10]},
             )
     return n
 
