@@ -1178,6 +1178,10 @@ async def _fire_proactive_handoff(job: dict, lead: dict, phone: str) -> None:
     _cancel_job(job["id"], "proactive_handoff_pos_catalogo")
 
 
+# `cancel_reason` do `handoff_rescue` que não saiu porque o lead já escreveu ao vendedor.
+RESCUE_CANCEL_LEAD_JA_FALOU = "lead_ja_falou_com_vendedor"
+
+
 def _rescue_contact_cutoff(job: dict, now: datetime) -> str:
     """Desde quando procurar por contato do lead com o João, ao decidir se o resgate ainda
     faz sentido.
@@ -1266,7 +1270,10 @@ async def _process_handoff_rescue(job: dict, now: datetime) -> None:
                 logger.info(
                     f"[HANDOFF_RESCUE] Lead {job['lead_id']} já contatou João — resgate desnecessário"
                 )
-                _mark_sent(job["id"])
+                # CANCELADO, não `sent` (F2, 06/11/2026): `sent` diz "o contato automático
+                # do João saiu", e quem mede a resposta ao repasse lê exatamente isso. O
+                # lead que já estava falando com o João não recebeu template nenhum.
+                _cancel_job(job["id"], RESCUE_CANCEL_LEAD_JA_FALOU)
                 return
     except Exception as exc:
         logger.error(
