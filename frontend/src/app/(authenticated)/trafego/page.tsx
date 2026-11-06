@@ -11,6 +11,7 @@ import { CampaignReportTable, type CampaignRow, type ReportTotal, type ChannelSu
 import { ConversoesEnviadas } from "@/components/trafego/conversoes-enviadas";
 import { ReportSummaryPanel } from "@/components/trafego/report-summary";
 import type { ReportSummary } from "@/lib/traffic-summary";
+import { FRASE_MODO, MODO_PADRAO, linhaSync, type RodadaSync, type TrafficMode } from "@/lib/traffic-mode";
 
 type Report = { mode: string; period: string; rows: CampaignRow[]; total: ReportTotal; channel_subtotals: ChannelSubtotals; summary?: ReportSummary };
 
@@ -20,7 +21,9 @@ export default function TrafegoPage() {
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
   const [dateMode, setDateMode] = useState<"preset" | "mes" | "custom">("preset");
-  const [mode, setMode] = useState<"lead" | "sale">("lead");
+  // Abre "por venda" (frente F1): o "por lead" escondia as vendas de lead antigo e a página
+  // mostrava 2 pedidos onde houve 27 (15–21/10).
+  const [mode, setMode] = useState<TrafficMode>(MODO_PADRAO);
   const [view, setView] = useState<"campanhas" | "conversoes">("campanhas");
   const router = useRouter();
   const [report, setReport] = useState<Report | null>(null);
@@ -28,6 +31,7 @@ export default function TrafegoPage() {
   const [syncing, setSyncing] = useState(false);
   const [refreshTick, setRefreshTick] = useState(0);
   const [toast, setToast] = useState<{ text: string; tone: "ok" | "warn" | "erro" } | null>(null);
+  const [rodadas, setRodadas] = useState<Record<string, RodadaSync>>({});
 
   // handler do seletor de mês (YYYY-MM) → converte p/ from/to do 1º ao último dia
   const onMonth = (ym: string) => {
@@ -47,10 +51,14 @@ export default function TrafegoPage() {
       const r = await fetch("/api/traffic/sync", { method: "POST" });
       const d = await r.json().catch(() => ({}));
       const errors: Record<string, string> = d?.errors ?? {};
+      const avisos: Record<string, string> = d?.avisos ?? {};
       const falhou = Object.keys(errors);
+      const zerou = Object.keys(avisos);
+      const nomes = (ks: string[]) => ks.map((k) => (k === "google" ? "Google Ads" : "Meta Ads")).join(" e ");
       if (falhou.length > 0) {
-        const nomes = falhou.map((k) => (k === "google" ? "Google Ads" : "Meta Ads")).join(" e ");
-        setToast({ text: `${nomes} não respondeu: ${errors[falhou[0]]}`, tone: "erro" });
+        setToast({ text: `${nomes(falhou)} não respondeu: ${errors[falhou[0]]}`, tone: "erro" });
+      } else if (zerou.length > 0) {
+        setToast({ text: `${nomes(zerou)}: ${avisos[zerou[0]]}`, tone: "warn" });
       } else if (typeof d.synced === "number") {
         setToast(d.synced > 0
           ? { text: `${d.synced} linha(s) de investimento sincronizadas`, tone: "ok" }
@@ -66,6 +74,16 @@ export default function TrafegoPage() {
       setTimeout(() => setToast(null), 9000);
     }
   };
+
+  // Última rodada do sync por plataforma (linha embaixo do Atualizar). Fail-soft: sem resposta,
+  // a linha só não aparece.
+  useEffect(() => {
+    if (roleLoading || role !== "admin") return;
+    fetch("/api/traffic/sync-status")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => setRodadas(d?.plataformas ?? {}))
+      .catch(() => setRodadas({}));
+  }, [role, roleLoading, refreshTick]);
 
   useEffect(() => {
     // A aba "Conversões enviadas" busca os próprios dados: o relatório de campanhas (pesado) só
@@ -115,10 +133,13 @@ export default function TrafegoPage() {
             ))}
           </div>
           {view === "campanhas" && (
-            <label className="flex items-center gap-2 cursor-pointer">
-              <span className="text-[13px] text-[#7b7b78]">Por venda</span>
-              <Switch checked={mode === "sale"} onCheckedChange={(c) => setMode(c ? "sale" : "lead")} />
-            </label>
+            <div className="flex flex-col gap-0.5 max-w-[320px]">
+              <label className="flex items-center gap-2 cursor-pointer">
+                <span className="text-[13px] text-[#7b7b78]">Por venda</span>
+                <Switch aria-label="Por venda" checked={mode === "sale"} onCheckedChange={(c) => setMode(c ? "sale" : "lead")} />
+              </label>
+              <span data-testid="frase-modo" className="text-[12px] leading-[1.35] text-[#7b7b78]">{FRASE_MODO[mode]}</span>
+            </div>
           )}
           <Select value={dateMode} onValueChange={(v) => {
             setDateMode(v as "preset" | "mes" | "custom");
@@ -155,6 +176,7 @@ export default function TrafegoPage() {
                 className="border border-[#dedbd6] rounded-[6px] px-2 py-1.5 text-[14px] text-[#111111] focus:border-[#111111] focus:outline-none" />
             </div>
           )}
+          <div className="flex flex-col items-start gap-1">
           <button
             onClick={handleRefresh}
             disabled={syncing}
@@ -163,6 +185,16 @@ export default function TrafegoPage() {
             <svg className={`w-4 h-4 ${syncing ? "animate-spin" : ""}`} fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.8}><path strokeLinecap="round" strokeLinejoin="round" d="M16.023 9.348h4.992V4.356M2.985 19.644v-4.992h4.992m-4.993 0 3.181 3.183a8.25 8.25 0 0 0 13.803-3.7M4.031 9.865a8.25 8.25 0 0 1 13.803-3.7l3.181 3.182m0-4.99v4.99" /></svg>
             {syncing ? "Atualizando…" : "Atualizar"}
           </button>
+          {Object.keys(rodadas).length > 0 && (
+            <div data-testid="status-sync" className="flex flex-col text-[12px] leading-[1.35]">
+              {Object.entries(rodadas).map(([p, r]) => (
+                <span key={p} className={r.status === "falha" ? "text-[#c41c1c]" : r.status === "aviso" ? "text-[#a35c00]" : "text-[#7b7b78]"}>
+                  {linhaSync(p, r)}
+                </span>
+              ))}
+            </div>
+          )}
+          </div>
         </div>
       </div>
 
