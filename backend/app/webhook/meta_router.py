@@ -17,7 +17,7 @@ from app.dev_router.service import get_dev_route, is_dev_number
 from app.dev_router.forwarder import forward_to_dev
 from app.db.supabase import get_supabase, run_with_retry
 from app.meta_audit import log_inbound
-from app.leads.google_message_asset import stamp_google_message_asset
+from app.leads.google_message_asset import registrar_retorno, stamp_google_message_asset
 
 logger = logging.getLogger(__name__)
 
@@ -122,6 +122,13 @@ def _register_lead(
             stamp_google_message_asset(lead, text)
     except Exception as exc:
         logger.warning("Failed to stamp google message asset for lead %s: %s", lead.get("id") if lead else None, exc)
+    # F5: lead que volta depois de 7+ dias sem conversa, sem anúncio e sem texto pronto ganha o
+    # toque "WhatsApp direto" (retorno) — é como a busca orgânica pela marca aparece na jornada.
+    # Roda antes do _track_inbound_message_time: o `lead` ainda tem a mensagem anterior.
+    try:
+        registrar_retorno(lead, text, tem_referral=bool(ctwa_clid or meta_ad_id or ctwa_origem))
+    except Exception as exc:
+        logger.warning("Failed to register retorno for lead %s: %s", lead.get("id") if lead else None, exc)
 
 
 def _track_inbound_message_time(phone: str) -> None:

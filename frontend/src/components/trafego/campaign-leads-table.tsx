@@ -5,6 +5,8 @@ import { Input } from "@/components/ui/input";
 import { CampaignLeadPanel } from "@/components/trafego/campaign-lead-panel";
 import type { AtribuicaoManual } from "@/components/trafego/campaign-attribution";
 import { stageLabel } from "@/lib/lead-overview";
+import { PassouPor } from "@/components/trafego/passou-por";
+import type { Jornada } from "@/lib/traffic-jornada";
 
 export type PrimeiraOrigem = {
   canal: string | null; campanha_id: string | null; campanha_nome: string | null; occurred_at: string | null;
@@ -27,11 +29,14 @@ export type CampaignLead = {
   primeira_origem?: PrimeiraOrigem | null;
   /** Visão do período: false = lead antigo que comprou no período; null/ausente fora dela. */
   entrou_no_periodo?: boolean | null;
+  // F5: canais por onde o lead passou (com datas) e, em "Sem rastreio", o motivo provável.
+  jornada?: Jornada | null;
+  motivo_sem_rastreio?: string | null;
 };
 
 const HEADERS = [
   "Lead", "Origem", "Fonte", "Meio", "Etapa", "Conversou",
-  "Já era cliente", "Compras", "Primeira origem", "Entrada", "Venda",
+  "Já era cliente", "Compras", "Primeira origem", "Passou por", "Entrada", "Venda",
 ];
 
 const fmtBRL = (v: number) => `R$ ${v.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}`;
@@ -93,6 +98,9 @@ export function CampaignLeadsTable({ leads }: { leads: CampaignLead[] }) {
     ? rows.filter(l => norm(`${l.name ?? ""} ${l.phone ?? ""}`).includes(norm(q)))
     : rows;
   const selected = rows.find(l => l.lead_id === selectedId) ?? null;
+  // "Motivo" só aparece no detalhe do "Sem rastreio" (os leads trazem motivo_sem_rastreio).
+  const comMotivo = leads.some(l => l.motivo_sem_rastreio);
+  const headers = comMotivo ? [...HEADERS, "Motivo"] : HEADERS;
   const onAttributionChange = (leadId: string, a: AtribuicaoManual) =>
     setOverrides(prev => ({ ...prev, [leadId]: { ...prev[leadId], ...a } }));
 
@@ -120,7 +128,7 @@ export function CampaignLeadsTable({ leads }: { leads: CampaignLead[] }) {
         <Table>
           <TableHeader>
             <TableRow className="hover:bg-transparent">
-              {HEADERS.map(h => (
+              {headers.map(h => (
                 <TableHead key={h} className="text-[11px] font-medium uppercase tracking-[0.6px] text-[#7b7b78] whitespace-nowrap">
                   {h}
                 </TableHead>
@@ -130,7 +138,7 @@ export function CampaignLeadsTable({ leads }: { leads: CampaignLead[] }) {
           <TableBody>
             {filtered.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={HEADERS.length} className="text-center text-[14px] text-[#7b7b78] py-8">
+                <TableCell colSpan={headers.length} className="text-center text-[14px] text-[#7b7b78] py-8">
                   Nenhum lead nesta campanha.
                 </TableCell>
               </TableRow>
@@ -182,6 +190,9 @@ export function CampaignLeadsTable({ leads }: { leads: CampaignLead[] }) {
                   >
                     {origem.texto}{origem.atual ? " (atual)" : ""}
                   </TableCell>
+                  <TableCell className="text-[13px] whitespace-nowrap">
+                    <PassouPor jornada={l.jornada} />
+                  </TableCell>
                   <TableCell className="text-[13px] tabular-nums text-[#7b7b78] whitespace-nowrap">
                     <span className="inline-flex items-center gap-1.5">
                       <span>{fmtDate(l.created_at)}</span>
@@ -195,6 +206,9 @@ export function CampaignLeadsTable({ leads }: { leads: CampaignLead[] }) {
                       ? <><span className="text-[#7b7b78] font-normal">{fmtDate(l.sold_at)} </span>{fmtBRL(l.valor)}</>
                       : "—"}
                   </TableCell>
+                  {comMotivo && (
+                    <TableCell className="text-[13px] text-[#7b7b78] whitespace-nowrap">{l.motivo_sem_rastreio || "—"}</TableCell>
+                  )}
                 </TableRow>
               );
             })}

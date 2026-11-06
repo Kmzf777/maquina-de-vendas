@@ -121,10 +121,39 @@ _PAID_CHANNEL_MEDIUMS: frozenset[str] = frozenset(
 # (fn_lead_canal da 20261022c) e fora do "Leads" do relatório (D1).
 _ORIGENS_IMPORTADAS: frozenset[str] = frozenset({"bling_import", "reativacao_import"})
 
+# F5 (cartão C, 06/11/2026): canais com nome no lugar de "Sem rastreio". Em 15 a 21/10, 21 de 27
+# vendas caíram em "Sem rastreio" porque o CRM sabia como o lead entrou e o relatório não olhava.
+CANAL_SEM_RASTREIO = "Sem rastreio"
+CANAL_WHATSAPP_DIRETO = "WhatsApp direto"
+CANAL_MANUAL = "Cadastro manual / disparo"
+CANAL_CSV = "Importado (CSV)"
+CANAL_CLIENTE_ANTIGO = "Cliente antigo"
+CANAL_NUMERO_ANTIGO = "Número antigo / outro número"
+# leads.origem_cadastro -> canal, quando não há click-id nem UTM. Espelha fn_lead_canal (F5).
+_CANAL_POR_ORIGEM: dict[str, str] = {
+    "inbound": CANAL_WHATSAPP_DIRETO,
+    "manual": CANAL_MANUAL,
+    "csv_import": CANAL_CSV,
+}
+# Canais "sem sinal de anúncio": só eles recebem o contexto (cliente antigo, outro número…).
+_CANAIS_SEM_SINAL: frozenset[str] = frozenset(
+    {CANAL_WHATSAPP_DIRETO, CANAL_MANUAL, CANAL_CSV, CANAL_SEM_RASTREIO})
+# leads.channel de quem foi criado sem nunca ter escrito (antes da origem_cadastro existir, todo
+# lead ficou 'inbound' por padrão). Espelha fn_lead_canal_contexto.
+_CANAL_POR_LEAD_CHANNEL: dict[str, str] = {
+    "campaign": CANAL_MANUAL, "manual": CANAL_MANUAL, "broadcast": CANAL_MANUAL,
+    "bling": "Bling", "csv": CANAL_CSV,
+}
+
 
 def derive_channel(lead: dict[str, Any]) -> str:
     """Canal do lead. Prioridade: click-id > anúncio do Meta > utm_source de anúncio >
-    orgânico > sem rastreio.
+    orgânico > como entrou no CRM (origem_cadastro) > sem rastreio.
+
+    F5: sem click-id nem UTM, `origem_cadastro` dá o nome do canal — inbound vira "WhatsApp
+    direto", manual "Cadastro manual / disparo" e csv_import "Importado (CSV)". Lead sem
+    origem_cadastro no dict continua "Sem rastreio". O contexto que depende de outras tabelas
+    (cliente antigo, outro número, nunca escreveu) vem depois, em `aplicar_contexto_canal`.
 
     `meta_ad_id` (referral.source_id do CTWA) conta como sinal de canal pago junto dos
     click-ids: nem todo referral do WhatsApp traz `ctwa_clid`, mas o id do anúncio vem
@@ -153,7 +182,56 @@ def derive_channel(lead: dict[str, Any]) -> str:
         return "Google Ads"
     if _s(lead.get("traffic_type")).lower() == "organic" or source:
         return "Orgânico"
-    return "Sem rastreio"
+    return _CANAL_POR_ORIGEM.get(_s(lead.get("origem_cadastro")).lower(), CANAL_SEM_RASTREIO)
+
+
+def aplicar_contexto_canal(canal: str, *, cliente_antigo: bool | None = None,
+                           numero_antigo: str | None = None, tem_inbound: bool | None = None,
+                           lead_channel: str | None = None) -> str:
+    """Refina um canal "sem sinal de anúncio" com o que o CRM sabe do lead. Puro.
+
+    Espelha `public.fn_lead_canal_contexto` (migração 20261106_f5_jornada). Os sinais vêm de
+    `vw_lead_contexto_canal`; `None` = não sei, e aí o canal não muda.
+      1. cliente_antigo (já comprava antes do lead existir) -> "Cliente antigo";
+      2. numero_antigo (nome do canal de WhatsApp da 1ª conversa, quando não é o dos anúncios)
+         -> "Número antigo / outro número";
+      3. "WhatsApp direto" de quem NUNCA escreveu (tem_inbound = False): o lead antigo ficou
+         'inbound' por padrão. leads.channel diz como ele entrou (disparo, manual, Bling);
+         sem isso, "Sem rastreio".
+    Canal pago, Orgânico e Bling nunca mudam."""
+    if canal not in _CANAIS_SEM_SINAL:
+        return canal
+    if cliente_antigo:
+        return CANAL_CLIENTE_ANTIGO
+    if _s(numero_antigo) and canal in (CANAL_WHATSAPP_DIRETO, CANAL_SEM_RASTREIO):
+        return CANAL_NUMERO_ANTIGO
+    if canal == CANAL_WHATSAPP_DIRETO and tem_inbound is False:
+        return _CANAL_POR_LEAD_CHANNEL.get(_s(lead_channel).lower(), CANAL_SEM_RASTREIO)
+    return canal
+
+
+def _contexto(lead: dict[str, Any], com_toque: bool = False) -> dict[str, Any]:
+    """Sinais de contexto do lead. `com_toque`: o canal veio de uma entrada da linha do tempo, que
+    já prova como o lead chegou — "nunca escreveu" (tem_inbound) só vale para o lead estimado."""
+    return {"cliente_antigo": lead.get("cliente_antigo"),
+            "numero_antigo": lead.get("numero_antigo"),
+            "tem_inbound": None if com_toque else lead.get("tem_inbound"),
+            "lead_channel": lead.get("channel")}
+
+
+def motivo_sem_rastreio(lead: dict[str, Any]) -> str | None:
+    """Por que o lead sobrou em "Sem rastreio" (detalhe do /trafego, cartão C item 4). Puro."""
+    if lead_channel(lead) != CANAL_SEM_RASTREIO:
+        return None
+    origem = _s(lead.get("origem_cadastro")).lower()
+    if not origem:
+        return "Sem origem de cadastro"
+    if lead.get("tem_inbound") is False and not lead.get("_canal_toque"):
+        ch = _s(lead.get("channel")).lower()
+        return "Nunca mandou mensagem" + (f" (cadastro '{ch}')" if ch and ch != "whatsapp" else "")
+    if lead.get("tem_inbound") is None:
+        return "Sem nenhum sinal (contexto indisponível)"
+    return "Sem nenhum sinal"
 
 
 # Atribuição manual (P0: leads.campanha_manual_*). Um admin diz no /trafego de qual campanha o
@@ -171,9 +249,158 @@ def manual_attribution(lead: dict[str, Any]) -> tuple[str, str, str] | None:
 
 
 def lead_channel(lead: dict[str, Any]) -> str:
-    """Canal do lead no relatório: a atribuição manual vence o rastreio (derive_channel)."""
+    """Canal do lead no relatório: a atribuição manual vence o rastreio.
+
+    Sem manual: o canal do toque escolhido pela atribuição (`_canal_toque`, posto por
+    `atribuir_lead`) ou, sem toque, o derive_channel das colunas — e, nos dois, o contexto."""
     manual = manual_attribution(lead)
-    return manual[0] if manual else derive_channel(lead)
+    if manual:
+        return manual[0]
+    toque = lead.get("_canal_toque")
+    return aplicar_contexto_canal(toque or derive_channel(lead), **_contexto(lead, bool(toque)))
+
+
+# --- Jornada do lead (F5, cartão B) ------------------------------------------------------
+# A linha do tempo (`lead_events` tipo `entrada`) guarda cada toque com data. A jornada é a lista
+# desses toques; a atribuição escolhe UM deles (o primeiro ou o último antes do evento) e o
+# relatório roda sobre o rastreio daquele toque. Espelho SQL: public.vw_lead_jornada.
+ATRIBUICOES = ("ultima", "primeira")
+_TRACK_KEYS = ("gclid", "gbraid", "wbraid", "fbclid", "ctwa_clid", "meta_ad_id",
+               "utm_source", "utm_medium", "utm_campaign", "traffic_type")
+_SETA = " → "
+
+
+def canal_da_entrada(entrada: dict[str, Any]) -> str:
+    """Canal de UM toque. Puro; espelha a coluna `canal` de vw_lead_jornada.
+
+    O rastreio gravado no metadata manda (mesma regra do derive_channel, sem origem). Toque sem
+    rastreio usa o rótulo gravado: a entrada automática "Orgânico" (sem_rastreio) é o "WhatsApp
+    direto" (cartão C, unificado), e os toques novos já vêm com o nome ("WhatsApp direto",
+    "Google Ads" do botão do Google)."""
+    meta = entrada.get("metadata") or {}
+    canal = derive_channel({k: meta.get(k) for k in _TRACK_KEYS})
+    if canal != CANAL_SEM_RASTREIO:
+        return canal
+    rotulo = _s(meta.get("canal")) or _s(entrada.get("new_value"))
+    if rotulo == "Orgânico" and meta.get("sem_rastreio") in (True, "true"):
+        return CANAL_WHATSAPP_DIRETO
+    return rotulo or CANAL_SEM_RASTREIO
+
+
+def _toques(entradas: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Entradas válidas em ordem cronológica, cada uma com o canal já resolvido."""
+    out = []
+    for e in entradas or []:
+        em = _parse_iso(e.get("occurred_at"))
+        if em is None:
+            continue
+        out.append({"em": em, "canal": canal_da_entrada(e), "entrada": e})
+    out.sort(key=lambda t: t["em"])
+    return out
+
+
+def _sem_repetir(canais: list[str]) -> list[str]:
+    out: list[str] = []
+    for c in canais:
+        if not out or out[-1] != c:
+            out.append(c)
+    return out
+
+
+def jornada_do_lead(lead: dict[str, Any], entradas: list[dict[str, Any]],
+                    ate: Any = None) -> dict[str, Any]:
+    """Uma linha por lead, como vw_lead_jornada: primeira/última origem, origens na ordem (sem
+    repetir seguidas), n_toques, multicanal. Puro.
+
+    `ate` (venda, repasse) corta a ÚLTIMA origem: é o último toque com occurred_at <= ate. Sem
+    toque até lá, vale o primeiro. Lead sem nenhuma entrada (antigo) cai no canal das colunas
+    (derive_channel + contexto), marcado como `estimado`. A primeira e a última recebem o contexto
+    (cliente antigo…); `origens` mostra os toques como foram gravados."""
+    toques = _toques(entradas)
+    if not toques:
+        canal = aplicar_contexto_canal(derive_channel(lead), **_contexto(lead))
+        return {"primeira_origem": canal, "primeira_em": None, "ultima_origem": canal,
+                "ultima_em": None, "origens": [canal], "toques": [], "n_toques": 0,
+                "multicanal": False, "estimado": True}
+    limite = _parse_iso(ate) if isinstance(ate, str) else ate
+    antes = [t for t in toques if limite is None or t["em"] <= limite] or toques[:1]
+    primeiro, ultimo = toques[0], antes[-1]
+    ctx = _contexto(lead, com_toque=True)
+    canais = [t["canal"] for t in toques]
+    return {
+        "primeira_origem": aplicar_contexto_canal(primeiro["canal"], **ctx),
+        "primeira_em": primeiro["em"].isoformat(),
+        "ultima_origem": aplicar_contexto_canal(ultimo["canal"], **ctx),
+        "ultima_em": ultimo["em"].isoformat(),
+        "origens": _sem_repetir(canais),
+        "toques": [{"canal": t["canal"], "em": t["em"].isoformat()} for t in toques],
+        "n_toques": len(toques),
+        "multicanal": len(set(canais)) >= 2,
+        "estimado": False,
+    }
+
+
+def toque_atribuido(entradas: list[dict[str, Any]], atribuicao: str,
+                    ate: Any = None) -> dict[str, Any] | None:
+    """A entrada que leva o crédito: a primeira, ou a última com occurred_at <= `ate`. Puro."""
+    toques = _toques(entradas)
+    if not toques:
+        return None
+    if atribuicao == "primeira":
+        return toques[0]["entrada"]
+    limite = _parse_iso(ate) if isinstance(ate, str) else ate
+    antes = [t for t in toques if limite is None or t["em"] <= limite] or toques[:1]
+    return antes[-1]["entrada"]
+
+
+def atribuir_lead(lead: dict[str, Any], entradas: list[dict[str, Any]], atribuicao: str,
+                  ate: Any = None) -> dict[str, Any]:
+    """Cópia do lead com o rastreio do toque atribuído no lugar das colunas. Puro.
+
+    As colunas do lead guardam o ÚLTIMO valor de cada campo, misturando cliques (quem passou
+    pelo Meta e pelo Google fica com ctwa_clid E gclid, e a prioridade fixa jogava todos no
+    Google). Aqui o lead "vira" o toque escolhido: campanha, anúncio e UTM daquele clique. Sem
+    entrada, o lead fica como está (estimado). A atribuição manual continua valendo por cima."""
+    toque = toque_atribuido(entradas, atribuicao, ate)
+    out = dict(lead)
+    out["_jornada"] = jornada_do_lead(lead, entradas, ate)
+    if toque is None:
+        return out
+    meta = toque.get("metadata") or {}
+    for k in _TRACK_KEYS:
+        out[k] = meta.get(k)
+    out["_canal_toque"] = canal_da_entrada(toque)
+    if _s(meta.get("campanha_id")):
+        out["_campanha_id"] = _s(meta.get("campanha_id"))
+    return out
+
+
+def build_jornadas(leads: list[dict[str, Any]], sales_by_lead: dict[str, dict[str, Any]],
+                   top: int = 5) -> dict[str, Any]:
+    """Bloco "Jornadas com mais de um canal": quantos leads e vendas do período passaram por 2
+    canais ou mais, e os `top` caminhos mais comuns. Puro; `leads` já têm `_jornada`."""
+    caminhos: dict[str, dict[str, Any]] = {}
+    tot = {"leads": 0, "clientes": 0, "pedidos": 0, "receita": 0.0}
+    for l in leads:
+        j = l.get("_jornada") or {}
+        if not j.get("multicanal"):
+            continue
+        sale = sales_by_lead.get(l.get("id")) or {}
+        caminho = _SETA.join(j.get("origens") or [])
+        c = caminhos.setdefault(caminho, {"caminho": caminho, "leads": 0, "clientes": 0,
+                                          "pedidos": 0, "receita": 0.0})
+        for d in (c, tot):
+            d["leads"] += 1
+            if sale:
+                d["clientes"] += 1
+                d["pedidos"] += int(sale.get("count", 0) or 0)
+                d["receita"] += float(sale.get("value", 0.0) or 0.0)
+    ordem = sorted(caminhos.values(), key=lambda c: (-c["pedidos"], -c["receita"], -c["leads"],
+                                                     c["caminho"]))
+    for c in ordem:
+        c["receita"] = round(c["receita"], 2)
+    tot["receita"] = round(tot["receita"], 2)
+    return {**tot, "total_leads": len(leads), "caminhos": ordem[:top]}
 
 
 _UNATTRIBUTED = "(não atribuído)"
@@ -256,7 +483,7 @@ def build_campaign_report(
     for lead in leads:
         lead_id = lead.get("id")
         manual = manual_attribution(lead)
-        channel = manual[0] if manual else derive_channel(lead)
+        channel = lead_channel(lead)
         raw_campaign = _s(lead.get("utm_campaign"))
         campaigns = campaigns_by_channel.get(channel)
         cid = None
@@ -267,7 +494,7 @@ def build_campaign_report(
             cid = manual[1]
             label = campaigns[cid]["name"] if campaigns and cid in campaigns else manual[2]
         elif campaigns:
-            platform_cid = campaign_id_by_lead.get(lead_id)
+            platform_cid = _s(lead.get("_campanha_id")) or campaign_id_by_lead.get(lead_id)
             if platform_cid and platform_cid in campaigns:
                 cid = platform_cid
             else:
@@ -448,7 +675,8 @@ def merge_period_report(lead_report: dict[str, Any], sale_report: dict[str, Any]
 
 # --- Relatório geral (bloco acima da tabela) -------------------------------------------
 _PAID_CHANNELS = ("Google Ads", "Meta Ads")
-_CHANNEL_ORDER = ("Google Ads", "Meta Ads", "Orgânico", "Bling", "Sem rastreio")
+_CHANNEL_ORDER = ("Google Ads", "Meta Ads", "Orgânico", CANAL_WHATSAPP_DIRETO, CANAL_CLIENTE_ANTIGO,
+                  CANAL_NUMERO_ANTIGO, CANAL_MANUAL, CANAL_CSV, "Bling", CANAL_SEM_RASTREIO)
 _FUNNEL_STAGES = ("conversa", "closer", "cliente")
 _COUNT_KEYS = ("leads", "conversas", "closer", "clientes")
 
@@ -578,7 +806,9 @@ _LEAD_COLS = ("id, name, phone, created_at, gclid, gbraid, wbraid, fbclid, ctwa_
               "utm_source, utm_medium, utm_campaign, traffic_type, origem_cadastro, "
               # b67f1c6b: segmento do lead (leads.segmento; `stage` é a reserva do lead
               # ainda não migrado) — mesma migration-par de origem_cadastro.
-              "segmento, stage")
+              "segmento, stage, "
+              # F5: leads.channel diz como o lead antigo (sem origem_cadastro de verdade) entrou.
+              "channel")
 
 
 class _MetaAdCol:
@@ -879,12 +1109,124 @@ def _leads_por_id(leads: list[dict[str, Any]], mode: str) -> dict[str, dict[str,
     return {l["id"]: l for l in leads if l.get("id")}
 
 
-def _empty_report(mode: str, period: str) -> dict[str, Any]:
+def _empty_report(mode: str, period: str, atribuicao: str = "ultima") -> dict[str, Any]:
     report = {"mode": mode, "period": period, "rows": [], "channel_subtotals": {},
               "total": {"leads": 0, "conversas": 0, "closer": 0, "clientes": 0, "pedidos": 0,
                         "receita": 0.0, "frete": 0.0, "investimento": 0.0, "roas": None}}
     report["summary"] = build_report_summary(report, [], {})
+    vazio = {k: report[k] for k in _CHAVES_ATRIBUICAO if k in report}
+    report["atribuicao"] = atribuicao
+    report["por_atribuicao"] = {a: vazio for a in ATRIBUICOES}
+    report["jornadas"] = build_jornadas([], {})
+    report["sem_rastreio"] = {"leads": 0, "motivos": []}
     return report
+
+
+# --- Jornada: I/O (fail-soft) -------------------------------------------------------------
+_CHAVES_ATRIBUICAO = ("rows", "total", "channel_subtotals", "summary", "entraram_ja_clientes")
+# Colunas de vw_lead_contexto_canal (migração 20261106_f5_jornada).
+_CONTEXTO_COLS = ("tem_inbound", "cliente_antigo", "numero_antigo")
+
+
+def _entradas_por_lead(sb, lead_ids: list[str]) -> dict[str, list[dict[str, Any]]]:
+    """lead_id -> entradas (toques) da linha do tempo. Fail-soft: {} = todo lead "estimado"."""
+    out: dict[str, list[dict[str, Any]]] = {}
+    try:
+        for chunk in _chunks(lead_ids):
+            rows = _fetch_all(lambda c=chunk: sb.table("lead_events")
+                              .select("id, lead_id, occurred_at, new_value, source, metadata")
+                              .in_("lead_id", c).eq("event_type", "entrada"))
+            for r in rows:
+                if r.get("lead_id"):
+                    out.setdefault(r["lead_id"], []).append(r)
+    except Exception as exc:
+        logger.warning("traffic_report: entradas da linha do tempo indisponíveis: %s", exc)
+        return {}
+    return out
+
+
+def _com_contexto(sb, leads: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Cópias dos leads com tem_inbound/cliente_antigo/numero_antigo (vw_lead_contexto_canal).
+
+    Fail-soft: sem a view (migração pendente) os leads voltam sem contexto e os canais ficam só
+    pelas colunas (WhatsApp direto / Cadastro manual / Importado / Sem rastreio)."""
+    ids = [l["id"] for l in leads if l.get("id")]
+    ctx: dict[str, dict[str, Any]] = {}
+    try:
+        for chunk in _chunks(ids):
+            rows = _fetch_all(lambda c=chunk: sb.table("vw_lead_contexto_canal")
+                              .select("lead_id, " + ", ".join(_CONTEXTO_COLS))
+                              .in_("lead_id", c), ordem="lead_id")
+            for r in rows:
+                if r.get("lead_id"):
+                    ctx[r["lead_id"]] = {k: r.get(k) for k in _CONTEXTO_COLS}
+    except Exception as exc:
+        logger.warning("traffic_report: vw_lead_contexto_canal indisponível (migração F5 pendente?): %s", exc)
+        ctx = {}
+    return [{**l, **ctx.get(l.get("id"), {})} for l in leads]
+
+
+def _repasse_em(sb, lead_ids: list[str]) -> dict[str, str]:
+    """lead_id -> 1º repasse (ISO). Corte da última origem de quem não comprou. Fail-soft."""
+    out: dict[str, str] = {}
+    try:
+        for chunk in _chunks(lead_ids):
+            rows = _fetch_all(lambda c=chunk: sb.table("lead_events").select("id, lead_id, occurred_at")
+                              .in_("lead_id", c).eq("event_type", "repasse"))
+            for r in rows:
+                lid, em = r.get("lead_id"), r.get("occurred_at")
+                if lid and isinstance(em, str) and (lid not in out or em < out[lid]):
+                    out[lid] = em
+    except Exception as exc:
+        logger.warning("traffic_report: repasses indisponíveis: %s", exc)
+    return out
+
+
+def _multicanal_ids(entradas: dict[str, list[dict[str, Any]]]) -> list[str]:
+    """Leads cujos toques têm mais de um canal: só neles o corte (venda/repasse) muda algo."""
+    return sorted(lid for lid, es in entradas.items()
+                  if len({canal_da_entrada(e) for e in es}) > 1)
+
+
+def _atribuir_leads(sb, leads: list[dict[str, Any]], atribuicoes: tuple[str, ...], mode: str,
+                    lo: str | None, hi: str | None,
+                    sales: dict[str, dict[str, Any]] | None = None) -> dict[str, list[dict[str, Any]]]:
+    """{atribuicao: leads atribuídos}. `leads` já com contexto.
+
+    O corte da última origem é a venda (a última do recorte), senão o 1º repasse, senão o fim da
+    janela. Venda e repasse só são buscados para quem tem toques de mais de um canal."""
+    ids = [l["id"] for l in leads if l.get("id")]
+    entradas = _entradas_por_lead(sb, ids)
+    multi = _multicanal_ids(entradas)
+    if multi and sales is None:
+        multi_set = set(multi)
+        sel = [l for l in leads if l.get("id") in multi_set]
+        sales = _sales_by_lead(sb, multi, lo, hi, mode, leads_por_id=_leads_por_id(sel, mode))
+    sales = sales or {}
+    repasse = _repasse_em(sb, multi) if multi else {}
+
+    def _ate(l):
+        sale = sales.get(l.get("id")) or {}
+        return sale.get("last_sold_at") or repasse.get(l.get("id")) or hi
+
+    return {a: [atribuir_lead(l, entradas.get(l.get("id"), []), a, _ate(l)) for l in leads]
+            for a in atribuicoes}
+
+
+def _atribuicao_valida(atribuicao: str | None) -> str:
+    return atribuicao if atribuicao in ATRIBUICOES else "ultima"
+
+
+def resumo_sem_rastreio(leads: list[dict[str, Any]]) -> dict[str, Any]:
+    """Quantos sobraram em "Sem rastreio" e por quê (cartão C item 4). Puro."""
+    motivos: dict[str, int] = {}
+    for l in leads:
+        m = motivo_sem_rastreio(l)
+        if m:
+            motivos[m] = motivos.get(m, 0) + 1
+    lista = sorted(({"motivo": m, "leads": n} for m, n in motivos.items()),
+                   key=lambda d: (-d["leads"], d["motivo"]))
+    return {"leads": sum(motivos.values()), "motivos": lista}
 
 
 def _spend_by_campaign(sb, lo: str | None, hi: str | None, platform: str = "google") -> list[dict[str, Any]]:
@@ -981,7 +1323,7 @@ def _select_auto(in_channel, campaign, campaigns, campaign_id_by_lead):
         return [l for l in in_channel if (_s(l.get("utm_campaign")) or _NO_CAMPAIGN) == campaign]
 
     def _resolve(l):
-        cid = campaign_id_by_lead.get(l.get("id"))
+        cid = _s(l.get("_campanha_id")) or campaign_id_by_lead.get(l.get("id"))
         if cid and cid in campaigns:
             return cid
         return resolve_campaign_id(_s(l.get("utm_campaign")), _s(l.get("utm_medium")), campaigns)
@@ -1050,9 +1392,12 @@ def build_campaign_timeseries(days: list[date], leads: list[dict[str, Any]],
 
 
 def _parte_da_campanha(sb, channel: str, campaign: str, mode: str, period: str,
-                       lo: str | None, hi: str | None, spend):
-    """(linha do relatório, leads selecionados, vendas que contam) de UMA campanha num modo puro."""
-    all_leads = _fetch_leads(sb, mode, lo, hi)
+                       lo: str | None, hi: str | None, spend, atribuicao: str = "ultima"):
+    """(linha do relatório, leads selecionados, vendas que contam) de UMA campanha num modo puro.
+
+    F5: os leads entram atribuídos pelo toque escolhido (`atribuicao`), como no relatório."""
+    all_leads = _atribuir_leads(sb, _com_contexto(sb, _fetch_leads(sb, mode, lo, hi)),
+                                (atribuicao,), mode, lo, hi)[atribuicao]
     camp_by_lead = _meta_campaign_by_lead(sb, all_leads)
     campaigns = _index_campaigns(spend.get(channel))
     selected = select_campaign_leads(all_leads, channel, campaign, campaigns, camp_by_lead)
@@ -1079,11 +1424,13 @@ def _parte_da_campanha(sb, channel: str, campaign: str, mode: str, period: str,
 
 
 def _campaign_detail_periodo(sb, channel: str, campaign: str, period: str, lo, hi,
-                             date_from, date_to) -> dict[str, Any]:
+                             date_from, date_to, atribuicao: str = "ultima") -> dict[str, Any]:
     """Detalhe no modo período: leads/closer da turma do período + vendas do período."""
     spend = _spend_by_channel(sb, lo, hi)
-    linha_lead, sel_lead, _ = _parte_da_campanha(sb, channel, campaign, "lead", period, lo, hi, spend)
-    linha_venda, _, vendas = _parte_da_campanha(sb, channel, campaign, "sale", period, lo, hi, spend)
+    linha_lead, sel_lead, _ = _parte_da_campanha(sb, channel, campaign, "lead", period, lo, hi,
+                                                 spend, atribuicao)
+    linha_venda, _, vendas = _parte_da_campanha(sb, channel, campaign, "sale", period, lo, hi,
+                                                spend, atribuicao)
     inv = next((float(c["cost"]) for c in _index_campaigns(spend.get(channel)).values()
                 if c["name"] == campaign), 0.0)
     fundida = merge_period_report(
@@ -1097,20 +1444,26 @@ def _campaign_detail_periodo(sb, channel: str, campaign: str, period: str, lo, h
         summary["investimento"] = round(inv, 2)
         _finalizar_linha_periodo(summary)
     summary["campaign"] = campaign
-    leads = campaign_leads(channel, campaign, period, MODO_PERIODO, date_from, date_to)
+    leads = campaign_leads(channel, campaign, period, MODO_PERIODO, date_from, date_to, atribuicao)
     timeseries = build_campaign_timeseries(_daterange_days(lo, hi), sel_lead, vendas)
     return {"summary": summary, "leads": leads, "timeseries": timeseries}
 
 
 def campaign_detail(channel: str, campaign: str, period: str = "30d", mode: str = MODO_PERIODO,
-                    date_from: str | None = None, date_to: str | None = None) -> dict[str, Any]:
-    """Detalhe de uma campanha: {summary, leads, timeseries}. Fail-soft."""
+                    date_from: str | None = None, date_to: str | None = None,
+                    atribuicao: str = "ultima") -> dict[str, Any]:
+    """Detalhe de uma campanha: {summary, leads, timeseries}. Fail-soft.
+
+    `atribuicao` (F5) escolhe o toque que põe o lead na linha, como no relatório."""
+    atribuicao = _atribuicao_valida(atribuicao)
     try:
         sb = get_supabase()
         lo, hi = _resolve_window(period, date_from, date_to)
         if mode == MODO_PERIODO:
-            return _campaign_detail_periodo(sb, channel, campaign, period, lo, hi, date_from, date_to)
-        all_leads = _fetch_leads(sb, mode, lo, hi)
+            return _campaign_detail_periodo(sb, channel, campaign, period, lo, hi, date_from,
+                                            date_to, atribuicao)
+        all_leads = _atribuir_leads(sb, _com_contexto(sb, _fetch_leads(sb, mode, lo, hi)),
+                                    (atribuicao,), mode, lo, hi)[atribuicao]
         spend_by_channel = _spend_by_channel(sb, lo, hi)
         camp_by_lead = _meta_campaign_by_lead(sb, all_leads)
         campaigns = _index_campaigns(spend_by_channel.get(channel))
@@ -1130,7 +1483,7 @@ def campaign_detail(channel: str, campaign: str, period: str = "30d", mode: str 
         # gastaram na janela sem lead selecionado (ver build_campaign_report).
         with_leads = [r for r in report.get("rows") or [] if r["leads"] > 0]
         summary = with_leads[0] if with_leads else _empty_summary(channel, campaign)
-        leads = campaign_leads(channel, campaign, period, mode, date_from, date_to)
+        leads = campaign_leads(channel, campaign, period, mode, date_from, date_to, atribuicao)
         sales_rows: list[dict[str, Any]] = []
         for chunk in _chunks(lead_ids):
             def _sq(c=chunk):
@@ -1150,42 +1503,113 @@ def campaign_detail(channel: str, campaign: str, period: str = "30d", mode: str 
 
 def _report_do_modo(sb, mode: str, period: str, lo: str | None, hi: str | None,
                     spend: dict[str, list[dict[str, Any]]]):
-    """(relatório, leads, vendas por lead) de um modo puro ("lead" ou "sale")."""
+    """({atribuição: relatório}, {atribuição: leads atribuídos}, vendas por lead) de um modo puro
+    ("lead" ou "sale"). F5: o mesmo conjunto de leads, atribuído pela última e pela primeira origem."""
     leads = _fetch_leads(sb, mode, lo, hi)
     lead_ids = [l["id"] for l in leads if l.get("id")]
     conversed = _conversed_ids(sb, lead_ids) if lead_ids else set()
     closers = _closer_ids(sb, lead_ids) if lead_ids else set()
     sales = (_sales_by_lead(sb, lead_ids, lo, hi, mode, leads_por_id=_leads_por_id(leads, mode))
              if lead_ids else {})
-    report = build_campaign_report(
-        leads, conversed, closers, sales, mode, period,
-        spend_by_channel=spend, campaign_id_by_lead=_meta_campaign_by_lead(sb, leads),
-    )
-    return report, leads, sales
+    por = (_atribuir_leads(sb, _com_contexto(sb, leads), ATRIBUICOES, mode, lo, hi, sales=sales)
+           if lead_ids else {a: [] for a in ATRIBUICOES})
+    reps = {a: build_campaign_report(ls, conversed, closers, sales, mode, period,
+                                     spend_by_channel=spend,
+                                     campaign_id_by_lead=_meta_campaign_by_lead(sb, ls))
+            for a, ls in por.items()}
+    return reps, por, sales
+
+
+def _juntar_atribuicoes(partes: dict[str, dict[str, Any]],
+                        leads_por_atribuicao: dict[str, list[dict[str, Any]]],
+                        sales: dict[str, dict[str, Any]], atribuicao: str) -> dict[str, Any]:
+    """Topo na atribuição pedida + `por_atribuicao` + `jornadas` + `sem_rastreio`. Puro."""
+    report = dict(partes[atribuicao])
+    report["atribuicao"] = atribuicao
+    report["por_atribuicao"] = {a: {k: r[k] for k in _CHAVES_ATRIBUICAO if k in r}
+                                for a, r in partes.items()}
+    base = leads_por_atribuicao.get("ultima") or next(iter(leads_por_atribuicao.values()), [])
+    report["jornadas"] = build_jornadas(base, sales)
+    report["sem_rastreio"] = resumo_sem_rastreio(leads_por_atribuicao.get(atribuicao) or base)
+    return report
+
+
+def montar_relatorio_atribuido(por_atribuicao: dict[str, list[dict[str, Any]]],
+                               conversed: set[str], closers: set[str],
+                               sales: dict[str, dict[str, Any]], mode: str, period: str,
+                               atribuicao: str = "ultima",
+                               spend_by_channel: dict[str, Any] | None = None,
+                               campaign_id_by_lead: dict[str, dict[str, str]] | None = None,
+                               ) -> dict[str, Any]:
+    """Relatório de um modo puro nas duas atribuições + jornadas + "Sem rastreio". Puro.
+
+    `por_atribuicao` = {"ultima": leads atribuídos, "primeira": ...} (mesmos leads, rastreio do
+    toque escolhido). As linhas e subtotais mudam; os totais de leads, vendas e receita não,
+    porque cada lead cai em exatamente uma linha nas duas. O topo do relatório é a atribuição
+    pedida (padrão: última, como a Tati trabalha)."""
+    campaign_id_by_lead = campaign_id_by_lead or {}
+    partes: dict[str, dict[str, Any]] = {}
+    for a, leads_a in por_atribuicao.items():
+        rep = build_campaign_report(leads_a, conversed, closers, sales, mode, period,
+                                    spend_by_channel=spend_by_channel,
+                                    campaign_id_by_lead=campaign_id_by_lead.get(a))
+        rep["summary"] = build_report_summary(rep, leads_a, sales)
+        partes[a] = rep
+    return _juntar_atribuicoes(partes, por_atribuicao, sales, atribuicao)
+
+
+def montar_relatorio_periodo(lead_reps: dict[str, dict[str, Any]],
+                             lead_por: dict[str, list[dict[str, Any]]],
+                             sale_reps: dict[str, dict[str, Any]],
+                             sale_por: dict[str, list[dict[str, Any]]],
+                             vendas: dict[str, dict[str, Any]], period: str,
+                             atribuicao: str = "ultima") -> dict[str, Any]:
+    """Modo período nas duas atribuições. Puro.
+
+    Em cada atribuição funde a turma do período (por lead) com as vendas do período (por venda),
+    como merge_period_report. Jornadas e "Sem rastreio" olham os dois grupos sem repetir lead."""
+    partes: dict[str, dict[str, Any]] = {}
+    juntos: dict[str, list[dict[str, Any]]] = {}
+    for a in ATRIBUICOES:
+        rep = merge_period_report(lead_reps.get(a) or {}, sale_reps.get(a) or {}, period)
+        # Tempo até a compra e recompra: sobre quem comprou no período.
+        rep["summary"] = build_report_summary(rep, sale_por.get(a) or [], vendas)
+        partes[a] = rep
+        vistos: set = set()
+        juntos[a] = []
+        for l in (lead_por.get(a) or []) + (sale_por.get(a) or []):
+            if l.get("id") not in vistos:
+                vistos.add(l.get("id"))
+                juntos[a].append(l)
+    return _juntar_atribuicoes(partes, juntos, vendas, atribuicao)
 
 
 def traffic_report(period: str = "30d", mode: str = MODO_PERIODO,
-                   date_from: str | None = None, date_to: str | None = None) -> dict[str, Any]:
-    """Relatório agregado por canal+campanha. Fail-soft: qualquer erro → relatório vazio."""
+                   date_from: str | None = None, date_to: str | None = None,
+                   atribuicao: str = "ultima") -> dict[str, Any]:
+    """Relatório agregado por canal+campanha. Fail-soft: qualquer erro → relatório vazio.
+
+    F5: devolve as duas atribuições (`por_atribuicao`), para a tela trocar sem nova consulta, o
+    bloco `jornadas` e o detalhe `sem_rastreio`."""
+    atribuicao = _atribuicao_valida(atribuicao)
     try:
         sb = get_supabase()
         lo, hi = _resolve_window(period, date_from, date_to)
         spend = _spend_by_channel(sb, lo, hi)
         if mode == MODO_PERIODO:
-            lead_rep, _, _ = _report_do_modo(sb, "lead", period, lo, hi, spend)
-            sale_rep, compradores, vendas = _report_do_modo(sb, "sale", period, lo, hi, spend)
-            report = merge_period_report(lead_rep, sale_rep, period)
-            # Tempo até a compra e recompra: sobre quem comprou no período.
-            report["summary"] = build_report_summary(report, compradores, vendas)
-            return report
-        report, leads, sales = _report_do_modo(sb, mode, period, lo, hi, spend)
-        if not leads:
-            return _empty_report(mode, period)
-        report["summary"] = build_report_summary(report, leads, sales)
-        return report
+            lead_reps, lead_por, _ = _report_do_modo(sb, "lead", period, lo, hi, spend)
+            sale_reps, sale_por, vendas = _report_do_modo(sb, "sale", period, lo, hi, spend)
+            return montar_relatorio_periodo(lead_reps, lead_por, sale_reps, sale_por, vendas,
+                                            period, atribuicao)
+        reps, por, sales = _report_do_modo(sb, mode, period, lo, hi, spend)
+        if not por.get("ultima"):
+            return _empty_report(mode, period, atribuicao)
+        for a, rep in reps.items():
+            rep["summary"] = build_report_summary(rep, por[a], sales)
+        return _juntar_atribuicoes(reps, por, sales, atribuicao)
     except Exception as exc:
         logger.error("traffic_report(%s,%s) falhou: %s", period, mode, exc, exc_info=True)
-        return _empty_report(mode, period)
+        return _empty_report(mode, period, atribuicao)
 
 
 def _primeira_origem(sb, lead_ids: list[str]) -> dict[str, dict[str, Any]]:
@@ -1208,14 +1632,27 @@ def _primeira_origem(sb, lead_ids: list[str]) -> dict[str, dict[str, Any]]:
         return {}
 
 
+def _jornada_publica(j: dict[str, Any] | None) -> dict[str, Any] | None:
+    """A jornada sem os objetos internos, pronta para o JSON do drill-down."""
+    if not j:
+        return None
+    return {k: j.get(k) for k in ("primeira_origem", "primeira_em", "ultima_origem", "ultima_em",
+                                  "origens", "toques", "n_toques", "multicanal", "estimado")}
+
+
 def _stage_info_map(sb) -> dict[str, dict[str, Any]]:
     stages = _fetch_all(lambda: sb.table("pipeline_stages").select("id, key, order_index"))
     return {s["id"]: {"key": s.get("key"), "order_index": s.get("order_index")} for s in stages}
 
 
 def campaign_leads(channel: str, campaign: str, period: str = "30d", mode: str = "lead",
-                   date_from: str | None = None, date_to: str | None = None) -> list[dict[str, Any]]:
-    """Leads de uma campanha (canal+utm_campaign) p/ o drill-down. Fail-soft: [] em erro."""
+                   date_from: str | None = None, date_to: str | None = None,
+                   atribuicao: str = "ultima") -> list[dict[str, Any]]:
+    """Leads de uma campanha (canal+utm_campaign) p/ o drill-down. Fail-soft: [] em erro.
+
+    F5: cada lead traz a `jornada` ("Passou por", com as datas) e, em "Sem rastreio", o
+    `motivo_sem_rastreio`."""
+    atribuicao = _atribuicao_valida(atribuicao)
     try:
         sb = get_supabase()
         lo, hi = _resolve_window(period, date_from, date_to)
@@ -1223,6 +1660,8 @@ def campaign_leads(channel: str, campaign: str, period: str = "30d", mode: str =
 
         def _sel(m: str) -> list[dict[str, Any]]:
             ls = _fetch_leads(sb, m, lo, hi, incluir_clientes=True)
+            # F5: o lead entra atribuído pelo toque escolhido, como no relatório.
+            ls = _atribuir_leads(sb, _com_contexto(sb, ls), (atribuicao,), m, lo, hi)[atribuicao]
             return select_campaign_leads(ls, channel, campaign, campaigns, _meta_campaign_by_lead(sb, ls))
 
         if mode == MODO_PERIODO:
@@ -1290,6 +1729,8 @@ def campaign_leads(channel: str, campaign: str, period: str = "30d", mode: str =
                 "primeira_origem": origem.get(lid),
                 # None fora do modo período; False = lead antigo que só comprou no período
                 "entrou_no_periodo": (lid in ids_entraram) if ids_entraram is not None else None,
+                "jornada": _jornada_publica(l.get("_jornada")),
+                "motivo_sem_rastreio": motivo_sem_rastreio(l),
             })
         out.sort(key=lambda r: (not r["comprou"], r.get("created_at") or ""), reverse=False)
         return out

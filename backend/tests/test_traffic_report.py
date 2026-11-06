@@ -676,7 +676,8 @@ def test_derive_channel_bling_para_importado_depois_dos_click_ids():
     assert derive_channel({"origem_cadastro": "bling_import", "utm_source": "metaads"}) == "Bling"
     assert derive_channel({"origem_cadastro": "bling_import", "gclid": "g"}) == "Google Ads"
     assert derive_channel({"origem_cadastro": "bling_import", "meta_ad_id": "1"}) == "Meta Ads"
-    assert derive_channel({"origem_cadastro": "inbound"}) == "Sem rastreio"
+    # F5 (cartão C): inbound sem sinal deixou de ser "Sem rastreio"
+    assert derive_channel({"origem_cadastro": "inbound"}) == "WhatsApp direto"
     assert derive_channel({"origem_cadastro": "manual", "utm_source": "instagram"}) == "Orgânico"
 
 
