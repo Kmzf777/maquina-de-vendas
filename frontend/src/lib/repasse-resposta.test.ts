@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  descreverEstado,
   fetchRepasseResposta,
   formatarMinutos,
   mapRepasseOverview,
@@ -109,5 +110,51 @@ describe("mapRepasseOverview", () => {
       minutos_uteis: null,
       respondeu: false,
     });
+  });
+});
+
+describe("descreverEstado (F2, estados da resposta ao repasse)", () => {
+  const base = linha("a", null, false);
+  it("vendedor respondeu: nada além do tempo", () => {
+    expect(descreverEstado({ ...linha("a", 12), estado: "vendedor_respondeu" })).toBeNull();
+  });
+  it("lead não respondeu não é falha", () => {
+    expect(descreverEstado({ ...base, estado: "lead_nao_respondeu" })).toEqual({
+      texto: "Lead não respondeu ao vendedor",
+      falha: false,
+    });
+  });
+  it("em aberto mostra a espera em minutos úteis", () => {
+    expect(descreverEstado({ ...base, estado: "em_aberto", minutos_uteis_espera: 45 })).toEqual({
+      texto: "Em aberto: lead espera há 45 min úteis",
+      falha: false,
+    });
+  });
+  it("em aberto sem espera = contato automático agendado", () => {
+    expect(descreverEstado({ ...base, estado: "em_aberto", minutos_uteis_espera: null })?.texto).toBe(
+      "Em aberto: contato do vendedor agendado",
+    );
+  });
+  it("vendedor não respondeu é falha; numeric do Postgres chega como string", () => {
+    expect(
+      descreverEstado({ ...base, estado: "vendedor_nao_respondeu", minutos_uteis_espera: "150.0" as unknown as number }),
+    ).toEqual({ texto: "Vendedor não respondeu: lead espera há 2h 30min úteis", falha: true });
+  });
+  it("sem contato é falha do sistema", () => {
+    expect(descreverEstado({ ...base, estado: "sem_contato" })).toEqual({
+      texto: "Sem contato do vendedor (falha do sistema)",
+      falha: true,
+    });
+  });
+  it("vendedor fora do CRM (Arthur) não é cobrado", () => {
+    expect(descreverEstado({ ...base, estado: "sem_contato", fora_do_crm: true })).toEqual({
+      texto: "Vendedor atende fora do CRM",
+      falha: false,
+    });
+  });
+  it("view antiga sem estado: o Aguardando de antes", () => {
+    expect(descreverEstado(base)).toEqual({ texto: "Aguardando há 30 min", falha: false });
+    expect(descreverEstado(linha("a", 12))).toBeNull();
+    expect(descreverEstado(null)).toBeNull();
   });
 });
