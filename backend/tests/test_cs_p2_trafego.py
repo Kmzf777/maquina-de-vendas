@@ -204,7 +204,9 @@ def test_fetch_all_pagina_com_ordem_estavel():
     assert [r["id"] for r in out] == ["00", "01", "02", "03", "04"]
 
 
-_CHAVE_UNICA = {"meta_ad_campaigns": "ad_id", "lead_primeira_origem": "lead_id"}
+# F5: vw_lead_contexto_canal tem uma linha por lead.
+_CHAVE_UNICA = {"meta_ad_campaigns": "ad_id", "lead_primeira_origem": "lead_id",
+                "vw_lead_contexto_canal": "lead_id"}
 
 
 def test_toda_paginacao_do_relatorio_ordena_por_chave_unica(monkeypatch):
