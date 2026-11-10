@@ -310,7 +310,7 @@ async def test_autoresponder_nao_responde_e_nao_gasta_o_nudge(ligado):
     """28% das 'respostas' da base são o robô do WhatsApp Business do próprio cliente."""
     provider = _provider()
     historico = [{"role": "assistant", "content": "olá",
-                  "created_at": (AGORA - timedelta(seconds=40)).isoformat()}]
+                  "created_at": (datetime.now(timezone.utc) - timedelta(seconds=40)).isoformat()}]
     with ExitStack() as stack:
         mocks = _patch_runner(stack, historico=historico)
         crm = _patch_crm(stack)
@@ -342,7 +342,7 @@ async def test_detector_real_de_autoresponder_esta_plugado(ligado):
     """
     provider = _provider()
     historico = [{"role": "assistant", "content": "olá",
-                  "created_at": (AGORA - timedelta(seconds=30)).isoformat()}]
+                  "created_at": (datetime.now(timezone.utc) - timedelta(seconds=30)).isoformat()}]
     with ExitStack() as stack:
         mocks = _patch_runner(stack, historico=historico)
         _patch_crm(stack)
