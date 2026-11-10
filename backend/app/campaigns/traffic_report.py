@@ -195,9 +195,12 @@ def aplicar_contexto_canal(canal: str, *, cliente_antigo: bool | None = None,
       1. cliente_antigo (já comprava antes do lead existir) -> "Cliente antigo";
       2. numero_antigo (nome do canal de WhatsApp da 1ª conversa, quando não é o dos anúncios)
          -> "Número antigo / outro número";
-      3. "WhatsApp direto" de quem NUNCA escreveu (tem_inbound = False): o lead antigo ficou
-         'inbound' por padrão. leads.channel diz como ele entrou (disparo, manual, Bling);
-         sem isso, "Sem rastreio".
+      3. "WhatsApp direto" cujo leads.channel diz que o lead foi CADASTRADO (manual, disparo,
+         Bling, CSV): vale o cadastro, mesmo que ele tenha escrito depois. Diagnóstico de
+         10/11/2026: 470 leads com channel 'manual' e origem 'inbound' (padrão de quem existia
+         antes da coluna origem_cadastro);
+      4. "WhatsApp direto" de quem NUNCA escreveu (tem_inbound = False) e sem cadastro
+         conhecido: "Sem rastreio".
     Canal pago, Orgânico e Bling nunca mudam."""
     if canal not in _CANAIS_SEM_SINAL:
         return canal
@@ -205,8 +208,12 @@ def aplicar_contexto_canal(canal: str, *, cliente_antigo: bool | None = None,
         return CANAL_CLIENTE_ANTIGO
     if _s(numero_antigo) and canal in (CANAL_WHATSAPP_DIRETO, CANAL_SEM_RASTREIO):
         return CANAL_NUMERO_ANTIGO
-    if canal == CANAL_WHATSAPP_DIRETO and tem_inbound is False:
-        return _CANAL_POR_LEAD_CHANNEL.get(_s(lead_channel).lower(), CANAL_SEM_RASTREIO)
+    if canal == CANAL_WHATSAPP_DIRETO:
+        cadastro = _CANAL_POR_LEAD_CHANNEL.get(_s(lead_channel).lower())
+        if cadastro:
+            return cadastro
+        if tem_inbound is False:
+            return CANAL_SEM_RASTREIO
     return canal
 
 

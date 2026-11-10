@@ -69,6 +69,8 @@ def test_contexto_espelha_aplicar_contexto_canal():
     assert {s.strip().strip("'") for s in m.group(1).split(",")} == set(tr._CANAIS_SEM_SINAL)
     bloco = corpo.split("-- _CANAL_POR_LEAD_CHANNEL")[1].split("else 'Sem rastreio'")[0]
     assert dict(re.findall(r"when '([a-z_]+)' then '([^']+)'", bloco)) == tr._CANAL_POR_LEAD_CHANNEL
+    lista = re.search(r"fn_lead_txt\(p_lead_channel\) = any \(array\[([^\]]*)\]\)", corpo).group(1)
+    assert {x.strip().strip("'") for x in lista.split(",")} == set(tr._CANAL_POR_LEAD_CHANNEL)
     # ordem: cliente antigo > outro número > nunca escreveu
     i_cli = corpo.index("then 'Cliente antigo'")
     i_num = corpo.index("then 'Número antigo / outro número'")

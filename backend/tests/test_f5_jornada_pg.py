@@ -52,6 +52,7 @@ CONTEXTO_CASOS = [
     for ctx in ({}, {"cliente_antigo": True}, {"numero_antigo": "Velho"}, {"numero_antigo": " "},
                 {"tem_inbound": False}, {"tem_inbound": False, "lead_channel": "campaign"},
                 {"tem_inbound": False, "lead_channel": " BLING "}, {"tem_inbound": True},
+                {"tem_inbound": True, "lead_channel": "manual"}, {"lead_channel": "evolution"},
                 {"cliente_antigo": False, "numero_antigo": "X", "tem_inbound": False})
 ]
 ENTRADA_CASOS = [

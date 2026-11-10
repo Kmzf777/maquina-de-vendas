@@ -72,7 +72,9 @@ returns text language sql immutable as $$
     when coalesce(p_cliente_antigo, false) then 'Cliente antigo'
     when public.fn_lead_txt(p_numero_antigo) <> '' and p_canal in ('WhatsApp direto', 'Sem rastreio')
       then 'Número antigo / outro número'
-    when p_canal = 'WhatsApp direto' and p_tem_inbound is false then
+    -- leads.channel de cadastro vence o 'inbound' padrão (470 leads 'manual' + 'inbound', 10/11)
+    when p_canal = 'WhatsApp direto'
+     and public.fn_lead_txt(p_lead_channel) = any (array['campaign', 'manual', 'broadcast', 'bling', 'csv']) then
       case public.fn_lead_txt(p_lead_channel) -- _CANAL_POR_LEAD_CHANNEL
         when 'campaign' then 'Cadastro manual / disparo'
         when 'manual' then 'Cadastro manual / disparo'
@@ -81,6 +83,7 @@ returns text language sql immutable as $$
         when 'csv' then 'Importado (CSV)'
         else 'Sem rastreio'
       end
+    when p_canal = 'WhatsApp direto' and p_tem_inbound is false then 'Sem rastreio'
     else p_canal
   end
 $$;

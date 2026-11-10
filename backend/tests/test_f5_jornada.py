@@ -243,6 +243,10 @@ def test_origem_cadastro_vem_depois_dos_click_ids_e_utms():
     ("WhatsApp direto", {"tem_inbound": False, "lead_channel": "campaign"}, "Cadastro manual / disparo"),
     ("WhatsApp direto", {"tem_inbound": False, "lead_channel": "Bling"}, "Bling"),
     ("WhatsApp direto", {"tem_inbound": None}, "WhatsApp direto"),
+    # diagnóstico de 10/11: o cadastro manual/disparo vale mesmo para quem escreveu depois
+    ("WhatsApp direto", {"tem_inbound": True, "lead_channel": "manual"}, "Cadastro manual / disparo"),
+    ("WhatsApp direto", {"lead_channel": "evolution"}, "WhatsApp direto"),
+    ("WhatsApp direto", {"cliente_antigo": True, "lead_channel": "manual"}, "Cliente antigo"),
     ("WhatsApp direto", {"tem_inbound": True}, "WhatsApp direto"),
     ("Meta Ads", {"cliente_antigo": True, "numero_antigo": "x"}, "Meta Ads"),
     ("Google Ads", {"cliente_antigo": True}, "Google Ads"),
