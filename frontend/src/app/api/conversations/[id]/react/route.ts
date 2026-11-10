@@ -2,6 +2,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { getServiceSupabase } from "@/lib/supabase/api";
 import { describeMetaReactionError } from "@/lib/meta-error";
 import { isLeadBlocked, MENSAGEM_LEAD_BLOQUEADO } from "@/lib/supabase/lead-blocked";
+import { resolveSendTarget, LEAD_SEND_FIELDS, type SendTargetLead } from "@/lib/whatsapp/send-target";
 
 const META_API_VERSION = "v21.0";
 
@@ -35,7 +36,7 @@ export async function POST(
 
   const { data: conv, error: convError } = await supabase
     .from("conversations")
-    .select("*, leads(id, phone, opt_out), channels(id, provider, provider_config)")
+    .select(`*, leads(id, ${LEAD_SEND_FIELDS}, opt_out), channels(id, provider, provider_config)`)
     .eq("id", conversationId)
     .single();
 
@@ -48,9 +49,11 @@ export async function POST(
     provider: string;
     provider_config: Record<string, string>;
   } | null;
-  const lead = conv.leads as { id: string; phone: string; opt_out?: boolean | null } | null;
+  const lead = conv.leads as ({ id: string; opt_out?: boolean | null } & SendTargetLead) | null;
 
-  if (!channel || !lead?.phone) {
+  // Endereço ENTREGÁVEL (wa_id real quando houver) — ver lib/whatsapp/send-target.ts.
+  const target = resolveSendTarget(lead);
+  if (!channel || !lead || !target) {
     return NextResponse.json({ error: "Invalid conversation data" }, { status: 400 });
   }
   if (channel.provider !== "meta_cloud") {
@@ -83,7 +86,7 @@ export async function POST(
         },
         body: JSON.stringify({
           messaging_product: "whatsapp",
-          to: lead.phone,
+          to: target,
           type: "reaction",
           reaction: { message_id: targetWamid, emoji },
         }),

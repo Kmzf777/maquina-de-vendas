@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { getServiceSupabase } from "@/lib/supabase/api";
 import { isLeadBlocked, MENSAGEM_LEAD_BLOQUEADO } from "@/lib/supabase/lead-blocked";
+import { resolveSendTarget, LEAD_SEND_FIELDS, type SendTargetLead } from "@/lib/whatsapp/send-target";
 
 function parseEvoId(id: string): { channelId: string; phone: string } | null {
   if (!id.startsWith("evo_")) return null;
@@ -87,7 +88,7 @@ export async function POST(
   // Regular DB conversation
   const { data: conv, error: convError } = await supabase
     .from("conversations")
-    .select("*, leads(id, phone, opt_out), channels(id, provider, provider_config)")
+    .select(`*, leads(id, ${LEAD_SEND_FIELDS}, opt_out), channels(id, provider, provider_config)`)
     .eq("id", conversationId)
     .single();
 
@@ -100,9 +101,11 @@ export async function POST(
     provider: string;
     provider_config: Record<string, string>;
   } | null;
-  const lead = conv.leads as { id: string; phone: string; opt_out?: boolean | null } | null;
+  const lead = conv.leads as ({ id: string; opt_out?: boolean | null } & SendTargetLead) | null;
 
-  if (!channel || !lead?.phone) {
+  // Endereço ENTREGÁVEL (wa_id real quando houver) — ver lib/whatsapp/send-target.ts.
+  const target = resolveSendTarget(lead);
+  if (!channel || !lead || !target) {
     return NextResponse.json({ error: "Invalid conversation data" }, { status: 400 });
   }
 
@@ -117,11 +120,15 @@ export async function POST(
   try {
     let sentWamid: string | null = null;
     if (channel.provider === "evolution") {
+      // Evolution segue usando o phone (comportamento anterior: sem phone → 400).
+      if (!lead.phone) {
+        return NextResponse.json({ error: "Invalid conversation data" }, { status: 400 });
+      }
       await sendViaEvolution(channel.provider_config, lead.phone, text.trim());
     } else if (channel.provider === "meta_cloud") {
       sentWamid = await sendViaMeta(
         channel.provider_config,
-        lead.phone,
+        target,
         text.trim(),
         quoted_wamid ?? null,
       );

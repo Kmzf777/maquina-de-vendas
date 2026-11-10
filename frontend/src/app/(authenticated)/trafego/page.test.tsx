@@ -17,7 +17,11 @@ vi.mock("@/components/ui/select", () => ({
   SelectContent: () => null,
   SelectItem: () => null,
 }));
-vi.mock("@/components/ui/switch", () => ({ Switch: () => null }));
+vi.mock("@/components/ui/switch", () => ({
+  Switch: ({ checked, "aria-label": label }: { checked: boolean; "aria-label"?: string }) => (
+    <input type="checkbox" role="switch" aria-label={label} checked={checked} readOnly />
+  ),
+}));
 vi.mock("@/components/trafego/campaign-report-table", () => ({ CampaignReportTable: () => null }));
 vi.mock("@/components/trafego/report-summary", () => ({ ReportSummaryPanel: () => null }));
 vi.mock("@/components/trafego/conversoes-enviadas", () => ({
@@ -56,5 +60,38 @@ describe("TrafegoPage", () => {
 
     fireEvent.click(campanhas);
     await vi.waitFor(() => expect(urls.filter((u) => u.startsWith("/api/traffic/report")).length).toBe(antes + 1));
+  });
+});
+
+
+describe("TrafegoPage — frente F1", () => {
+  it("abre por venda, mostra a frase e pede o relatório com mode=sale", async () => {
+    const urls: string[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (url: string) => {
+      urls.push(url);
+      return { ok: true, status: 200, json: async () => ({ rows: [], total: {}, channel_subtotals: {} }) };
+    }));
+    render(<TrafegoPage />);
+    const sw = screen.getByRole("switch", { name: "Por venda" }) as HTMLInputElement;
+    expect(sw.checked).toBe(true);
+    expect(screen.getByTestId("frase-modo").textContent).toBe("Por venda: toda venda do período, de lead novo ou antigo");
+    await vi.waitFor(() => expect(urls.some((u) => u.startsWith("/api/traffic/report") && u.includes("mode=sale"))).toBe(true));
+  });
+
+  it("mostra embaixo do Atualizar quando cada plataforma sincronizou ou falhou", async () => {
+    vi.stubGlobal("fetch", vi.fn(async (url: string) => ({
+      ok: true,
+      status: 200,
+      json: async () => url === "/api/traffic/sync-status"
+        ? { plataformas: {
+            google: { status: "falha", motivo: "HTTP 404 em v22", em: "2026-11-06T17:30:00Z" },
+            meta: { status: "ok", linhas: 12, em: "2026-11-06T17:31:00Z" },
+          } }
+        : { rows: [], total: {}, channel_subtotals: {} },
+    })));
+    render(<TrafegoPage />);
+    const status = await screen.findByTestId("status-sync");
+    expect(status.textContent).toContain("Google: falhou em 06/11 14:30: HTTP 404 em v22");
+    expect(status.textContent).toContain("Meta: sincronizado em 06/11 14:31");
   });
 });

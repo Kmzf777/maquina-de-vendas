@@ -49,3 +49,28 @@ def test_api_version_overridable_by_env(monkeypatch):
     assert g._api_version() == "v23"
     monkeypatch.delenv("GOOGLE_ADS_API_VERSION")
     assert g._api_version() == g._DEFAULT_API_VERSION
+
+
+def test_api_version_padrao_e_v24(monkeypatch):
+    """Trava a versão padrão: a próxima troca tem de ser consciente (mudar aqui e no código).
+    Sem GOOGLE_ADS_API_VERSION no ambiente, o sync usa v24 (a v22 do código estava a um passo
+    do sunset e produção só funcionava porque a env dizia v24)."""
+    monkeypatch.delenv("GOOGLE_ADS_API_VERSION", raising=False)
+    assert g._DEFAULT_API_VERSION == "v24"
+    assert g._api_version() == "v24"
+    monkeypatch.setenv("GOOGLE_ADS_API_VERSION", "")
+    assert g._api_version() == "v24"
+
+
+def test_token_que_falha_vira_erro_e_nao_zero_mudo(monkeypatch):
+    """Refresh token vencido não pode parecer "dia sem gasto"."""
+    import asyncio
+    for k in g._REQUIRED_ENV:
+        monkeypatch.setenv(k, "x")
+
+    async def sem_token():
+        return None
+    monkeypatch.setattr(g, "_get_access_token", sem_token)
+    import pytest
+    with pytest.raises(g.AdsFetchError):
+        asyncio.run(g.fetch_campaign_spend("2026-08-01", "2026-08-31"))

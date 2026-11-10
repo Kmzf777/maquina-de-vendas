@@ -11,6 +11,14 @@ from app.conversions.types import SendResult
 NOW = datetime(2026, 10, 8, 12, tzinfo=timezone.utc)
 
 
+@pytest.fixture(autouse=True)
+def _zera_avisos_dados():
+    # O aviso de etapa do Google sem ação sai uma vez por processo: cada teste começa do zero.
+    sender_mod._avisos_dados.clear()
+    yield
+    sender_mod._avisos_dados.clear()
+
+
 def _row(**kw):
     r = {"id": "R1", "platform": "meta", "stage": "qualified", "attempts": 0,
          "event_at": (NOW - timedelta(days=1)).isoformat(), "click_at": (NOW - timedelta(days=2)).isoformat()}
@@ -567,3 +575,20 @@ def test_simulate_sender_conta_plataformas_pedidas_sem_estarem_ligadas(monkeypat
     assert sum(res["enviaria"].values()) == 1 and res["fora_da_janela"] == 1
     assert res["backfill_days"] == 90
     assert _updates(log) == []
+
+
+def test_aviso_de_acao_google_faltando_sai_uma_vez_por_processo(monkeypatch, caplog):
+    """F1 item 5: a falta de GOOGLE_ADS_CONVERSION_ACTION_LEAD é proposital desde 13/10; o
+    WARNING a cada tick (30 s) só enchia o log. Sai uma vez; se a combinação muda, sai de novo."""
+    _google_env(monkeypatch, stages=("qualified", "purchase"))
+    with caplog.at_level("WARNING"):
+        sender_mod._google_stages()
+        sender_mod._google_stages()
+        sender_mod._google_stages()
+    avisos = [r for r in caplog.records if "GOOGLE_ADS_CONVERSION_ACTION_LEAD" in r.getMessage()]
+    assert len(avisos) == 1
+    caplog.clear()
+    _google_env(monkeypatch, stages=("purchase",))
+    with caplog.at_level("WARNING"):
+        sender_mod._google_stages()
+    assert [r for r in caplog.records if "QUALIFIED" in r.getMessage()]
