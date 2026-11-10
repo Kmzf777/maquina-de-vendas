@@ -1,7 +1,7 @@
 fastapi>=0.115.0,<1.0
 uvicorn[standard]>=0.34.0,<1.0
 redis>=5.0.0,<6.0
-supabase>=2.28.0,<3.0
+supabase>=2.28.0,<2.34  # 2.34 traz postgrest com retry+sleep (até 30 s) em GET que falha por rede: trava a API se o Supabase engasgar e levou o CI de 6 min para 2h40 (10/11/2026)
 httpx>=0.28.0,<1.0
 python-dotenv>=1.0.0,<2.0
 python-multipart>=0.0.20,<1.0
