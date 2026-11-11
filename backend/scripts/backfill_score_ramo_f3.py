@@ -89,9 +89,12 @@ def _conversas(desde: str):
     db = get_supabase()
     inicio = 0
     while True:
-        res = (db.table("conversations").select("id, lead_id, flow_state, updated_at")
-               .gte("updated_at", desde).not_.is_("flow_state", "null")
-               .order("updated_at").range(inicio, inicio + _PAGINA - 1).execute())
+        # `conversations` não tem `updated_at`: a data do último turno do fluxo é o
+        # `flow_state.updated_at` (ISO em UTC, gravado por `_persistir_estado`), e a
+        # comparação de texto ISO no mesmo formato ordena certo.
+        res = (db.table("conversations").select("id, lead_id, flow_state")
+               .gte("flow_state->>updated_at", desde)
+               .order("created_at").order("id").range(inicio, inicio + _PAGINA - 1).execute())
         linhas = res.data or []
         yield from linhas
         if len(linhas) < _PAGINA:
