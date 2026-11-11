@@ -519,7 +519,11 @@ NOS: dict[str, No] = {
     "C1": replace(
         _NOS_V1["C1"],
         # F3: consumo que pede quantidade responde volume e CNPJ antes da tabela.
-        botoes=(replace(_C1_V1["quantidade"], destino="QA_VOL"), _C1_V1["duvida"]),
+        # "Tenho uma dúvida" ia a T_HUMANO, que não avisa ninguém (a "Valéria muda"
+        # da F2: 28 leads em 30 dias, 16 escreveram de novo sem resposta). Agora pede
+        # a pergunta (VO), e a pergunta vai ao vendedor.
+        botoes=(replace(_C1_V1["quantidade"], destino="QA_VOL"),
+                replace(_C1_V1["duvida"], destino="VO")),
     ),
     "E1": _NOS_V1["E1"],
     "E2": _NOS_V1["E2"],
@@ -576,6 +580,14 @@ DESQUALIFICA_NO_DESTINO: dict[str, str] = {
     "C1": DESQ_CONSUMIDOR_FINAL,
     "T_SEM_CNPJ": DESQ_SEM_CNPJ,
 }
+
+
+# Terminais SEM repasse de onde o lead pode voltar pedindo gente (F3, 11/11/2026):
+# o motor os trata como encerrados (ignora "obrigado", reação, robô), mas pergunta,
+# pedido de vendedor ou toque num botão antigo de contato ("Sim, quero falar")
+# viram repasse. Antes o lead do T_ADIADO que tocou "Sim, quero falar" e mandou
+# áudio ficou sem resposta (tel. final 5468, achado da F2).
+TERMINAIS_QUE_REABREM = frozenset({"T_ADIADO", "T_FIM", "T_HUMANO", "T_SEM_CNPJ"})
 
 
 def destino_qa1(respostas: dict) -> str:

@@ -619,15 +619,27 @@ async def test_frase_exata_de_saida_nao_gasta_llm(turno):
 @pytest.mark.asyncio
 @pytest.mark.parametrize("terminal", ["T_HUMANO", "T_FIM"])
 async def test_lead_encerrado_na_v1_nao_recomeca_na_v2(turno, terminal):
-    """Na v1 esses leads estão em silêncio para sempre; a troca de perfil não os reabre."""
+    """A troca de perfil não recomeça o fluxo: "obrigado" (RUIDO) segue ignorado."""
     turno.conversa["flow_state"] = {"flow": "valeria_botoes_v1", "node": terminal, "nudges": 3}
-    estado = await turno("oi, ainda tem café?")
+    estado = await turno("obrigado")
     assert turno.motivo is None
     assert turno.provedor.chamadas == []
     assert turno.registro["efeitos"] == []
     assert turno.registro["gravacoes"] == []
-    turno.classificar.assert_not_called()
     assert estado == {"flow": "valeria_botoes_v1", "node": terminal, "nudges": 3}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("terminal", ["T_HUMANO", "T_FIM"])
+async def test_lead_encerrado_na_v1_que_pergunta_e_repassado(turno, terminal):
+    """F3: a "Valéria muda" — quem volta perguntando vai ao João, com mensagem e cartão."""
+    turno.conversa["flow_state"] = {"flow": "valeria_botoes_v1", "node": terminal, "nudges": 3}
+    turno.classificar.return_value = Classificacao("PERGUNTA")
+    estado = await turno("Como faço pra comprar")
+    assert estado["node"] == "T_HANDOFF" and estado["flow"] == r2.FLOW_ID
+    assert turno.registro["efeitos"][-1].handoff is True
+    assert turno.provedor.tipos()[-1] == "cartao"
+    assert turno.registro["notas"][-1].endswith("Origem do repasse: PERGUNTA: Como faço pra comprar")
 
 
 @pytest.mark.asyncio

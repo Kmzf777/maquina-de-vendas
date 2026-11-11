@@ -224,7 +224,9 @@ def test_faq_descricao_cobre_todo_faq_e_preco():
 def test_c1_e_exportacao_copiados_da_v1():
     c1 = {b.id: b for b in r.NOS["C1"].botoes}
     assert c1["quantidade"].destino == "QA_VOL"  # F3: volume e CNPJ antes da tabela
-    assert c1["duvida"] == {b.id: b for b in v1.NOS["C1"].botoes}["duvida"]
+    # F3: "Tenho uma dúvida" pede a pergunta (VO) em vez de cair no T_HUMANO mudo.
+    assert c1["duvida"].destino == "VO"
+    assert c1["duvida"].rotulo == {b.id: b for b in v1.NOS["C1"].botoes}["duvida"].rotulo
     assert r.NOS["C1"].corpo == v1.NOS["C1"].corpo
     for e in ("E1", "E2", "E3", "E4"):
         assert r.NOS[e] == v1.NOS[e], e

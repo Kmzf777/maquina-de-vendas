@@ -150,8 +150,13 @@ def decidir(
     if no_atual != ID_OPTOUT and _e_optout(evento):
         return ctx.ir_para(ID_OPTOUT)
 
-    # 5. Fluxo encerrado: nenhum turno acontece.
+    # 5. Fluxo encerrado: nenhum turno acontece — salvo o lead que volta de um
+    # terminal sem repasse pedindo gente (F3, `r.TERMINAIS_QUE_REABREM`).
     if v1._encerrado(no_atual, nos, terminais):
+        if no_atual in r.TERMINAIS_QUE_REABREM:
+            reaberto = ctx.reabrir(evento)
+            if reaberto is not None:
+                return reaberto
         return DecisaoV2(proximo_no=no_atual, ignorar=True)
 
     # 5b. Mensagem pronta do anúncio reenviada no meio do fluxo (lead que tocou o
@@ -301,6 +306,45 @@ class _Ctx:
         """
         destino = r.HANDOFF_DO_RAMO.get(self.ramo or "", sem_vendedor)
         return self.ir_para(destino, repasse_motivo=motivo, **extra)
+
+    def reabrir(self, evento: object) -> DecisaoV2 | None:
+        """Lead num terminal sem repasse que pede contato: repasse; senão None.
+
+        Clique: um botão antigo cujo destino é repasse ("Sim, quero falar" do E4/P4
+        depois do adiamento) vai ao MESMO vendedor que o botão levaria. Texto: o
+        classificador (o runner classifica nestes terminais) — qualquer etiqueta
+        que não seja RUIDO/SAIR é alguém querendo conversa. "Obrigado", reação e
+        robô continuam ignorados (RUIDO ou texto sem etiqueta).
+        """
+        if isinstance(evento, Clique):
+            botao = self._botao_de_contato(evento.payload)
+            if botao is None:
+                return None
+            ramo_do_botao, botao = botao
+            motivo = f'clicou "{botao.rotulo}" depois de {self.no_atual}'
+            # Botão de outro ramo (o "sim" da marca própria só existe na v1; na v2 o
+            # único "sim" é o do Arthur): vale o vendedor do ramo da conversa.
+            if botao.destino == "handoff" or (self.ramo and ramo_do_botao != self.ramo):
+                return self.handoff(motivo)
+            return self.ir_para(botao.destino, repasse_motivo=motivo)
+        if isinstance(evento, TextoClassificado) and evento.classe not in ("RUIDO", "SAIR"):
+            classe = "VENDEDOR" if evento.classe == "VENDEDOR" else "PERGUNTA"
+            return self.handoff(f"{classe}: {(evento.conteudo or '')[:_LIMITE_TEXTO_MOTIVO]}")
+        return None
+
+    def _botao_de_contato(self, payload: str | None) -> tuple[str, reg1.Botao] | None:
+        """(ramo do nó, botão) de QUALQUER nó com este id cujo destino é repasse; o do
+        ramo da conversa vence."""
+        if not payload:
+            return None
+        achados = []
+        for no in self.nos.values():
+            for b in no.botoes:
+                t = self.terminais.get(b.destino)
+                if b.id == payload and (b.destino == "handoff" or (t is not None and t.handoff)):
+                    achados.append((no.ramo, b))
+        achados.sort(key=lambda par: par[0] != self.ramo)
+        return achados[0] if achados else None
 
     def faq(self, faq_id: str, retorno: str, **extra) -> DecisaoV2:
         return self.tela(retorno, faq=faq_id, **extra)
@@ -486,6 +530,7 @@ class _Ctx:
             extra = {"vitrine": "acoes"} if self.no_atual in VITRINES else {}
             return DecisaoV2(proximo_no=self.no_atual, mensagem=mensagem,
                              marcar_nudge=True, memoria={"ruidos": n}, **extra)
-        # Sem ramo, texto que ninguém entendeu NÃO é pergunta: segue T_HUMANO.
-        return self.handoff(MOTIVO_RUIDO, sem_vendedor=ID_HUMANO, memoria={"ruidos": n})
+        # F3 (11/11/2026): sem ramo também vai ao João (era T_HUMANO, que só
+        # desligava a IA e deixava o lead sem resposta — a "Valéria muda" da F2).
+        return self.handoff(MOTIVO_RUIDO, memoria={"ruidos": n})
 

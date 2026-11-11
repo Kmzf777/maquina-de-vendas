@@ -651,7 +651,10 @@ async def _classificar(evento, *, no: str | None, estado, conteudo: _Conteudo,
     if no is None:
         return evento
     botoes = motor_v1._botoes_declarados(no, conteudo.nos, conteudo.terminais)
-    if botoes is None or motor_v1._encerrado(no, conteudo.nos, conteudo.terminais):
+    if botoes is None:
+        return evento
+    if (motor_v1._encerrado(no, conteudo.nos, conteudo.terminais)
+            and no not in r2.TERMINAIS_QUE_REABREM):
         return evento
 
     if motor.primeira_tela(evento.conteudo) in motor.VITRINES:
@@ -711,12 +714,14 @@ async def _executar_turno(
     pediu_saida = isinstance(evento, Texto) and (
         normalizar(evento.conteudo) in motor_v1.FRASES_OPTOUT
         or valeria_classifier.pediu_para_sair_v2(evento.conteudo))
-    # Lead que a v1 encerrou em silêncio: o turno não acontece (como `ignorar`). Só o
-    # pedido de saída passa — o opt-out vence o encerramento, na v1 e aqui.
-    if not pediu_saida and encerrado_na_v1(estado):
-        logger.info("%s lead encerrado na v1 (%s) — v2 não recomeça conv=%s", _LOG,
+    # Lead que a v1 encerrou em silêncio (T_HUMANO/T_FIM): a v2 não recomeça o fluxo,
+    # mas trata o estado como o MESMO terminal da v2 (os ids são iguais). Assim o
+    # motor ignora "obrigado" e reação, como antes, e repassa quem volta pedindo
+    # gente (F3, `TERMINAIS_QUE_REABREM`).
+    if encerrado_na_v1(estado):
+        logger.info("%s lead encerrado na v1 (%s) — lido como terminal da v2 conv=%s", _LOG,
                     estado.get("node"), conversation_id)
-        return None
+        estado = {**estado, "flow": r2.FLOW_ID}
 
     # O pedido de saída vence o detector do robô do lead (a v1 faz o mesmo com a
     # lista exata, dentro de `_e_robo_do_lead`).

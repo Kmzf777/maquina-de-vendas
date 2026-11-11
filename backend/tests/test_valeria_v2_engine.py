@@ -154,7 +154,7 @@ def test_nao_quero_trocar_de_fornecedor_nao_e_optout():
 
 
 # ── 5. Encerrado ────────────────────────────────────────────────────────────
-@pytest.mark.parametrize("terminal", ["T_HANDOFF", "T_HANDOFF_PL", "T_KIT", "T_HUMANO", "T_FIM"])
+@pytest.mark.parametrize("terminal", ["T_HANDOFF", "T_HANDOFF_PL", "T_KIT"])
 def test_terminal_encerrado_ignora(terminal):
     d = _decidir(terminal, _tc("PERGUNTA", "e o frete?"), _est(terminal))
     assert d.ignorar is True
@@ -492,9 +492,10 @@ def test_pergunta_e_vendedor_em_consumo_vao_para_o_joao(classe):
     assert d.repasse_motivo == f"{classe}: dá pra comprar 1 pacote?"
 
 
-def test_segundo_ruido_em_consumo_continua_humano():
+def test_segundo_ruido_em_consumo_vai_ao_joao():
+    """F3: era T_HUMANO, que não avisava ninguém ("Valéria muda" da F2)."""
     d = _decidir("C1", _tc("RUIDO", "?"), _est("C1", ramo=None, ruidos=1))
-    assert d.proximo_no == "T_HUMANO"
+    assert d.proximo_no == "T_HANDOFF" and d.efeitos.handoff is True
     assert d.repasse_motivo == motor.MOTIVO_RUIDO
 
 
@@ -530,9 +531,10 @@ def test_ruido_na_vitrine_reenvia_acoes():
     assert d.mensagem.botoes == NOS["VA"].botoes
 
 
-def test_segundo_ruido_sem_ramo_vai_para_humano():
+def test_segundo_ruido_sem_ramo_vai_ao_joao():
     d = _decidir("N0", _tc("RUIDO", "?"), _est("N0", ramo=None, ruidos=1))
-    assert d.proximo_no == "T_HUMANO"
+    assert d.proximo_no == "T_HANDOFF"
+    assert d.repasse_motivo == motor.MOTIVO_RUIDO
 
 
 def test_classe_desconhecida_e_ruido():
@@ -820,3 +822,53 @@ def test_mensagem_pronta_no_meio_volta_as_perguntas_se_nao_passou_do_cnpj():
 def test_mensagem_pronta_no_meio_volta_a_vitrine_se_ja_passou_do_cnpj():
     d = _decidir("QA1", Texto(MSG_ATACADO), _est("QA1", respostas={"QA_CNPJ": "cnpj"}))
     assert d.proximo_no == "VA" and d.vitrine == "completa"
+
+
+# ── F3 (11/11/2026): terminal sem repasse reabre quando o lead pede gente ────
+@pytest.mark.parametrize("terminal", sorted(r.TERMINAIS_QUE_REABREM))
+def test_reabre_com_pergunta(terminal):
+    d = _decidir(terminal, _tc("PERGUNTA", "como faço pra comprar?"), _est(terminal))
+    assert d.ignorar is False and d.efeitos.handoff is True
+    assert d.proximo_no == "T_HANDOFF"
+    assert d.repasse_motivo == "PERGUNTA: como faço pra comprar?"
+
+
+@pytest.mark.parametrize("terminal", sorted(r.TERMINAIS_QUE_REABREM))
+@pytest.mark.parametrize("evento", [_tc("RUIDO", "obrigado"), Texto("obrigado"),
+                                    _clique("botao_que_nao_existe")])
+def test_reaberto_ignora_obrigado_e_lixo(terminal, evento):
+    assert _decidir(terminal, evento, _est(terminal)).ignorar is True
+
+
+def test_faq_depois_do_terminal_tambem_e_pergunta():
+    d = _decidir("T_HUMANO", _tc("FAQ", "quanto custa o saco de café cru?", faq_id="preco"),
+                 _est("T_HUMANO", ramo=None))
+    assert d.proximo_no == "T_HANDOFF"
+
+
+def test_vendedor_depois_do_adiamento_vai_ao_vendedor_do_ramo():
+    d = _decidir("T_ADIADO", _tc("VENDEDOR", "quero falar"), _est("T_ADIADO", ramo="private_label"))
+    assert d.proximo_no == "T_HANDOFF_PL"
+    assert d.repasse_motivo == "VENDEDOR: quero falar"
+
+
+def test_sim_quero_falar_depois_do_adiamento_vai_ao_arthur():
+    """Tel. final 5468: tocou "Sim, quero falar" (E4) depois do "te chamo em 90 dias"."""
+    d = _decidir("T_ADIADO", _clique("sim", "Sim, quero falar"), _est("T_ADIADO", ramo="exportacao"))
+    assert d.proximo_no == "T_HANDOFF_ARTHUR" and d.efeitos.handoff is True
+    assert d.repasse_motivo == 'clicou "Sim, quero falar" depois de T_ADIADO'
+
+
+def test_sim_quero_falar_no_ramo_pl_vai_ao_joao_pl():
+    d = _decidir("T_ADIADO", _clique("sim"), _est("T_ADIADO", ramo="private_label"))
+    assert d.proximo_no == "T_HANDOFF_PL"
+
+
+def test_t_optout_continua_ignorando_tudo():
+    d = _decidir("T_OPTOUT", _tc("PERGUNTA", "oi?"), _est("T_OPTOUT"))
+    assert d.ignorar is True
+
+
+def test_c1_tenho_duvida_pede_a_pergunta():
+    d = _decidir("C1", _clique("duvida"), _est("C1", ramo="consumo"))
+    assert d.proximo_no == "VO"
