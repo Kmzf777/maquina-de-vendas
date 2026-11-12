@@ -65,17 +65,17 @@ describe("TrafegoPage", () => {
 
 
 describe("TrafegoPage — frente F1", () => {
-  it("abre por venda, mostra a frase e pede o relatório com mode=sale", async () => {
+  it("abre na visão do período, mostra a frase e pede o relatório com mode=periodo", async () => {
     const urls: string[] = [];
     vi.stubGlobal("fetch", vi.fn(async (url: string) => {
       urls.push(url);
       return { ok: true, status: 200, json: async () => ({ rows: [], total: {}, channel_subtotals: {} }) };
     }));
     render(<TrafegoPage />);
-    const sw = screen.getByRole("switch", { name: "Por venda" }) as HTMLInputElement;
-    expect(sw.checked).toBe(true);
-    expect(screen.getByTestId("frase-modo").textContent).toBe("Por venda: toda venda do período, de lead novo ou antigo");
-    await vi.waitFor(() => expect(urls.some((u) => u.startsWith("/api/traffic/report") && u.includes("mode=sale"))).toBe(true));
+    const sw = screen.getByRole("switch", { name: "Por turma" }) as HTMLInputElement;
+    expect(sw.checked).toBe(false);
+    expect(screen.getByTestId("frase-modo").textContent).toContain("toda venda do período");
+    await vi.waitFor(() => expect(urls.some((u) => u.startsWith("/api/traffic/report") && u.includes("mode=periodo"))).toBe(true));
   });
 
   it("mostra embaixo do Atualizar quando cada plataforma sincronizou ou falhou", async () => {

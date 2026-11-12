@@ -7,7 +7,7 @@ export async function GET(req: Request) {
   const sp = new URL(req.url).searchParams;
   const params: Record<string, string> = {
     period: sp.get("period") || "30d",
-    mode: sp.get("mode") || "sale",
+    mode: sp.get("mode") || "periodo",
   };
   const dateFrom = sp.get("date_from");
   const dateTo = sp.get("date_to");

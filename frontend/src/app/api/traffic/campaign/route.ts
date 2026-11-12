@@ -9,7 +9,7 @@ export async function GET(req: Request) {
     channel: sp.get("channel") || "",
     campaign: sp.get("campaign") || "",
     period: sp.get("period") || "30d",
-    mode: sp.get("mode") || "sale",
+    mode: sp.get("mode") || "periodo",
   };
   const dateFrom = sp.get("date_from");
   const dateTo = sp.get("date_to");

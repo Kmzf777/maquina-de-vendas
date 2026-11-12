@@ -8,6 +8,7 @@ import {
   STAGE_LABEL, collapsedLine, fmtBRLOrDash, fmtDays, fmtInt, fmtPctOrDash, fmtRoasOrDash,
   type ReportSummary, type SummaryCost, type SummaryFunnel, type SummaryStage,
 } from "@/lib/traffic-summary";
+import type { TrafficMode } from "@/lib/traffic-mode";
 
 /** Campo do funil cumulativo (call de 01/10). Opcional: backend anterior não o manda. O tipo
  *  base mora em lib/traffic-summary.ts, fora do pacote P2 — por isso a extensão local. */
@@ -42,15 +43,18 @@ function Stat({ label, value, hint }: { label: string; value: string; hint?: str
 }
 
 // ---- 1. Funil ------------------------------------------------------------------------------
-function FunnelBand({ summary, mode }: { summary: ReportSummary; mode: "lead" | "sale" }) {
+function FunnelBand({ summary, mode }: { summary: ReportSummary; mode: TrafficMode }) {
   const f = summary.funnel;
   const entraram = (f as FunnelComEntrada).entraram_ja_clientes;
   const showRates = mode === "lead";
+  const periodo = mode === "periodo";
   const steps: { label: string; n: number; stage?: SummaryStage; rate?: number | null }[] = [
     { label: "Leads", n: f.leads },
     { label: "Conversas", n: f.conversas, stage: "conversa", rate: f.taxa_conversa },
     { label: "Closer", n: f.closer, stage: "closer", rate: f.taxa_closer },
-    { label: "Clientes", n: f.clientes, stage: "cliente", rate: f.taxa_cliente },
+    periodo
+      ? { label: "Pedidos", n: f.pedidos ?? 0 }
+      : { label: "Clientes", n: f.clientes, stage: "cliente", rate: f.taxa_cliente },
   ];
   const width = (n: number) => (f.leads > 0 ? `${Math.max(2, (n / f.leads) * 100)}%` : "2%");
 
@@ -96,9 +100,20 @@ function FunnelBand({ summary, mode }: { summary: ReportSummary; mode: "lead" | 
             </p>
           )}
         </div>
+      ) : periodo ? (
+        <div className="flex flex-col gap-1 border-t border-[#dedbd6] pt-2">
+          <p className="text-[12px] text-[#7b7b78]">
+            Receita do período: <span className="text-[#111111] tabular-nums">{fmtBRLOrDash(f.receita ?? 0)}</span>
+            {" · "}{fmtInt(f.clientes)} {f.clientes === 1 ? "cliente" : "clientes"}
+          </p>
+          <p data-testid="nota-funil-periodo" className="text-[12px] text-[#7b7b78] leading-[1.45]">
+            Leads e closer: quem entrou no período. Pedidos: toda venda do período, de lead novo ou antigo.
+            Para a conversão de quem entrou, ligue Por turma.
+          </p>
+        </div>
       ) : (
         <p className="text-[12px] text-[#7b7b78] border-t border-[#dedbd6] pt-2 leading-[1.45]">
-          No modo Por venda a base já é quem comprou — leia o funil no modo Por lead.
+          Neste modo a base já é quem comprou — leia o funil no modo Por turma.
         </p>
       )}
     </Band>
@@ -138,8 +153,9 @@ function CostBand({ summary }: { summary: ReportSummary }) {
 }
 
 // ---- 3. Canais -----------------------------------------------------------------------------
-function ChannelsBand({ summary }: { summary: ReportSummary }) {
+function ChannelsBand({ summary, mode }: { summary: ReportSummary; mode: TrafficMode }) {
   const chans = summary.channels;
+  const periodo = mode === "periodo";
   return (
     <Band title="Canais">
       {chans.length === 0 ? (
@@ -152,13 +168,15 @@ function ChannelsBand({ summary }: { summary: ReportSummary }) {
                 <span className={`inline-flex items-center text-[11px] font-medium px-2 py-0.5 rounded-[4px] border whitespace-nowrap ${CHANNEL_STYLES[ch.channel] ?? CHANNEL_STYLES["Sem rastreio"]}`}>
                   {ch.channel}
                 </span>
-                <span className="text-[12px] text-[#7b7b78] tabular-nums">
-                  Lead → cliente <span className="text-[#111111]">{fmtPctOrDash(ch.taxa_total)}</span>
-                </span>
+                {!periodo && (
+                  <span className="text-[12px] text-[#7b7b78] tabular-nums">
+                    Lead → cliente <span className="text-[#111111]">{fmtPctOrDash(ch.taxa_total)}</span>
+                  </span>
+                )}
               </div>
               <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-0.5">
                 <span className="text-[13px] text-[#111111] tabular-nums">
-                  {fmtInt(ch.leads)} → {fmtInt(ch.conversas)} → {fmtInt(ch.closer)} → {fmtInt(ch.clientes)}
+                  {fmtInt(ch.leads)} → {fmtInt(ch.conversas)} → {fmtInt(ch.closer)} → {fmtInt(periodo ? (ch.pedidos ?? 0) : ch.clientes)}
                 </span>
                 <span className="text-[12px] text-[#7b7b78] tabular-nums">
                   {fmtBRLOrDash(ch.receita)}
@@ -170,7 +188,7 @@ function ChannelsBand({ summary }: { summary: ReportSummary }) {
         </ul>
       )}
       {chans.length > 0 && (
-        <p className="text-[11px] text-[#7b7b78]">leads → conversas → closer → clientes</p>
+        <p className="text-[11px] text-[#7b7b78]">leads → conversas → closer → {periodo ? "pedidos do período" : "clientes"}</p>
       )}
     </Band>
   );
@@ -199,7 +217,7 @@ function TimingBand({ summary }: { summary: ReportSummary }) {
   );
 }
 
-export function ReportSummaryPanel({ summary, mode }: { summary: ReportSummary; mode: "lead" | "sale" }) {
+export function ReportSummaryPanel({ summary, mode }: { summary: ReportSummary; mode: TrafficMode }) {
   const [collapsed, setCollapsed] = useState(false);
 
   useEffect(() => {
@@ -219,8 +237,8 @@ export function ReportSummaryPanel({ summary, mode }: { summary: ReportSummary; 
     <div className="bg-white border border-[#dedbd6] rounded-[8px]">
       <div className={`flex items-center justify-between gap-3 px-4 md:px-5 py-3 ${collapsed ? "" : "border-b border-[#dedbd6]"}`}>
         {collapsed ? (
-          <p className="text-[13px] text-[#111111] tabular-nums min-w-0 truncate" title={collapsedLine(summary)}>
-            {collapsedLine(summary)}
+          <p className="text-[13px] text-[#111111] tabular-nums min-w-0 truncate" title={collapsedLine(summary, mode)}>
+            {collapsedLine(summary, mode)}
           </p>
         ) : (
           <h2 className={LABEL}>Relatório geral</h2>
@@ -241,7 +259,7 @@ export function ReportSummaryPanel({ summary, mode }: { summary: ReportSummary; 
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-3 p-3 md:p-4">
           <FunnelBand summary={summary} mode={mode} />
           <CostBand summary={summary} />
-          <ChannelsBand summary={summary} />
+          <ChannelsBand summary={summary} mode={mode} />
           <TimingBand summary={summary} />
         </div>
       )}

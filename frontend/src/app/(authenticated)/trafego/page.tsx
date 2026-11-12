@@ -21,8 +21,9 @@ export default function TrafegoPage() {
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
   const [dateMode, setDateMode] = useState<"preset" | "mes" | "custom">("preset");
-  // Abre "por venda" (frente F1): o "por lead" escondia as vendas de lead antigo e a página
-  // mostrava 2 pedidos onde houve 27 (15–21/10).
+  // Abre na visão do período (12/11/2026): leads e closer de quem entrou, pedidos e receita de
+  // toda venda do período, na mesma tela. "Por turma" (coorte) é a opção para ver a conversão
+  // de quem entrou no período.
   const [mode, setMode] = useState<TrafficMode>(MODO_PADRAO);
   const [view, setView] = useState<"campanhas" | "conversoes">("campanhas");
   const router = useRouter();
@@ -135,8 +136,8 @@ export default function TrafegoPage() {
           {view === "campanhas" && (
             <div className="flex flex-col gap-0.5 max-w-[320px]">
               <label className="flex items-center gap-2 cursor-pointer">
-                <span className="text-[13px] text-[#7b7b78]">Por venda</span>
-                <Switch aria-label="Por venda" checked={mode === "sale"} onCheckedChange={(c) => setMode(c ? "sale" : "lead")} />
+                <span className="text-[13px] text-[#7b7b78]">Por turma</span>
+                <Switch aria-label="Por turma" checked={mode === "lead"} onCheckedChange={(c) => setMode(c ? "lead" : MODO_PADRAO)} />
               </label>
               <span data-testid="frase-modo" className="text-[12px] leading-[1.35] text-[#7b7b78]">{FRASE_MODO[mode]}</span>
             </div>
@@ -221,6 +222,7 @@ export default function TrafegoPage() {
               rows={report?.rows ?? []}
               total={report?.total}
               subtotals={report?.channel_subtotals ?? {}}
+              periodo={mode === "periodo"}
               onRowClick={(r) => {
                 const params: Record<string, string> = { channel: r.channel, campaign: r.campaign, period, mode };
                 if (dateFrom) params.date_from = dateFrom;

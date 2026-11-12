@@ -31,7 +31,7 @@ describe("proxy /api/traffic/leads", () => {
     const r = await GET(new Request("http://x/api/traffic/leads?channel=a&campaign=b"));
     expect(r.status).toBe(200);
     const [url, init] = fetchMock.mock.calls[0];
-    expect(String(url)).toContain("/api/traffic/leads?channel=a&campaign=b&period=30d&mode=sale");
+    expect(String(url)).toContain("/api/traffic/leads?channel=a&campaign=b&period=30d&mode=periodo");
     expect((init.headers as Record<string, string>).Authorization).toBe("Bearer tok-admin");
     expect(String(url)).not.toContain("tok-admin");
   });

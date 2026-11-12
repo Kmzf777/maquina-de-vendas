@@ -5,8 +5,10 @@ Todas as rotas exigem o JWT de admin (`exigir_admin`), que a proxy do Next repas
 antes de 06/11/2026 o /leads devolvia nome e telefone de lead para qualquer um, e o /sync-ads
 disparava chamadas às APIs de anúncio sem login (frente F1).
 
-O modo padrão é "sale" (por venda): quem abre um link sem ?mode= vê toda venda do período,
-como a página. "lead" mostra só os leads que entraram no período e as vendas deles.
+O modo padrão é "periodo" (12/11/2026): cada coluna conta pela própria data — leads, conversas e
+closer de quem entrou no período; clientes, pedidos e receita de toda venda do período. "lead"
+(por turma) mostra só os leads que entraram e as vendas deles até 30/90 dias; "sale" (só quem
+comprou) segue aceito para links antigos.
 """
 import uuid
 
@@ -23,11 +25,11 @@ from app.campaigns.ad_spend_sync import sync_all_ad_spend, ultimas_rodadas
 
 router = APIRouter(prefix="/api/traffic", tags=["traffic"])
 
-MODO_PADRAO = "sale"
+MODO_PADRAO = "periodo"
 
 
 def _modo(mode: str | None) -> str:
-    return mode if mode in ("lead", "sale") else MODO_PADRAO
+    return mode if mode in ("periodo", "lead", "sale") else MODO_PADRAO
 
 
 _bearer = HTTPBearer(auto_error=False)

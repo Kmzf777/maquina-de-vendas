@@ -2,14 +2,16 @@ import { describe, expect, it } from "vitest";
 import { FRASE_MODO, linhaSync, modoDaUrl } from "./traffic-mode";
 
 describe("traffic-mode", () => {
-  it("sem modo na URL é por venda", () => {
-    expect(modoDaUrl(null)).toBe("sale");
-    expect(modoDaUrl("xpto")).toBe("sale");
+  it("sem modo na URL é a visão do período", () => {
+    expect(modoDaUrl(null)).toBe("periodo");
+    expect(modoDaUrl("xpto")).toBe("periodo");
     expect(modoDaUrl("lead")).toBe("lead");
+    expect(modoDaUrl("sale")).toBe("sale");
   });
 
-  it("frases dos dois modos", () => {
-    expect(FRASE_MODO.sale).toBe("Por venda: toda venda do período, de lead novo ou antigo");
+  it("frases dos modos", () => {
+    expect(FRASE_MODO.periodo).toContain("toda venda do período");
+    expect(FRASE_MODO.periodo).toContain("quem entrou no período");
     expect(FRASE_MODO.lead).toContain("90 no B2B");
   });
 

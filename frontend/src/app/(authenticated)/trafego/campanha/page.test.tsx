@@ -1,7 +1,7 @@
 /**
  * @vitest-environment jsdom
  *
- * Frente F1: o detalhe da campanha aberto sem ?mode= segue o padrão "por venda" e mostra a frase.
+ * Frente F1: o detalhe da campanha aberto sem ?mode= segue o padrão (visão do período) e mostra a frase.
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, render, screen } from "@testing-library/react";
@@ -26,13 +26,13 @@ function stubFetch(urls: string[]) {
 }
 
 describe("CampaignDetailPage", () => {
-  it("sem ?mode= pede por venda e mostra a frase", async () => {
+  it("sem ?mode= pede a visão do período e mostra a frase", async () => {
     busca = "channel=Meta+Ads&campaign=Atacado";
     const urls: string[] = [];
     stubFetch(urls);
     render(<CampaignDetailPage />);
-    expect((await screen.findByTestId("frase-modo")).textContent).toBe("Por venda: toda venda do período, de lead novo ou antigo");
-    await vi.waitFor(() => expect(urls[0]).toContain("mode=sale"));
+    expect((await screen.findByTestId("frase-modo")).textContent).toContain("toda venda do período");
+    await vi.waitFor(() => expect(urls[0]).toContain("mode=periodo"));
   });
 
   it("com ?mode=lead respeita o link", async () => {
@@ -40,7 +40,7 @@ describe("CampaignDetailPage", () => {
     const urls: string[] = [];
     stubFetch(urls);
     render(<CampaignDetailPage />);
-    expect((await screen.findByTestId("frase-modo")).textContent).toContain("Por lead");
+    expect((await screen.findByTestId("frase-modo")).textContent).toContain("Por turma");
     await vi.waitFor(() => expect(urls[0]).toContain("mode=lead"));
   });
 });

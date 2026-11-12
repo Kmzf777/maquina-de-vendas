@@ -25,6 +25,8 @@ export type CampaignLead = {
   ja_era_cliente_fonte?: "auto" | "vendedor" | null;
   compras?: number;
   primeira_origem?: PrimeiraOrigem | null;
+  /** Visão do período: false = lead antigo que comprou no período; null/ausente fora dela. */
+  entrou_no_periodo?: boolean | null;
 };
 
 const HEADERS = [
@@ -180,7 +182,14 @@ export function CampaignLeadsTable({ leads }: { leads: CampaignLead[] }) {
                   >
                     {origem.texto}{origem.atual ? " (atual)" : ""}
                   </TableCell>
-                  <TableCell className="text-[13px] tabular-nums text-[#7b7b78]">{fmtDate(l.created_at)}</TableCell>
+                  <TableCell className="text-[13px] tabular-nums text-[#7b7b78] whitespace-nowrap">
+                    <span className="inline-flex items-center gap-1.5">
+                      <span>{fmtDate(l.created_at)}</span>
+                      {l.entrou_no_periodo === false && (
+                        <Selo title="Entrou antes do período e comprou nele: conta nos pedidos, não nos leads">antes</Selo>
+                      )}
+                    </span>
+                  </TableCell>
                   <TableCell className={`text-[13px] tabular-nums ${l.comprou ? "text-[#111111] font-medium" : "text-[#7b7b78]"}`}>
                     {l.comprou
                       ? <><span className="text-[#7b7b78] font-normal">{fmtDate(l.sold_at)} </span>{fmtBRL(l.valor)}</>

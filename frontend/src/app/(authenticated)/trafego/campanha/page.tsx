@@ -39,7 +39,7 @@ function Inner() {
   const channel = sp.get("channel") || "";
   const campaign = sp.get("campaign") || "";
   const period = sp.get("period") || "30d";
-  // Sem ?mode= abre "por venda", como a página principal, os proxies e o backend (frente F1).
+  // Sem ?mode= abre a visão do período, como a página principal, os proxies e o backend.
   const mode = modoDaUrl(sp.get("mode"));
   const dateFrom = sp.get("date_from") || "";
   const dateTo = sp.get("date_to") || "";
@@ -103,7 +103,7 @@ function Inner() {
           <LoadingSkeleton />
         ) : (
           <>
-            <CampaignKpis summary={detail.summary} />
+            <CampaignKpis summary={detail.summary} periodo={mode === "periodo"} />
             <CampaignTimeseries data={detail.timeseries} />
             <CampaignLeadsTable leads={detail.leads} />
           </>

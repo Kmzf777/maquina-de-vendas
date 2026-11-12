@@ -12,7 +12,8 @@ export type StageRates = {
 
 export type StageCounts = { leads: number; conversas: number; closer: number; clientes: number };
 
-export type SummaryFunnel = StageCounts & StageRates & { gargalo: SummaryStage | null };
+/** `pedidos`/`receita`: as pontas do funil do período (backend de 12/11/2026 em diante). */
+export type SummaryFunnel = StageCounts & StageRates & { gargalo: SummaryStage | null; pedidos?: number; receita?: number };
 
 export type SummaryCost = StageCounts & {
   investimento: number; receita: number; roas: number | null;
@@ -20,7 +21,7 @@ export type SummaryCost = StageCounts & {
 };
 
 export type SummaryChannel = StageCounts & StageRates & {
-  channel: string; receita: number; investimento: number; roas: number | null;
+  channel: string; receita: number; investimento: number; roas: number | null; pedidos?: number;
 };
 
 export type SummaryTiming = {
@@ -64,7 +65,11 @@ export const fmtDays = (v: number | null | undefined) => {
   return `${v.toLocaleString("pt-BR", { maximumFractionDigits: 1 })} dias`;
 };
 
-export const collapsedLine = (s: ReportSummary) => {
+export const collapsedLine = (s: ReportSummary, mode: string = "lead") => {
   const f = s.funnel;
+  if (mode === "periodo") {
+    // As duas pontas reais do período: quem entrou e foi ao closer, e o que se vendeu.
+    return `${fmtInt(f.leads)} leads → ${fmtInt(f.closer)} closer → ${fmtInt(f.pedidos ?? 0)} pedidos · ${fmtBRLOrDash(f.receita ?? 0)}`;
+  }
   return `${fmtInt(f.leads)} leads → ${fmtInt(f.conversas)} conversas → ${fmtInt(f.closer)} closer → ${fmtInt(f.clientes)} clientes`;
 };

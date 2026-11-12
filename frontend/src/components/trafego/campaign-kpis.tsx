@@ -3,7 +3,7 @@ import type { CampaignRow } from "@/components/trafego/campaign-report-table";
 
 const fmtBRL = (v: number) => `R$ ${v.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}`;
 const fmtInt = (v: number) => v.toLocaleString("pt-BR");
-const fmtPct = (v: number) => `${(v * 100).toFixed(1)}%`;
+const fmtPct = (v: number | null | undefined) => (v == null ? "—" : `${(v * 100).toFixed(1)}%`);
 const fmtRoas = (v: number | null) =>
   v == null
     ? "—"
@@ -26,7 +26,7 @@ function Card({ label, value, hint }: { label: string; value: string; hint?: str
   );
 }
 
-export function CampaignKpis({ summary }: { summary: CampaignRow }) {
+export function CampaignKpis({ summary, periodo = false }: { summary: CampaignRow; periodo?: boolean }) {
   const hasSpend = summary.investimento > 0 || summary.roas != null;
   const cards: { label: string; value: string; hint?: string }[] = [
     { label: "Leads", value: fmtInt(summary.leads) },
@@ -38,7 +38,10 @@ export function CampaignKpis({ summary }: { summary: CampaignRow }) {
     { label: "Receita", value: fmtBRL(summary.receita), hint: "sem frete" },
     { label: "Frete", value: fmtBRL(summary.frete ?? 0) },
     { label: "Ticket médio", value: fmtBRL(summary.ticket_medio) },
-    { label: "Conversão", value: fmtPct(summary.conversao) },
+    // Visão do período: pedidos do período ÷ leads do período (taxa do período, não da turma).
+    periodo
+      ? { label: "Pedidos/lead", value: fmtPct(summary.conversao), hint: "do período" }
+      : { label: "Conversão", value: fmtPct(summary.conversao) },
     ...(hasSpend
       ? [
           { label: "Investimento", value: fmtBRL(summary.investimento) },

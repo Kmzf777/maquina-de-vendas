@@ -1,6 +1,6 @@
 /**
  * Frente F1 (06/11/2026): os proxies do /trafego repassam o JWT do admin (adminProxy) e abrem
- * "por venda" quando o link não traz ?mode=.
+ * a visão do período quando o link não traz ?mode=.
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -19,9 +19,9 @@ beforeEach(() => {
 });
 
 describe("proxies do /trafego", () => {
-  it("report sem ?mode= pede por venda", async () => {
+  it("report sem ?mode= pede a visão do período", async () => {
     await report(new Request("http://x/api/traffic/report"));
-    expect(adminProxy).toHaveBeenCalledWith("/api/traffic/report?period=30d&mode=sale");
+    expect(adminProxy).toHaveBeenCalledWith("/api/traffic/report?period=30d&mode=periodo");
   });
 
   it("report respeita mode=lead e as datas", async () => {
@@ -31,11 +31,11 @@ describe("proxies do /trafego", () => {
     );
   });
 
-  it("leads e campaign sem ?mode= pedem por venda", async () => {
+  it("leads e campaign sem ?mode= pedem a visão do período", async () => {
     await leads(new Request("http://x/api/traffic/leads?channel=Meta%20Ads&campaign=Atacado"));
-    expect(adminProxy).toHaveBeenLastCalledWith("/api/traffic/leads?channel=Meta+Ads&campaign=Atacado&period=30d&mode=sale");
+    expect(adminProxy).toHaveBeenLastCalledWith("/api/traffic/leads?channel=Meta+Ads&campaign=Atacado&period=30d&mode=periodo");
     await campaign(new Request("http://x/api/traffic/campaign?channel=Google%20Ads&campaign=PMAX&period=7d"));
-    expect(adminProxy).toHaveBeenLastCalledWith("/api/traffic/campaign?channel=Google+Ads&campaign=PMAX&period=7d&mode=sale");
+    expect(adminProxy).toHaveBeenLastCalledWith("/api/traffic/campaign?channel=Google+Ads&campaign=PMAX&period=7d&mode=periodo");
   });
 
   it("sync e sync-status passam pelo adminProxy", async () => {

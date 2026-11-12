@@ -1,18 +1,21 @@
-// Modo do /trafego e a linha de status do sync de investimento (frente F1, 06/11/2026).
-// O padrão é "sale" (por venda) na página, nos proxies e no backend: em 15–21/10 o modo por lead
-// mostrava 2 pedidos e o por venda 27, e quem abria a página via o número menor sem saber por quê.
+// Modo do /trafego e a linha de status do sync de investimento.
+// Padrão "periodo" (12/11/2026) na página, nos proxies e no backend: cada coluna conta pela própria
+// data — leads e closer de quem entrou no período, pedidos e receita de toda venda do período.
+// Antes era escolher entre "por lead" (05–11/11: 1 cliente de 53 pedidos) e "por venda" (o Meta
+// Atacado com 0 leads de 64). "lead" (por turma) segue como opção; "sale" só para link antigo.
 
-export type TrafficMode = "lead" | "sale";
+export type TrafficMode = "periodo" | "lead" | "sale";
 
-export const MODO_PADRAO: TrafficMode = "sale";
+export const MODO_PADRAO: TrafficMode = "periodo";
 
 export const FRASE_MODO: Record<TrafficMode, string> = {
-  sale: "Por venda: toda venda do período, de lead novo ou antigo",
-  lead: "Por lead: só os leads que entraram no período e as vendas deles até 30 dias depois (90 no B2B)",
+  periodo: "Leads e closer: quem entrou no período. Pedidos e receita: toda venda do período, de lead novo ou antigo",
+  lead: "Por turma: só os leads que entraram no período e as vendas deles até 30 dias depois (90 no B2B)",
+  sale: "Só quem comprou: toda venda do período, de lead novo ou antigo",
 };
 
 export function modoDaUrl(v: string | null | undefined): TrafficMode {
-  return v === "lead" || v === "sale" ? v : MODO_PADRAO;
+  return v === "periodo" || v === "lead" || v === "sale" ? v : MODO_PADRAO;
 }
 
 export type RodadaSync = { status: "ok" | "falha" | "aviso"; linhas?: number; motivo?: string | null; em: string };

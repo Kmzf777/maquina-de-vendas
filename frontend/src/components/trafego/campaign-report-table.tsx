@@ -8,16 +8,18 @@ export type CampaignRow = {
   closer: number; clientes: number; pedidos: number; receita: number;
   /** D7 (1e6381fe): frete das vendas da receita (que é sem frete). Opcional: backend antigo não manda. */
   frete?: number;
-  investimento: number; roas: number | null; ticket_medio: number; conversao: number;
+  /** null = sem lead no período (ex.: Bling, Sem rastreio na visão do período): exibe "—". */
+  investimento: number; roas: number | null; ticket_medio: number; conversao: number | null;
 };
 
-export type ReportTotal = { leads: number; conversas: number; closer: number; clientes: number; pedidos: number; receita: number; investimento: number; roas: number | null };
+/** `conversao` vem do backend na visão do período (pedidos ÷ leads); ausente nos outros modos. */
+export type ReportTotal = { leads: number; conversas: number; closer: number; clientes: number; pedidos: number; receita: number; investimento: number; roas: number | null; conversao?: number | null };
 
-export type ChannelSubtotal = { leads: number; conversas: number; closer: number; clientes: number; pedidos: number; receita: number; investimento: number; roas: number | null };
+export type ChannelSubtotal = { leads: number; conversas: number; closer: number; clientes: number; pedidos: number; receita: number; investimento: number; roas: number | null; conversao?: number | null };
 export type ChannelSubtotals = Record<string, ChannelSubtotal>;
 
 const fmtBRL = (v: number) => `R$ ${v.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}`;
-const fmtPct = (v: number) => `${(v * 100).toFixed(1)}%`;
+const fmtPct = (v: number | null | undefined) => (v == null ? "—" : `${(v * 100).toFixed(1)}%`);
 const fmtInt = (v: number) => v.toLocaleString("pt-BR");
 const fmtRoas = (v: number | null) => (v == null ? "—" : `${v.toLocaleString("pt-BR", { minimumFractionDigits: 1, maximumFractionDigits: 2 })}x`);
 
@@ -42,16 +44,27 @@ function ChannelBadge({ channel }: { channel: string }) {
   );
 }
 
-export function CampaignReportTable({ rows, total, subtotals = {}, onRowClick }: {
+/** Conversão do total/subtotal. Visão do período: pedidos ÷ leads do período (o backend manda
+ *  `conversao`); por turma: clientes ÷ leads da turma. */
+function conversaoDe(t: ReportTotal | ChannelSubtotal | undefined, periodo: boolean): number | null {
+  if (!t) return null;
+  if (t.conversao !== undefined) return t.conversao;
+  if (t.leads <= 0) return periodo ? null : 0;
+  return (periodo ? t.pedidos : t.clientes) / t.leads;
+}
+
+export function CampaignReportTable({ rows, total, subtotals = {}, onRowClick, periodo = false }: {
   rows: CampaignRow[];
   total?: ReportTotal;
   subtotals?: ChannelSubtotals;
   onRowClick: (r: CampaignRow) => void;
+  /** Visão do período: a conversão é pedidos ÷ leads do período, não taxa da turma. */
+  periodo?: boolean;
 }) {
   if (rows.length === 0) {
     return <p className="text-[14px] text-[#7b7b78] py-8 text-center">Nenhuma campanha no período.</p>;
   }
-  const totalConversao = total && total.leads > 0 ? total.clientes / total.leads : 0;
+  const totalConversao = conversaoDe(total, periodo);
   const totalTicket = total && total.pedidos > 0 ? total.receita / total.pedidos : 0;
   return (
     // Painel com scroll PRÓPRIO: este div é o container de scroll (não a página), então o
@@ -73,7 +86,12 @@ export function CampaignReportTable({ rows, total, subtotals = {}, onRowClick }:
           <TableHead className={`${TH} text-right`}>Investimento</TableHead>
           <TableHead className={`${TH} text-right`}>ROAS</TableHead>
           <TableHead className={`${TH} text-right`}>Ticket</TableHead>
-          <TableHead className={`${TH} text-right`}>Conversão</TableHead>
+          <TableHead
+            className={`${TH} text-right`}
+            title={periodo ? "Pedidos do período ÷ leads do período. Os pedidos podem ser de quem entrou antes: é uma taxa do período, não da turma." : "Clientes ÷ leads da turma"}
+          >
+            {periodo ? "Pedidos/lead" : "Conversão"}
+          </TableHead>
         </TableRow>
       </TableHeader>
       <TableBody>
@@ -81,7 +99,7 @@ export function CampaignReportTable({ rows, total, subtotals = {}, onRowClick }:
           const isGroupEnd = i === rows.length - 1 || rows[i + 1].channel !== r.channel;
           const sub = subtotals[r.channel];
           const subTicket = sub && sub.pedidos > 0 ? sub.receita / sub.pedidos : 0;
-          const subConversao = sub && sub.leads > 0 ? sub.clientes / sub.leads : 0;
+          const subConversao = conversaoDe(sub, periodo);
           return (
             <Fragment key={`${r.channel}-${r.campaign}-${i}`}>
               <TableRow
@@ -149,6 +167,12 @@ export function CampaignReportTable({ rows, total, subtotals = {}, onRowClick }:
             <TableCell className="text-right text-[14px] font-medium text-[#111111] tabular-nums">{fmtPct(totalConversao)}</TableCell>
           </TableRow>
         </TableFooter>
+      )}
+      {periodo && (
+        <caption data-testid="nota-periodo" className="caption-bottom text-left px-4 py-2 text-[12px] leading-[1.45] text-[#7b7b78]">
+          Leads, conversas e closer contam pela data de entrada; clientes, pedidos e receita pela data da venda.
+          Pedidos/lead = pedidos do período ÷ leads do período: taxa do período, não da turma.
+        </caption>
       )}
     </table>
     </div>

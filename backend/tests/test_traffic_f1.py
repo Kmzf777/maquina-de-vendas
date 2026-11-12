@@ -176,20 +176,22 @@ def test_rota_com_admin_responde_200(relatorio_falso, metodo, url):
 
 # ── 2. modo padrão "sale" ─────────────────────────────────────────────────────────────────
 
-def test_modo_padrao_e_por_venda_nos_tres_endpoints(relatorio_falso):
+def test_modo_padrao_e_periodo_nos_tres_endpoints(relatorio_falso):
     c = _cliente(admin=True)
     c.get("/api/traffic/report")
     c.get("/api/traffic/leads?channel=Meta%20Ads&campaign=X")
     c.get("/api/traffic/campaign?channel=Meta%20Ads&campaign=X")
-    assert relatorio_falso["report"] == relatorio_falso["leads"] == relatorio_falso["campaign"] == "sale"
+    assert relatorio_falso["report"] == relatorio_falso["leads"] == relatorio_falso["campaign"] == "periodo"
 
 
-def test_modo_invalido_cai_em_venda_e_lead_explicito_e_respeitado(relatorio_falso):
+def test_modo_invalido_cai_em_periodo_e_lead_ou_sale_explicito_e_respeitado(relatorio_falso):
     c = _cliente(admin=True)
     c.get("/api/traffic/report?mode=xpto")
-    assert relatorio_falso["report"] == "sale"
+    assert relatorio_falso["report"] == "periodo"
     c.get("/api/traffic/report?mode=lead")
     assert relatorio_falso["report"] == "lead"
+    c.get("/api/traffic/report?mode=sale")
+    assert relatorio_falso["report"] == "sale"
 
 
 def test_sync_pela_tela_grava_origem_manual(relatorio_falso):
