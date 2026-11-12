@@ -215,7 +215,10 @@ def test_t_humano_sem_handoff_continua_gravando_a_nota():
 def test_o_bloqueio_por_3_nudges_do_motor_cai_nesse_caminho():
     """Amarra o teste acima ao motor: é o 4º texto livre que leva ao `T_HUMANO`, e é
     por ele que a nota tem de sobreviver."""
-    decisao = motor.decidir("N1", Texto("quanto custa o kg?"),
+    # F3 (12/11/2026): o teto de nudges deixou de levar ao T_HUMANO (vai ao vendedor
+    # do ramo). O T_HUMANO segue existindo para nó desconhecido, e é por ele que a
+    # nota de silêncio tem de sobreviver.
+    decisao = motor.decidir("NO_QUE_NAO_EXISTE", Texto("quanto custa o kg?"),
                             {"nudges": reg.TETO_NUDGES}, reg.NOS, reg.TERMINAIS)
 
     assert decisao.proximo_no == "T_HUMANO"

@@ -68,6 +68,9 @@ TAG_QUALIFICADO = "Botões: Qualificado"
 TAG_ADIADO = "Botões: Adiado"
 TAG_HUMANO = "Botões: Atendimento humano"
 TAG_OPTOUT = "Botões: Opt-out"
+# F3 (12/11/2026): quem quer atacado mas não tem CNPJ nem MEI vai para a loja.
+# Semeada por supabase/migrations/20261106_f3_valeria_qualifica_antes.sql.
+TAG_SEM_CNPJ = "Atacado sem CNPJ"
 
 # Os dois vendedores, como a §5 os escreve no `encaminhar_humano(vendedor=...)`.
 # Não é o nome do CARTÃO de contato: aquele é `agent.tools.SUPERVISOR_NAME`
@@ -264,9 +267,21 @@ NOS: dict[str, No] = {
             # representante da sua faixa — 30 pontua 1, 65 e 150 pontuam 0.
             # Contraintuitivo de propósito: quem usa pouco é quem a Canastra
             # atende melhor; volume grande vira negociação do João.
-            Botao("ate30", "Até 30 kg por mês", "N3", grava=(("monthly_volume_kg", 30),)),
-            Botao("ate100", "30 a 100 kg", "N3", grava=(("monthly_volume_kg", 65),)),
-            Botao("mais100", "Mais de 100 kg", "N3", grava=(("monthly_volume_kg", 150),)),
+            # F3: depois do volume vem o CNPJ (NC), antes do fornecedor e do preço.
+            Botao("ate30", "Até 30 kg por mês", "NC", grava=(("monthly_volume_kg", 30),)),
+            Botao("ate100", "30 a 100 kg", "NC", grava=(("monthly_volume_kg", 65),)),
+            Botao("mais100", "Mais de 100 kg", "NC", grava=(("monthly_volume_kg", 150),)),
+        ),
+    ),
+    "NC": No(
+        id="NC", rotulo_interno="NC · CNPJ", tela="botoes", ramo="atacado",
+        # COMPOSTO pela F3 (12/11/2026). O preço só sai no N5; quem não tem CNPJ nem
+        # MEI vai para a loja com cupom (`T_SEM_CNPJ`), sem repasse ao João.
+        corpo="e a compra seria com CNPJ?",
+        botoes=(
+            Botao("cnpj", "Sim, tenho CNPJ", "N3"),
+            Botao("mei", "Sou MEI", "N3"),
+            Botao("sem_cnpj", "Não tenho CNPJ", "T_SEM_CNPJ"),
         ),
     ),
     "N3": No(
@@ -465,7 +480,10 @@ NOS: dict[str, No] = {
             # O único botão do fluxo que MUDA de ramo: consumo que pede quantidade
             # é atacado, e entra pelo N1 como qualquer outro.
             Botao("quantidade", "Quero em quantidade", "N1"),
-            Botao("duvida", "Tenho uma dúvida", "T_HUMANO"),
+            # F3 (12/11/2026): ia a T_HUMANO, que só desligava a IA e não avisava
+            # ninguém (a "Valéria muda": 28 leads em 30 dias, metade escreveu de
+            # novo sem resposta). Agora a dúvida vai ao João.
+            Botao("duvida", "Tenho uma dúvida", "T_HANDOFF"),
         ),
         # Sem clique, encerra em T_FIM — e T_FIM não descarta ninguém. É a regra
         # "Consumo não é encerramento definitivo" de consumo.py. Por isso nenhum
@@ -666,7 +684,43 @@ TERMINAIS: dict[str, Terminal] = {
         silenciar_ia=True,
         optout=True,
     ),
+    "T_SEM_CNPJ": Terminal(
+        id="T_SEM_CNPJ", rotulo_interno="Atacado sem CNPJ · loja + cupom",
+        # COMPOSTO pela F3. Link e cupom iguais aos do C1. PENDENTE (política de
+        # revenda): se a política aceitar pessoa física, este terminal muda.
+        # Editável na tela "Fluxo da Valéria", sem deploy.
+        corpo=(
+            "entendi! a tabela de atacado é pra quem compra com CNPJ ou MEI 🙏\n\n"
+            "pra comprar agora, nossa linha completa tá na loja online com 10% de "
+            "desconto:\n"
+            "🔗 loja.cafecanastra.com\n"
+            "cupom: *ESPECIAL10*\n\n"
+            "se abrir um MEI (sai rapidinho pelo gov.br), me chama aqui que eu te mando "
+            "a tabela"
+        ),
+        tags=(TAG_SEM_CNPJ,),
+    ),
 }
+
+# ─── F3 (12/11/2026): repasse, desqualificação e reabertura ──────────────────
+# Vendedor de cada ramo. Ramo sem vendedor próprio (entrada, consumo) → João.
+HANDOFF_DO_RAMO: dict[str, str] = {"atacado": "T_HANDOFF", "private_label": "T_HANDOFF_PL",
+                                   "exportacao": "T_HANDOFF_ARTHUR"}
+HANDOFF_PADRAO = "T_HANDOFF"
+
+# Destino do clique → motivo de desqualificação (`lead_events.desqualificado`).
+DESQUALIFICA_NO_DESTINO: dict[str, str] = {"C1": "consumidor_final",
+                                           "T_SEM_CNPJ": "sem_cnpj"}
+
+# Nós em que o lead já viu preço (foto + `{preco}`): quem some aqui "sumiu depois
+# do preço"; em qualquer outro nó, "sumiu antes".
+NOS_COM_PRECO = frozenset({"N5", "N5b", "P4", "P4b"})
+
+# Terminais SEM repasse de onde o lead pode voltar pedindo gente. O motor os trata
+# como encerrados, mas pedido de contato (pergunta, áudio, "quero falar") ou o toque
+# num botão antigo de contato ("Sim, quero falar") viram repasse. Antes: o lead do
+# T_ADIADO que tocou "Sim, quero falar" e mandou áudio ficou sem resposta.
+TERMINAIS_QUE_REABREM = frozenset({"T_ADIADO", "T_FIM", "T_HUMANO", "T_SEM_CNPJ"})
 
 
 # ─── A folha de prazos (os botões do T_ADIAR) ────────────────────────────────

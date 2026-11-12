@@ -480,6 +480,13 @@ def proximo_estado(estado, node: str, marcar_nudge: bool = False) -> dict:
     base["flow"] = reg.FLOW_ID
     base["node"] = node
     base["nudges"] = _nudges(estado) + (1 if marcar_nudge else 0)
+    # F3: o ramo da conversa fica no estado (o terminal não diz ramo, e a reabertura
+    # precisa saber de quem é o lead), e quem volta a falar deixa de estar
+    # "desqualificado" (o evento em `lead_events` fica como histórico).
+    no = reg.NOS.get(node)
+    if no is not None and no.ramo != "entrada":
+        base["ramo"] = no.ramo
+    base.pop("desqualificado", None)
     return base
 
 
@@ -1066,16 +1073,18 @@ async def _executar_turno(
                     decisao.proximo_no, conversation_id, wamid)
         return
 
-    avancar = await asyncio.to_thread(
-        effects.aplicar, decisao.efeitos, lead=lead,
-        conversation_id=conversation_id,
-        evidencia=_evidencia_do_turno(evento, texto, wamid),
-        # Quem lê as notas que `effects` escreve é o vendedor, antes de abordar o
-        # lead. O default de `aplicar` é a Recuperação, e deixá-lo passar aqui
-        # carimbaria "bot de recuperação" num lead que nunca esteve numa onda de
-        # recuperação — mentira de auditoria no card mais valioso do funil.
-        fluxo=effects.FLUXO_VALERIA,
-    )
+    from app.leads.repasse import motivo_do_repasse
+    with motivo_do_repasse(decisao.motivo_codigo if decisao.efeitos.handoff else None):
+        avancar = await asyncio.to_thread(
+            effects.aplicar, decisao.efeitos, lead=lead,
+            conversation_id=conversation_id,
+            evidencia=_evidencia_do_turno(evento, texto, wamid),
+            # Quem lê as notas que `effects` escreve é o vendedor, antes de abordar o
+            # lead. O default de `aplicar` é a Recuperação, e deixá-lo passar aqui
+            # carimbaria "bot de recuperação" num lead que nunca esteve numa onda de
+            # recuperação — mentira de auditoria no card mais valioso do funil.
+            fluxo=effects.FLUXO_VALERIA,
+        )
     if not avancar:
         # Só o opt-out devolve False. Confirmar "não te mando mais nada" sem ter
         # gravado `opt_out=true` é pior que o silêncio: o lead perde o motivo
@@ -1099,9 +1108,31 @@ async def _executar_turno(
         # Referência do guarda "o vendedor já mexeu no card" no próximo turno.
         # `stage_id` é a ÚNICA coluna de etapa que `get_open_deal` projeta.
         campos["deal_stage_id"] = deal["stage_id"]
+    if decisao.desqualificacao:
+        await _desqualificar(lead, conversation, campos, decisao.desqualificacao, no=no,
+                             ramo=(estado or {}).get("ramo") if isinstance(estado, dict) else None)
     await _persistir_estado(conversation, estado, campos)
     logger.info("%s turno aplicado conv=%s nó=%s nudges=%s", _LOG,
                 conversation_id, decisao.proximo_no, campos["nudges"])
+
+
+async def _desqualificar(lead: dict, conversation: dict, campos: dict, motivo: str, *,
+                         no: str | None, ramo: str | None) -> None:
+    """Evento `desqualificado` (motivo + nó onde o lead estava) e o carimbo no estado.
+
+    F3 (12/11/2026). Não toca em `qualificado`, repasse nem conversões. Fail-soft.
+    """
+    from app.leads.qualificado import registrar_desqualificado
+    campos["desqualificado"] = {"motivo": motivo, "no": no,
+                                "at": datetime.now(timezone.utc).isoformat()}
+    try:
+        await asyncio.to_thread(
+            lambda: registrar_desqualificado(
+                lead_id=lead.get("id"), motivo=motivo, no=no, source="button_flow",
+                conversation_id=conversation.get("id"), ramo=ramo or "atacado", chave=no))
+    except Exception as exc:
+        logger.warning("%s desqualificação não gravada conv=%s: %s", _LOG,
+                       conversation.get("id"), exc)
 
 
 def _rotulo_clicado(evento) -> str:

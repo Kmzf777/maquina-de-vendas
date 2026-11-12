@@ -22,6 +22,7 @@ import logging
 import os
 from datetime import datetime, timedelta, timezone
 
+from app.button_flow import valeria_registry as r1
 from app.button_flow import valeria_registry_v2 as r2
 from app.db.supabase import get_supabase
 
@@ -54,8 +55,9 @@ def _pagina_sumidos(sb, inicio: str, fim: str, offset: int) -> list[dict]:
     return (
         sb.table("conversations")
         .select("id, flow_state, last_customer_message_at, leads(id, human_control, opt_out)")
-        .eq("flow_state->>flow", "valeria_botoes_v2")
-        .in_("flow_state->>node", sorted(r2.NOS))
+        # v1 e v2: a produção roda a v1 (perfil do número da Valéria, 11/11/2026).
+        .in_("flow_state->>flow", ["valeria_botoes_v1", "valeria_botoes_v2"])
+        .in_("flow_state->>node", sorted(set(r2.NOS) | set(r1.NOS)))
         .is_("flow_state->>repasse_auto", "null")
         .is_("flow_state->>desqualificado", "null")
         .gte("last_customer_message_at", inicio)

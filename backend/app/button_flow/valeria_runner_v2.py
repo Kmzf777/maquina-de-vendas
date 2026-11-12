@@ -570,7 +570,7 @@ class _Saida:
 def _decisao_de_terminal(destino: str, nos: dict, terminais: dict, **extra) -> DecisaoV2:
     """A `Decisao` declarada de `destino` (mesma do motor), como `DecisaoV2`."""
     base = motor_v1._ir_para(destino, nos, terminais)
-    return DecisaoV2(**{f.name: getattr(base, f.name) for f in fields(base)}, **extra)
+    return DecisaoV2(**{**{f.name: getattr(base, f.name) for f in fields(base)}, **extra})
 
 
 # ── Motivo do repasse e desqualificação (F3, 06/11/2026) ───────────────────
@@ -586,7 +586,15 @@ def codigo_do_repasse(decisao: DecisaoV2) -> str:
 
 
 def motivo_de_sumico(estado) -> str:
-    """"sumiu_antes_da_tabela" ou "sumiu_depois_da_tabela", pelo `viu` da conversa."""
+    """"sumiu_antes_da_tabela" ou "sumiu_depois_da_tabela".
+
+    v2: pelo `viu` da conversa. v1 (a que roda em produção): pelo nó — o preço só
+    sai nos nós de foto (`NOS_COM_PRECO`: N5, N5b, P4, P4b).
+    """
+    if isinstance(estado, dict) and estado.get("flow") == reg1.FLOW_ID:
+        viu_tabela = estado.get("node") in reg1.NOS_COM_PRECO
+        return (r2.DESQ_SUMIU_DEPOIS_DA_TABELA if viu_tabela
+                else r2.DESQ_SUMIU_ANTES_DA_TABELA)
     viu = estado.get("viu") if isinstance(estado, dict) else None
     viu_tabela = isinstance(viu, list) and "tabela" in viu
     return r2.DESQ_SUMIU_DEPOIS_DA_TABELA if viu_tabela else r2.DESQ_SUMIU_ANTES_DA_TABELA
@@ -984,9 +992,16 @@ async def marcar_sumido(*, lead: dict, conversation: dict) -> str | None:
     conversation_id = (conversation or {}).get("id")
     try:
         estado = (conversation or {}).get("flow_state")
-        node = no_atual_v2(estado)
-        if node is None or node not in r2.NOS:
-            return None   # terminal (repassado, loja, sem CNPJ, opt-out): já tem desfecho
+        if isinstance(estado, dict) and estado.get("flow") == reg1.FLOW_ID:
+            node = estado.get("node")
+            if not isinstance(node, str) or node not in reg1.NOS:
+                return None
+            ramo = reg1.NOS[node].ramo if reg1.NOS[node].ramo != "entrada" else None
+        else:
+            node = no_atual_v2(estado)
+            if node is None or node not in r2.NOS:
+                return None   # terminal (repassado, loja, sem CNPJ, opt-out): já tem desfecho
+            ramo = _ramo(estado, node)
         motivo = motivo_de_sumico(estado)
         desq = {"motivo": motivo, "no": node, "at": datetime.now(timezone.utc).isoformat()}
         if not await asyncio.to_thread(_travar_sumico, conversation_id, estado, node, desq):
@@ -994,7 +1009,7 @@ async def marcar_sumido(*, lead: dict, conversation: dict) -> str | None:
         await asyncio.to_thread(
             _qualificado.registrar_desqualificado, lead_id=lead.get("id"), motivo=motivo,
             no=node, source="button_flow", conversation_id=conversation_id,
-            ramo=_ramo(estado, node),
+            ramo=ramo,
             chave=str(conversation.get("last_customer_message_at") or node))
         return motivo
     except Exception as exc:

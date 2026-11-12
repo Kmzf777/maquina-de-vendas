@@ -210,7 +210,8 @@ class TestOMotivoSobeAoGate:
         """Conversa encerrada: o motor devolve `ignorar`. Ninguém está esperando
         resposta de pessoa nenhuma por causa deste turno — silêncio é a resposta
         certa, e é o que o `return` incondicional do gate já fazia."""
-        devolvido = await turno("e aí, tem novidade?", no="T_FIM")
+        # F3: pergunta depois do terminal reabre para o vendedor; cortesia não.
+        devolvido = await turno("obrigado", no="T_FIM")
 
         assert devolvido is None
         assert turno.provedor.chamadas == []

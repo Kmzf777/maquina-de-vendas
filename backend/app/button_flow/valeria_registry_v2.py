@@ -50,7 +50,9 @@ from app.button_flow.valeria_registry import (  # noqa: F401 — reexportados pa
     TAG_HUMANO,
     TAG_OPTOUT,
     TAG_QUALIFICADO,
+    TAG_SEM_CNPJ,
     TERMINAIS as _TERMINAIS_V1,
+    TERMINAIS_QUE_REABREM,
     VENDEDOR_ATACADO,
     VENDEDOR_EXPORTACAO,
     Botao,
@@ -66,9 +68,7 @@ NO_ENTRADA = "N0"
 # que NÃO cria tag: se ela não estiver semeada em `tags`, o lead simplesmente não
 # é marcado (sem erro). Mesma armadilha documentada no bloco de tags da v1.
 TAG_KIT = "Botões: Kit amostra"
-# F3 (06/11/2026): quem quer atacado mas não tem CNPJ nem MEI não vai ao João.
-# Semeada por supabase/migrations/20261106_f3_valeria_qualifica_antes.sql.
-TAG_SEM_CNPJ = "Atacado sem CNPJ"
+# F3: `TAG_SEM_CNPJ`, `T_SEM_CNPJ` e `TERMINAIS_QUE_REABREM` vêm da v1 (um dono só).
 
 # ─── Política de revenda (PENDENTE — decisão 2 do consolidado de 06/11/2026) ──
 #
@@ -582,14 +582,6 @@ DESQUALIFICA_NO_DESTINO: dict[str, str] = {
 }
 
 
-# Terminais SEM repasse de onde o lead pode voltar pedindo gente (F3, 11/11/2026):
-# o motor os trata como encerrados (ignora "obrigado", reação, robô), mas pergunta,
-# pedido de vendedor ou toque num botão antigo de contato ("Sim, quero falar")
-# viram repasse. Antes o lead do T_ADIADO que tocou "Sim, quero falar" e mandou
-# áudio ficou sem resposta (tel. final 5468, achado da F2).
-TERMINAIS_QUE_REABREM = frozenset({"T_ADIADO", "T_FIM", "T_HUMANO", "T_SEM_CNPJ"})
-
-
 def destino_qa1(respostas: dict) -> str:
     """Destino de QA1 (`regra:QA1`): direto ao João se o volume já veio do QA_VOL."""
     return "T_HANDOFF" if isinstance(respostas.get("QA_VOL"), str) else "QA2"
@@ -604,6 +596,7 @@ TERMINAIS: dict[str, Terminal] = {
         "T_HANDOFF", "T_HANDOFF_PL", "T_HANDOFF_ARTHUR",
         "T_ADIAR", "T_ADIADO", "T_HUMANO", "T_FIM", "T_OPTOUT",
     )},
+    # F3: mesmo objeto da v1 (texto e tag num lugar só).
     "T_KIT": Terminal(
         id="T_KIT", rotulo_interno="Handoff · João Brás (kit amostra)",
         vendedor=VENDEDOR_ATACADO,
@@ -615,21 +608,5 @@ TERMINAIS: dict[str, Terminal] = {
         silenciar_ia=True,
         handoff=True,
     ),
-    "T_SEM_CNPJ": Terminal(
-        id="T_SEM_CNPJ", rotulo_interno="Atacado sem CNPJ · loja + cupom",
-        # COMPOSTO pela F3 (06/11/2026). Sem repasse: o João vende para CNPJ/MEI.
-        # Link e cupom iguais aos do C1 (conferidos contra consumo.py). PENDENTE
-        # (POLITICA_REVENDA_PENDENTE["sem_cnpj"]): se a política aceitar pessoa
-        # física, este terminal vira outro destino. Editável na tela, sem deploy.
-        corpo=(
-            "entendi! a tabela de atacado é pra quem compra com CNPJ ou MEI 🙏\n\n"
-            "pra comprar agora, nossa linha completa tá na loja online com 10% de "
-            "desconto:\n"
-            "🔗 loja.cafecanastra.com\n"
-            "cupom: *ESPECIAL10*\n\n"
-            "se abrir um MEI (sai rapidinho pelo gov.br), me chama aqui que eu te mando "
-            "a tabela"
-        ),
-        tags=(TAG_SEM_CNPJ,),
-    ),
+    "T_SEM_CNPJ": _TERMINAIS_V1["T_SEM_CNPJ"],
 }

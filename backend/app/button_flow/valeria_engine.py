@@ -17,7 +17,7 @@ encerramento tem um nó PRÓPRIO e aqui o próprio terminal é o nó; a guarda e
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 from app.button_flow.engine import (
     Clique, Decisao as DecisaoBase, Efeitos, Mensagem, Texto, normalizar,
@@ -33,6 +33,12 @@ class Decisao(DecisaoBase):
     campo na dataclass dela obrigaria a revisar todos os call sites daquele fluxo.
     """
     criterios: dict = field(default_factory=dict)
+    # F3 (12/11/2026). Código do motivo do repasse (`leads.repasse.MOTIVOS_CODIGO`):
+    # o runner o põe no contexto dos efeitos, que gravam o evento `repasse`.
+    motivo_codigo: str | None = None
+    # Motivo de desqualificação do turno (C1 = consumidor final, T_SEM_CNPJ = sem
+    # CNPJ). O runner grava `lead_events.desqualificado` com o nó onde o lead estava.
+    desqualificacao: str | None = None
 
 
 # Opt-out sem IA. Casamento por IGUALDADE normalizada, NUNCA substring: "não quero
@@ -128,31 +134,99 @@ def decidir(
     # propósito: quem chega a `T_HUMANO` sem transbordo formal não é carimbado,
     # porque não foi entregue a ninguém.
     if _encerrado(no_atual, nos, terminais):
+        if no_atual in reg.TERMINAIS_QUE_REABREM:
+            reaberto = _reabrir(no_atual, evento, est, nos, terminais)
+            if reaberto is not None:
+                return reaberto
         return Decisao(proximo_no=no_atual, ignorar=True)
 
     if isinstance(evento, Clique):
         botao = _casar(no_atual, evento, botoes, est)
         if botao is not None:
-            return _ir_para(
+            d = _ir_para(
                 botao.destino, nos, terminais,
                 criterios=botao.grava,
-                # Só um clique vindo da folha de prazos agenda recontato: comparar
-                # com a tupla, e não olhar o id solto, impede que um botão de nó
-                # com id homônimo agende um follow-up por acidente.
                 dias=(reg.DIAS_POR_PRAZO.get(botao.id)
                       if botao in reg.BOTOES_PRAZO else None),
             )
-        # Clique que não casou é tratado como texto livre: reoferece. Um id
-        # desconhecido é tela antiga ou toque duplo, não recusa a usar botões.
+            extra = {}
+            if d.efeitos.handoff:
+                extra["motivo_codigo"] = ("pediu_vendedor" if botao.id == "duvida"
+                                          else "fim_dos_botoes")
+            desq = reg.DESQUALIFICA_NO_DESTINO.get(botao.destino)
+            if desq:
+                extra["desqualificacao"] = desq
+            return replace(d, **extra) if extra else d
 
     if botoes and _nudges(est) < reg.TETO_NUDGES:
         return _nudge(no_atual, botoes, corpo_nudge or reg.CORPO_NUDGE)
 
-    # Teto estourado, ou nó sem botão para reoferecer (override de tela que esvaziou
-    # um nó — terminal encerrado já saiu acima, por `_encerrado`). Note que isto NÃO é
-    # blacklist: quem insiste em digitar é quem quer falar, e descartá-lo é a perda
-    # que a auditoria do funil mediu.
-    return _ir_para(ID_HUMANO, nos, terminais)
+    # F3 (12/11/2026): quem digitou até o teto é quem quer falar — vai ao vendedor
+    # do ramo. Era T_HUMANO, que só desligava a IA e deixava o lead sem resposta.
+    return replace(_ir_para(_handoff_do_ramo(no_atual, est, nos), nos, terminais),
+                   motivo_codigo="ruido")
+
+
+def _ramo_da_conversa(no_atual: str, est: dict, nos: dict) -> str | None:
+    """`flow_state.ramo` (gravado pelo runner desde a F3); senão o do nó atual."""
+    ramo = est.get("ramo")
+    if isinstance(ramo, str) and ramo:
+        return ramo
+    no = nos.get(no_atual)
+    return no.ramo if no is not None else None
+
+
+def _handoff_do_ramo(no_atual: str, est: dict, nos: dict) -> str:
+    return reg.HANDOFF_DO_RAMO.get(_ramo_da_conversa(no_atual, est, nos) or "",
+                                   reg.HANDOFF_PADRAO)
+
+
+# Agradecimento, confirmação e despedida: o lead que volta com isso NÃO quer conversa.
+_SO_CORTESIA = frozenset(normalizar(f) for f in (
+    "obrigado", "obrigada", "obg", "brigado", "valeu", "vlw", "ok", "okay", "blz",
+    "beleza", "certo", "ta bom", "tá bom", "ta", "tá", "show", "top", "perfeito",
+    "otimo", "ótimo", "combinado", "tchau", "ate mais", "até mais", "boa noite",
+    "bom dia", "boa tarde", "sim", "nao", "não", "obrigado!", "muito obrigado",
+))
+# Palavras de quem quer falar/comprar. Sem LLM: a v1 não tem classificador.
+_PEDE_CONTATO = (
+    "quero", "queria", "gostaria", "comprar", "compra", "preco", "valor", "quanto",
+    "custa", "falar", "vendedor", "atendente", "alguem", "pessoa", "representante",
+    "orcamento", "pedido", "tabela", "revender", "revenda", "atacado", "cnpj", "mei",
+    "interesse", "me chama", "me liga", "ligar", "contato", "whatsapp", "saca",
+    "kg", "quilo", "pacote", "amostra",
+)
+
+
+def pede_contato(texto: str | None) -> bool:
+    """True quando o texto de quem voltou de um terminal pede conversa. Pura.
+
+    Pergunta ("?") ou palavra de compra/contato reabrem; cortesia ("obrigado",
+    "ok"), emoji e texto curto sem nada disso não reabrem.
+    """
+    t = normalizar(texto or "").strip(" .!")
+    if not t or t in _SO_CORTESIA:
+        return False
+    if "?" in t:
+        return True
+    return any(p in t for p in _PEDE_CONTATO)
+
+
+def _reabrir(no_atual: str, evento: object, est: dict, nos: dict,
+             terminais: dict) -> Decisao | None:
+    """Lead num terminal sem repasse que pede contato: repasse ao vendedor; senão None."""
+    if isinstance(evento, Clique):
+        for no in nos.values():
+            for b in no.botoes:
+                t = terminais.get(b.destino)
+                if b.id == evento.payload and t is not None and t.handoff:
+                    return replace(_ir_para(b.destino, nos, terminais),
+                                   motivo_codigo="pediu_vendedor")
+        return None
+    if isinstance(evento, Texto) and pede_contato(evento.conteudo):
+        return replace(_ir_para(_handoff_do_ramo(no_atual, est, nos), nos, terminais),
+                       motivo_codigo="pediu_vendedor")
+    return None
 
 
 def _encerrado(

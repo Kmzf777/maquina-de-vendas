@@ -534,7 +534,8 @@ async def _andar_ate_o_handoff(fluxo) -> dict:
     await fluxo.turno("oi, queria comprar café")
     passos = (
         ("negocio", "Pro meu negócio"), ("cafeteria", "Cafeteria"),
-        ("ate30", "Até 30 kg por mês"), ("trocar", "Quero trocar"),
+        ("ate30", "Até 30 kg por mês"), ("cnpj", "Sim, tenho CNPJ"),  # F3: NC
+        ("trocar", "Quero trocar"),
         ("dias15", "Próximos 15 dias"), ("sim", "Sim, quero falar"),
     )
     estado = None

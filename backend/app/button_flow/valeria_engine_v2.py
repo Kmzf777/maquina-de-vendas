@@ -68,11 +68,7 @@ class DecisaoV2(v1.Decisao):
     # Se a mensagem 2 não puder ser montada (catálogo vazio), o runner aplica o
     # mesmo desvio da vitrine (aviso + handoff do ramo).
     tabela_antes: bool = False
-    # F3 (06/11/2026): motivo estruturado de desqualificação do turno
-    # (`r.MOTIVOS_DESQUALIFICACAO`), quando o clique leva a um destino que não
-    # repassa: consumo (C1) ou sem CNPJ (`T_SEM_CNPJ`). O runner grava o evento
-    # `lead_events.desqualificado` com o nó onde o lead estava.
-    desqualificacao: str | None = None
+    # `desqualificacao` (F3) é herdado da `Decisao` da v1.
 
 
 ID_HUMANO = v1.ID_HUMANO
@@ -250,7 +246,7 @@ class _Ctx:
         """O `_ir_para` da v1 (mesma mensagem e efeitos), devolvido como DecisaoV2."""
         base = v1._ir_para(destino, self.nos, self.terminais,
                            criterios=tuple(dict(criterios).items()), dias=dias)
-        return DecisaoV2(**{f.name: getattr(base, f.name) for f in fields(base)}, **extra)
+        return DecisaoV2(**{**{f.name: getattr(base, f.name) for f in fields(base)}, **extra})
 
     def tela(self, no_id: str, **extra) -> DecisaoV2:
         """Reapresenta uma tela SEM efeito, foto ou carrossel (volta de FAQ).

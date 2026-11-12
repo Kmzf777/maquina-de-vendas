@@ -59,9 +59,10 @@ def test_texto_livre_reenvia_ate_3_e_bloqueia_no_4o(nudges_antes, espera_bloquei
     estado = {"nudges": nudges_antes}
     d = motor.decidir("N1", Texto("quanto custa o kg?"), estado, reg.NOS, reg.TERMINAIS)
     if espera_bloqueio:
-        assert d.proximo_no == "T_HUMANO"
-        assert d.efeitos.silenciar_ia is True
-        assert d.mensagem is None, "BLOCK não gasta mensagem"
+        # F3 (12/11/2026): no teto, o vendedor do ramo (era o T_HUMANO mudo).
+        assert d.proximo_no == "T_HANDOFF"
+        assert d.efeitos.handoff is True
+        assert d.motivo_codigo == "ruido"
     else:
         assert d.proximo_no == "N1", "nudge reenvia o MESMO nó"
         assert d.marcar_nudge is True
@@ -73,9 +74,11 @@ def test_texto_livre_reenvia_ate_3_e_bloqueia_no_4o(nudges_antes, espera_bloquei
 def test_contador_de_nudge_e_por_atendimento_nao_por_no():
     """Por nó, 17 nós dariam 51 nudges em vez de 3."""
     estado = {"nudges": 3}
+    esperado = {"N1": "T_HANDOFF", "N2": "T_HANDOFF", "P1": "T_HANDOFF_PL",
+                "E2": "T_HANDOFF_ARTHUR"}  # F3: vendedor do ramo no teto
     for no in ("N1", "N2", "P1", "E2"):
         d = motor.decidir(no, Texto("oi"), estado, reg.NOS, reg.TERMINAIS)
-        assert d.proximo_no == "T_HUMANO", f"{no} deu nudge com o teto estourado"
+        assert d.proximo_no == esperado[no], f"{no} deu nudge com o teto estourado"
 
 
 def test_clique_valido_nao_gasta_nudge():
