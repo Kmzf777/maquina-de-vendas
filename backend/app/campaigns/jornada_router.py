@@ -8,17 +8,17 @@ recebe o `atribuicao`. Exige o JWT de admin desde o primeiro dia (o detalhe traz
 from fastapi import APIRouter, Depends
 
 from app.campaigns.traffic_report import ATRIBUICOES, campaign_detail
-from app.campaigns.traffic_router import exigir_admin
+from app.campaigns.traffic_router import MODO_PADRAO, _modo, exigir_admin
 
 router = APIRouter(prefix="/api/traffic/jornada", tags=["traffic"])
 
 
 @router.get("/campaign")
-def jornada_campaign_endpoint(channel: str, campaign: str, period: str = "30d", mode: str = "sale",
+def jornada_campaign_endpoint(channel: str, campaign: str, period: str = "30d", mode: str = MODO_PADRAO,
                               date_from: str | None = None, date_to: str | None = None,
                               atribuicao: str = "ultima", _admin: str = Depends(exigir_admin)):
     """KPIs + leads (com "Passou por") + série de uma linha do relatório na atribuição pedida."""
-    mode = mode if mode in ("lead", "sale") else "sale"
+    mode = _modo(mode)  # mesmo padrão e validação do traffic_router ("periodo")
     atribuicao = atribuicao if atribuicao in ATRIBUICOES else "ultima"
     return campaign_detail(channel=channel, campaign=campaign, period=period, mode=mode,
                            date_from=date_from, date_to=date_to, atribuicao=atribuicao)

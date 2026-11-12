@@ -451,3 +451,35 @@ def test_nunca_escreveu_so_vale_para_lead_sem_entrada():
         v = atribuir_lead(lead, [_auto()], a)
         assert lead_channel(v) == "WhatsApp direto" and motivo_sem_rastreio(v) is None
     assert jornada_do_lead(lead, [_auto()])["primeira_origem"] == "WhatsApp direto"
+
+
+# ── modo período (visão do período, 5e224539): as duas atribuições também ──────
+
+def test_traffic_report_periodo_nas_duas_atribuicoes(monkeypatch):
+    monkeypatch.setattr(tr, "get_supabase", lambda: _SB(_tabelas()))
+    out = tr.traffic_report(period="all", mode="periodo")
+    assert out["mode"] == "periodo" and out["atribuicao"] == "ultima"
+    vend = lambda rows: {r["channel"] for r in rows if r["pedidos"]}  # noqa: E731
+    assert vend(out["rows"]) == {"Google Ads", "Cliente antigo"}
+    assert vend(out["por_atribuicao"]["primeira"]["rows"]) == {"Meta Ads", "Cliente antigo"}
+    u, p = out["por_atribuicao"]["ultima"]["total"], out["por_atribuicao"]["primeira"]["total"]
+    for k in ("leads", "pedidos", "receita", "closer", "investimento"):
+        assert u[k] == p[k], k
+    assert out["total"]["pedidos"] == 2 and out["total"]["receita"] == 580.0
+    # o lead que entrou e comprou no período conta uma vez só na jornada
+    assert out["jornadas"]["total_leads"] == 2
+    assert out["jornadas"]["caminhos"][0]["caminho"] == "Meta Ads → Google Ads"
+    assert out["sem_rastreio"]["leads"] == 0
+    assert "summary" in out["por_atribuicao"]["primeira"]
+
+
+def test_campaign_detail_periodo_pela_primeira_origem(monkeypatch):
+    monkeypatch.setattr(tr, "get_supabase", lambda: _SB(_tabelas()))
+    det = tr.campaign_detail("Meta Ads", "(sem campanha)", period="all", mode="periodo",
+                             atribuicao="primeira")
+    if not det["leads"]:
+        det = tr.campaign_detail("Meta Ads", "(não atribuído)", period="all", mode="periodo",
+                                 atribuicao="primeira")
+    assert [l["lead_id"] for l in det["leads"]] == ["L"]
+    assert det["leads"][0]["jornada"]["origens"] == ["Meta Ads", "Google Ads"]
+    assert det["summary"]["pedidos"] == 1

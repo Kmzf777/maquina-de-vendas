@@ -27,7 +27,7 @@ def test_repassa_a_atribuicao(monkeypatch):
     r = c.get("/api/traffic/jornada/campaign", params={"channel": "Meta Ads", "campaign": "x",
                                                        "atribuicao": "primeira", "period": "7d"})
     assert r.status_code == 200
-    assert chamadas[0]["atribuicao"] == "primeira" and chamadas[0]["mode"] == "sale"
+    assert chamadas[0]["atribuicao"] == "primeira" and chamadas[0]["mode"] == "periodo"
     assert chamadas[0]["period"] == "7d"
 
 
@@ -35,7 +35,7 @@ def test_valores_invalidos_viram_padrao(monkeypatch):
     c, chamadas = _cliente(monkeypatch)
     c.get("/api/traffic/jornada/campaign", params={"channel": "a", "campaign": "b", "atribuicao": "x",
                                                    "mode": "y"})
-    assert chamadas[0]["atribuicao"] == "ultima" and chamadas[0]["mode"] == "sale"
+    assert chamadas[0]["atribuicao"] == "ultima" and chamadas[0]["mode"] == "periodo"
 
 
 def test_router_registrado_no_app():
