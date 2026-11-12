@@ -55,6 +55,7 @@ CONTEXTO_CASOS = [
                 {"tem_inbound": True, "lead_channel": "manual"}, {"lead_channel": "evolution"},
                 {"cliente_antigo": False, "numero_antigo": "X", "tem_inbound": False})
 ]
+# (metadata, rótulo) e, nos casos com 3 itens, o metadata do toque ANTERIOR (revisão de 12/11)
 ENTRADA_CASOS = [
     ({"canal": "Meta Ads", "ctwa_clid": "c"}, "Meta Ads"),
     ({"canal": "Orgânico", "sem_rastreio": True}, "Orgânico"),
@@ -62,6 +63,17 @@ ENTRADA_CASOS = [
     ({"canal": "WhatsApp direto", "retorno": True}, None),
     ({"canal": "Google Ads", "utm_source": "google", "utm_medium": "cpc", "campanha_nome": "WhatsApp do Google"}, None),
     ({"canal": "Bling"}, None), ({}, None), ({"utm_source": "instagram"}, None), ({"canal": ""}, "Sem rastreio"),
+    ({"canal": "Bling", "utm_source": "metaads"}, None),
+    # clique novo do Meta com o gclid e o UTM antigos do Google: é Meta
+    ({"gclid": "G1", "utm_source": "google", "utm_medium": "cpc", "utm_campaign": "marca", "ctwa_clid": "C1",
+      "meta_ad_id": "A1"}, None, {"gclid": "G1", "utm_source": "google", "utm_medium": "cpc", "utm_campaign": "marca"}),
+    # clique novo do Google com o ctwa antigo: é Google
+    ({"gclid": "G2", "ctwa_clid": "C1", "meta_ad_id": "A1", "campanha_id": "X"}, None, {"ctwa_clid": "C1", "meta_ad_id": "A1"}),
+    # sem clique novo: nada sai
+    ({"gclid": "G1", "ctwa_clid": "C1"}, None, {"gclid": "G1", "ctwa_clid": "C1"}),
+    # dois cliques do Google seguidos, mesma campanha: continua Google
+    ({"gclid": "G3", "utm_source": "google", "utm_medium": "cpc"}, None, {"gclid": "G1", "utm_source": "google", "utm_medium": "cpc"}),
+    ({"ctwa_clid": "C9"}, None, None),
 ]
 
 
@@ -74,8 +86,10 @@ def sql_espelho() -> str:
         args = ", ".join(_lit(x) for x in (canal, ctx.get("cliente_antigo"), ctx.get("numero_antigo"),
                                             ctx.get("tem_inbound"), ctx.get("lead_channel")))
         partes.append(f"'ctx{i}', public.fn_lead_canal_contexto({args})")
-    for i, (meta, valor) in enumerate(ENTRADA_CASOS):
-        partes.append(f"'ent{i}', public.fn_lead_canal_entrada({_lit(json.dumps(meta))}::jsonb, {_lit(valor)})")
+    for i, caso in enumerate(ENTRADA_CASOS):
+        meta, valor, ant = (caso + (None,))[:3]
+        ant_sql = f"{_lit(json.dumps(ant))}::jsonb" if ant is not None else "null"
+        partes.append(f"'ent{i}', public.fn_lead_canal_entrada({_lit(json.dumps(meta))}::jsonb, {_lit(valor)}, {ant_sql})")
     # jsonb_build_object aceita no máximo 100 argumentos: blocos de 40 pares somados com ||
     blocos = ["jsonb_build_object(" + ", ".join(partes[i:i + 40]) + ")" for i in range(0, len(partes), 40)]
     return "select (" + " || ".join(blocos) + ")::json;"
@@ -87,8 +101,10 @@ def esperado_espelho() -> dict[str, str]:
         out[f"canal{i}"] = derive_channel(c)
     for i, (canal, ctx) in enumerate(CONTEXTO_CASOS):
         out[f"ctx{i}"] = aplicar_contexto_canal(canal, **ctx)
-    for i, (meta, valor) in enumerate(ENTRADA_CASOS):
-        out[f"ent{i}"] = canal_da_entrada({"metadata": meta, "new_value": valor})
+    for i, caso in enumerate(ENTRADA_CASOS):
+        meta, valor, ant = (caso + (None,))[:3]
+        out[f"ent{i}"] = canal_da_entrada({"metadata": meta, "new_value": valor},
+                                          {"metadata": ant} if ant is not None else None)
     return out
 
 
@@ -113,6 +129,22 @@ select json_build_object(
 """, {"canais": ["Meta Ads", "Google Ads"], "sem_rastreio": 0,
       "jornada": {"primeira_origem": "Meta Ads", "ultima_origem": "Google Ads",
                   "origens": "Meta Ads → Google Ads", "n_toques": 2, "multicanal": True, "estimado": False}}),
+    # Revisão de 12/11: Google e, dias depois, clique do Meta. O toque do Meta não leva o gclid
+    # antigo e fica "Meta Ads" (antes ficava "Google Ads": 7 casos em produção).
+    "google_depois_meta_sem_carregar": (f"""
+insert into public.leads (id, phone, origem_cadastro, gclid, utm_source, utm_medium, utm_campaign)
+  values ('{_LEAD.format(n=8)}', 'f5-8', 'inbound', 'G1', 'google', 'cpc', 'marca');
+update public.lead_events set occurred_at = occurred_at - interval '3 days' where lead_id = '{_LEAD.format(n=8)}';
+update public.leads set ctwa_clid = 'C1' where id = '{_LEAD.format(n=8)}';
+select json_build_object(
+  'canais', (select json_agg(e.new_value order by e.occurred_at) from public.lead_events e
+              where e.lead_id = '{_LEAD.format(n=8)}' and e.event_type = 'entrada'),
+  'gclid_no_meta', (select e.metadata ? 'gclid' from public.lead_events e
+              where e.lead_id = '{_LEAD.format(n=8)}' and e.event_type = 'entrada' and e.new_value = 'Meta Ads'),
+  'jornada', (select json_build_object('o', j.origens, 'u', j.ultima_origem) from public.vw_lead_jornada j
+               where j.lead_id = '{_LEAD.format(n=8)}'));
+""", {"canais": ["Google Ads", "Meta Ads"], "gclid_no_meta": False,
+      "jornada": {"o": "Google Ads → Meta Ads", "u": "Meta Ads"}}),
     # Mesma plataforma em 30 min continua fundindo (o webhook manda o ctwa_clid e depois o anúncio).
     "mesma_plataforma_funde": (f"""
 insert into public.leads (id, phone, origem_cadastro) values ('{_LEAD.format(n=2)}', 'f5-2', 'inbound');

@@ -277,18 +277,72 @@ _TRACK_KEYS = ("gclid", "gbraid", "wbraid", "fbclid", "ctwa_clid", "meta_ad_id",
 _SETA = " → "
 
 
-def canal_da_entrada(entrada: dict[str, Any]) -> str:
+# Click ids por plataforma: a entrada do gatilho é um retrato das colunas do lead, então o clique
+# NOVO do Meta chega junto com o gclid ANTIGO (e vice-versa). Revisão de 12/11/2026: 7 cliques do
+# Meta em produção estavam gravados como "Google Ads" por isso.
+_CLICK_PLATAFORMA: dict[str, str] = {
+    "gclid": "google", "gbraid": "google", "wbraid": "google",
+    "fbclid": "meta", "ctwa_clid": "meta", "meta_ad_id": "meta",
+}
+_UTM_KEYS = ("utm_source", "utm_medium", "utm_campaign")
+
+
+def _plataforma_do_utm(r: dict[str, Any]) -> str | None:
+    source = _s(r.get("utm_source")).lower()
+    if source in _META_AD_SOURCES:
+        return "meta"
+    if source in _GOOGLE_AD_SOURCES and _s(r.get("utm_medium")).lower() in _PAID_CHANNEL_MEDIUMS:
+        return "google"
+    return None
+
+
+def rastreio_do_toque(meta: dict[str, Any] | None, anterior: dict[str, Any] | None = None
+                      ) -> dict[str, Any]:
+    """O rastreio que é DESTE toque (metadata de uma entrada), sem o que veio carregado. Puro.
+
+    Espelha `public.fn_lead_rastreio_toque`. `anterior` é o metadata do toque anterior (no
+    gatilho, as colunas antigas do lead). Se o toque tem click id novo de uma plataforma, os
+    click ids de OUTRA plataforma iguais aos do anterior saem, e o UTM pago de outra plataforma
+    que não mudou também (com a campanha do anúncio do Meta, quando o anúncio sai)."""
+    meta = meta or {}
+    r: dict[str, Any] = {k: meta.get(k) for k in _TRACK_KEYS}
+    r["campanha_id"], r["campanha_nome"] = meta.get("campanha_id"), meta.get("campanha_nome")
+    if not anterior:
+        return r
+    novas = {pl for k, pl in _CLICK_PLATAFORMA.items()
+             if _s(r.get(k)) and _s(r.get(k)) != _s(anterior.get(k))}
+    if not novas:
+        return r
+    for k, pl in _CLICK_PLATAFORMA.items():
+        if pl not in novas and _s(r.get(k)) and _s(r.get(k)) == _s(anterior.get(k)):
+            r[k] = None
+            if k == "meta_ad_id":
+                r["campanha_id"] = r["campanha_nome"] = None
+    plat_utm = _plataforma_do_utm(r)
+    if (plat_utm and plat_utm not in novas
+            and _s(r.get("utm_source")) == _s(anterior.get("utm_source"))
+            and _s(r.get("utm_campaign")) == _s(anterior.get("utm_campaign"))):
+        for k in _UTM_KEYS:
+            r[k] = None
+    return r
+
+
+def canal_da_entrada(entrada: dict[str, Any], anterior: dict[str, Any] | None = None) -> str:
     """Canal de UM toque. Puro; espelha a coluna `canal` de vw_lead_jornada.
 
-    O rastreio gravado no metadata manda (mesma regra do derive_channel, sem origem). Toque sem
-    rastreio usa o rótulo gravado: a entrada automática "Orgânico" (sem_rastreio) é o "WhatsApp
-    direto" (cartão C, unificado), e os toques novos já vêm com o nome ("WhatsApp direto",
-    "Google Ads" do botão do Google)."""
+    O rastreio do toque manda (rastreio_do_toque: sem o que veio carregado do toque `anterior`;
+    mesma regra do derive_channel, sem origem). O rótulo "Bling" gravado vence (lead importado:
+    o gatilho já aplicou a origem). Toque sem rastreio usa o rótulo gravado: a entrada automática
+    "Orgânico" (sem_rastreio) é o "WhatsApp direto" (cartão C, unificado), e os toques novos já
+    vêm com o nome ("WhatsApp direto", "Google Ads" do botão do Google)."""
     meta = entrada.get("metadata") or {}
-    canal = derive_channel({k: meta.get(k) for k in _TRACK_KEYS})
+    rotulo = _s(meta.get("canal")) or _s(entrada.get("new_value"))
+    if rotulo == "Bling":
+        return "Bling"
+    ant = (anterior or {}).get("metadata") if anterior else None
+    canal = derive_channel(rastreio_do_toque(meta, ant))
     if canal != CANAL_SEM_RASTREIO:
         return canal
-    rotulo = _s(meta.get("canal")) or _s(entrada.get("new_value"))
     if rotulo == "Orgânico" and meta.get("sem_rastreio") in (True, "true"):
         return CANAL_WHATSAPP_DIRETO
     return rotulo or CANAL_SEM_RASTREIO
@@ -296,13 +350,19 @@ def canal_da_entrada(entrada: dict[str, Any]) -> str:
 
 def _toques(entradas: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Entradas válidas em ordem cronológica, cada uma com o canal já resolvido."""
-    out = []
+    validas = []
     for e in entradas or []:
         em = _parse_iso(e.get("occurred_at"))
-        if em is None:
-            continue
-        out.append({"em": em, "canal": canal_da_entrada(e), "entrada": e})
-    out.sort(key=lambda t: t["em"])
+        if em is not None:
+            validas.append((em, e))
+    validas.sort(key=lambda t: t[0])  # estável: empate fica na ordem de leitura (id)
+    out = []
+    anterior = None
+    for em, e in validas:
+        ant_meta = (anterior or {}).get("metadata") if anterior else None
+        out.append({"em": em, "canal": canal_da_entrada(e, anterior), "entrada": e,
+                    "rastreio": rastreio_do_toque(e.get("metadata"), ant_meta)})
+        anterior = e
     return out
 
 
@@ -353,11 +413,15 @@ def toque_atribuido(entradas: list[dict[str, Any]], atribuicao: str,
     toques = _toques(entradas)
     if not toques:
         return None
+    return _toque_escolhido(toques, atribuicao, ate)["entrada"]
+
+
+def _toque_escolhido(toques: list[dict[str, Any]], atribuicao: str, ate: Any) -> dict[str, Any]:
     if atribuicao == "primeira":
-        return toques[0]["entrada"]
+        return toques[0]
     limite = _parse_iso(ate) if isinstance(ate, str) else ate
     antes = [t for t in toques if limite is None or t["em"] <= limite] or toques[:1]
-    return antes[-1]["entrada"]
+    return antes[-1]
 
 
 def atribuir_lead(lead: dict[str, Any], entradas: list[dict[str, Any]], atribuicao: str,
@@ -368,17 +432,18 @@ def atribuir_lead(lead: dict[str, Any], entradas: list[dict[str, Any]], atribuic
     pelo Meta e pelo Google fica com ctwa_clid E gclid, e a prioridade fixa jogava todos no
     Google). Aqui o lead "vira" o toque escolhido: campanha, anúncio e UTM daquele clique. Sem
     entrada, o lead fica como está (estimado). A atribuição manual continua valendo por cima."""
-    toque = toque_atribuido(entradas, atribuicao, ate)
+    toques = _toques(entradas)
     out = dict(lead)
     out["_jornada"] = jornada_do_lead(lead, entradas, ate)
-    if toque is None:
+    if not toques:
         return out
-    meta = toque.get("metadata") or {}
+    toque = _toque_escolhido(toques, atribuicao, ate)
+    r = toque["rastreio"]
     for k in _TRACK_KEYS:
-        out[k] = meta.get(k)
-    out["_canal_toque"] = canal_da_entrada(toque)
-    if _s(meta.get("campanha_id")):
-        out["_campanha_id"] = _s(meta.get("campanha_id"))
+        out[k] = r.get(k)
+    out["_canal_toque"] = toque["canal"]
+    if _s(r.get("campanha_id")):
+        out["_campanha_id"] = _s(r.get("campanha_id"))
     return out
 
 
@@ -632,7 +697,9 @@ def merge_period_report(lead_report: dict[str, Any], sale_report: dict[str, Any]
     linhas: dict[tuple[str, str], dict[str, Any]] = {}
 
     def _slot(r: dict[str, Any]) -> dict[str, Any]:
-        k = (r["channel"], r["campaign"])
+        # Sem diferenciar maiúscula (revisão 12/11): canal não pago agrupa pelo utm_campaign em
+        # minúsculas, e o rótulo vem da grafia do 1º lead de cada relatório.
+        k = (r["channel"], str(r["campaign"]).lower())
         if k not in linhas:
             linhas[k] = _new_row(r["channel"], r["campaign"])
         return linhas[k]
@@ -940,7 +1007,9 @@ def _select_leads(fetch) -> list[dict[str, Any]]:
         # A coluna meta_ad_id vem de migration; se ela ainda nao foi aplicada o PostgREST
         # rejeita o select inteiro. Degrada para o conjunto base (perde so a atribuicao de
         # campanha do Meta) em vez de zerar o relatorio.
-        if _MetaAdCol.enabled:
+        # Revisão 12/11: só desliga quando o erro CITA a coluna. Antes um timeout qualquer
+        # desligava o meta_ad_id até o próximo restart.
+        if _MetaAdCol.enabled and "meta_ad_id" in str(exc):
             logger.warning("traffic_report: select com meta_ad_id falhou (%s) - migration pendente?", exc)
             _MetaAdCol.enabled = False
             return _select_leads(fetch)
@@ -1125,12 +1194,13 @@ def _empty_report(mode: str, period: str, atribuicao: str = "ultima") -> dict[st
     report["atribuicao"] = atribuicao
     report["por_atribuicao"] = {a: vazio for a in ATRIBUICOES}
     report["jornadas"] = build_jornadas([], {})
-    report["sem_rastreio"] = {"leads": 0, "motivos": []}
+    report["sem_rastreio"] = {"leads": 0, "clientes": 0, "motivos": []}
     return report
 
 
 # --- Jornada: I/O (fail-soft) -------------------------------------------------------------
-_CHAVES_ATRIBUICAO = ("rows", "total", "channel_subtotals", "summary", "entraram_ja_clientes")
+_CHAVES_ATRIBUICAO = ("rows", "total", "channel_subtotals", "summary", "entraram_ja_clientes",
+                      "sem_rastreio")
 # Colunas de vw_lead_contexto_canal (migração 20261106_f5_jornada).
 _CONTEXTO_COLS = ("tem_inbound", "cliente_antigo", "numero_antigo")
 
@@ -1192,7 +1262,7 @@ def _repasse_em(sb, lead_ids: list[str]) -> dict[str, str]:
 def _multicanal_ids(entradas: dict[str, list[dict[str, Any]]]) -> list[str]:
     """Leads cujos toques têm mais de um canal: só neles o corte (venda/repasse) muda algo."""
     return sorted(lid for lid, es in entradas.items()
-                  if len({canal_da_entrada(e) for e in es}) > 1)
+                  if len({t["canal"] for t in _toques(es)}) > 1)
 
 
 def _atribuir_leads(sb, leads: list[dict[str, Any]], atribuicoes: tuple[str, ...], mode: str,
@@ -1224,16 +1294,23 @@ def _atribuicao_valida(atribuicao: str | None) -> str:
     return atribuicao if atribuicao in ATRIBUICOES else "ultima"
 
 
-def resumo_sem_rastreio(leads: list[dict[str, Any]]) -> dict[str, Any]:
-    """Quantos sobraram em "Sem rastreio" e por quê (cartão C item 4). Puro."""
+def resumo_sem_rastreio(leads: list[dict[str, Any]],
+                        sales_by_lead: dict[str, dict[str, Any]] | None = None) -> dict[str, Any]:
+    """Quantos sobraram em "Sem rastreio", quantos deles compraram e por quê (cartão C item 4).
+
+    Puro. No modo período `leads` junta a turma e os compradores antigos (sem repetir), então
+    `leads` aqui pode passar do "Leads" da linha da tabela; `clientes` diz quantos compraram."""
+    sales_by_lead = sales_by_lead or {}
     motivos: dict[str, int] = {}
+    clientes = 0
     for l in leads:
         m = motivo_sem_rastreio(l)
         if m:
             motivos[m] = motivos.get(m, 0) + 1
+            clientes += 1 if sales_by_lead.get(l.get("id")) else 0
     lista = sorted(({"motivo": m, "leads": n} for m, n in motivos.items()),
                    key=lambda d: (-d["leads"], d["motivo"]))
-    return {"leads": sum(motivos.values()), "motivos": lista}
+    return {"leads": sum(motivos.values()), "clientes": clientes, "motivos": lista}
 
 
 def _spend_by_campaign(sb, lo: str | None, hi: str | None, platform: str = "google") -> list[dict[str, Any]]:
@@ -1327,7 +1404,7 @@ def select_campaign_leads(leads: list[dict[str, Any]], channel: str, campaign: s
 def _select_auto(in_channel, campaign, campaigns, campaign_id_by_lead):
     """Leads SEM atribuição manual de uma linha — o casamento por anúncio/UTM de sempre."""
     if not campaigns:  # canal nao pago: a linha e o proprio utm_campaign
-        return [l for l in in_channel if (_s(l.get("utm_campaign")) or _NO_CAMPAIGN) == campaign]
+        return [l for l in in_channel if (_s(l.get("utm_campaign")) or _NO_CAMPAIGN).lower() == campaign.lower()]
 
     def _resolve(l):
         cid = _s(l.get("_campanha_id")) or campaign_id_by_lead.get(l.get("id"))
@@ -1344,7 +1421,7 @@ def _select_auto(in_channel, campaign, campaigns, campaign_id_by_lead):
     target = next((cid for cid, c in campaigns.items() if c["name"] == campaign), None)
     if target is None:
         # Linha antiga/rotulo desconhecido: cai no comportamento legado por utm_campaign.
-        return [l for l in in_channel if (_s(l.get("utm_campaign")) or _NO_CAMPAIGN) == campaign]
+        return [l for l in in_channel if (_s(l.get("utm_campaign")) or _NO_CAMPAIGN).lower() == campaign.lower()]
     return [l for l in in_channel if _resolve(l) == target]
 
 
@@ -1530,14 +1607,18 @@ def _report_do_modo(sb, mode: str, period: str, lo: str | None, hi: str | None,
 def _juntar_atribuicoes(partes: dict[str, dict[str, Any]],
                         leads_por_atribuicao: dict[str, list[dict[str, Any]]],
                         sales: dict[str, dict[str, Any]], atribuicao: str) -> dict[str, Any]:
-    """Topo na atribuição pedida + `por_atribuicao` + `jornadas` + `sem_rastreio`. Puro."""
+    """Topo na atribuição pedida + `por_atribuicao` + `jornadas` + `sem_rastreio`. Puro.
+
+    O `sem_rastreio` vai em cada atribuição (revisão de 12/11): o card da tela acompanha o
+    seletor "Atribuir por", como a tabela."""
+    base = leads_por_atribuicao.get("ultima") or next(iter(leads_por_atribuicao.values()), [])
+    for a, rep in partes.items():
+        rep["sem_rastreio"] = resumo_sem_rastreio(leads_por_atribuicao.get(a) or base, sales)
     report = dict(partes[atribuicao])
     report["atribuicao"] = atribuicao
     report["por_atribuicao"] = {a: {k: r[k] for k in _CHAVES_ATRIBUICAO if k in r}
                                 for a, r in partes.items()}
-    base = leads_por_atribuicao.get("ultima") or next(iter(leads_por_atribuicao.values()), [])
     report["jornadas"] = build_jornadas(base, sales)
-    report["sem_rastreio"] = resumo_sem_rastreio(leads_por_atribuicao.get(atribuicao) or base)
     return report
 
 

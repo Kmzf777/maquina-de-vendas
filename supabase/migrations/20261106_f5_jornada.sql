@@ -88,18 +88,67 @@ returns text language sql immutable as $$
   end
 $$;
 
--- ── 3. fn_lead_canal_entrada ───────────────────────────────────────────────────────
-create or replace function public.fn_lead_canal_entrada(p_metadata jsonb, p_new_value text)
-returns text language sql immutable as $$
-  with r as (
-    select public.fn_lead_canal(p_metadata->>'gclid', p_metadata->>'fbclid',
-                                p_metadata->>'ctwa_clid', p_metadata->>'meta_ad_id',
-                                p_metadata->>'utm_source', p_metadata->>'utm_medium',
-                                p_metadata->>'traffic_type', p_metadata->>'gbraid',
-                                p_metadata->>'wbraid') as canal,
-           coalesce(nullif(btrim(p_metadata->>'canal'), ''), nullif(btrim(p_new_value), '')) as rotulo
+-- ── 3. fn_lead_rastreio_toque e fn_lead_canal_entrada ──────────────────────────────
+-- A entrada é um retrato das colunas do lead: o clique NOVO do Meta chega com o gclid ANTIGO (e
+-- vice-versa). Revisão de 12/11/2026: 7 cliques do Meta gravados como "Google Ads". Com click id
+-- novo de uma plataforma, saem os click ids de OUTRA plataforma iguais aos do toque anterior, o
+-- UTM pago de outra plataforma que não mudou e, se o anúncio do Meta saiu, a campanha dele.
+-- Espelho: traffic_report.rastreio_do_toque.
+create or replace function public.fn_lead_rastreio_toque(p_meta jsonb, p_ant jsonb)
+returns jsonb language sql immutable as $$
+  with k as (
+    select c.chave, c.plataforma from (values ('gclid', 'google'), ('gbraid', 'google'),
+      ('wbraid', 'google'), ('fbclid', 'meta'), ('ctwa_clid', 'meta'), ('meta_ad_id', 'meta')) -- _CLICK_PLATAFORMA
+      as c(chave, plataforma)
+  ), n as (
+    select array_agg(distinct k.plataforma) as novas
+      from k
+     where p_ant is not null
+       and btrim(coalesce(p_meta->>k.chave, '')) <> ''
+       and btrim(coalesce(p_meta->>k.chave, '')) <> btrim(coalesce(p_ant->>k.chave, ''))
+  ), carregadas as (
+    select coalesce(array_agg(k.chave), '{}'::text[]) as chaves
+      from k, n
+     where n.novas is not null and k.plataforma <> all (n.novas)
+       and btrim(coalesce(p_meta->>k.chave, '')) <> ''
+       and btrim(coalesce(p_meta->>k.chave, '')) = btrim(coalesce(p_ant->>k.chave, ''))
+  ), utm as (
+    select case
+      when public.fn_lead_txt(p_meta->>'utm_source') = any (array['metaads', 'meta_ads', 'meta-ads', 'meta', 'facebook_ads', 'facebookads', 'fb_ads']) -- _META_AD_SOURCES
+        then 'meta'
+      when public.fn_lead_txt(p_meta->>'utm_source') = any (array['google', 'googleads', 'google_ads', 'adwords']) -- _GOOGLE_AD_SOURCES
+       and public.fn_lead_txt(p_meta->>'utm_medium') = any (array['cpc', 'ppc', 'pmax', 'performance_max', 'paid', 'paid_search', 'paidsearch', 'display', 'cpm', 'paid_social', 'paidsocial']) -- _PAID_CHANNEL_MEDIUMS
+        then 'google'
+    end as plataforma
   )
   select case
+    when n.novas is null then p_meta
+    else p_meta - c.chaves
+         - case when 'meta_ad_id' = any (c.chaves) then array['campanha_id', 'campanha_nome']
+                else '{}'::text[] end
+         - case when u.plataforma is not null and u.plataforma <> all (n.novas)
+                 and btrim(coalesce(p_meta->>'utm_source', '')) = btrim(coalesce(p_ant->>'utm_source', ''))
+                 and btrim(coalesce(p_meta->>'utm_campaign', '')) = btrim(coalesce(p_ant->>'utm_campaign', ''))
+                then array['utm_source', 'utm_medium', 'utm_campaign'] else '{}'::text[] end
+  end
+  from n, carregadas c, utm u
+$$;
+
+create or replace function public.fn_lead_canal_entrada(p_metadata jsonb, p_new_value text,
+                                                        p_anterior jsonb default null)
+returns text language sql immutable as $$
+  with t as (select public.fn_lead_rastreio_toque(p_metadata, p_anterior) as m
+  ), r as (
+    select public.fn_lead_canal(t.m->>'gclid', t.m->>'fbclid',
+                                t.m->>'ctwa_clid', t.m->>'meta_ad_id',
+                                t.m->>'utm_source', t.m->>'utm_medium',
+                                t.m->>'traffic_type', t.m->>'gbraid',
+                                t.m->>'wbraid') as canal,
+           coalesce(nullif(btrim(p_metadata->>'canal'), ''), nullif(btrim(p_new_value), '')) as rotulo
+      from t
+  )
+  select case
+    when r.rotulo = 'Bling' then 'Bling' -- lead importado: o gatilho já aplicou a origem
     when r.canal <> 'Sem rastreio' then r.canal
     when r.rotulo = 'Orgânico' and p_metadata->>'sem_rastreio' = 'true' then 'WhatsApp direto'
     else coalesce(r.rotulo, 'Sem rastreio')
@@ -109,7 +158,8 @@ $$;
 
 GRANT EXECUTE ON FUNCTION public.fn_lead_canal_contexto(text,boolean,text,boolean,text)
   TO authenticated, service_role;
-GRANT EXECUTE ON FUNCTION public.fn_lead_canal_entrada(jsonb,text) TO authenticated, service_role;
+GRANT EXECUTE ON FUNCTION public.fn_lead_canal_entrada(jsonb,text,jsonb) TO authenticated, service_role;
+GRANT EXECUTE ON FUNCTION public.fn_lead_rastreio_toque(jsonb,jsonb) TO authenticated, service_role;
 
 -- ── 4. Gatilho de entrada ──────────────────────────────────────────────────────────
 create or replace function public.fn_lead_events_leads_entrada()
@@ -214,6 +264,16 @@ begin
     end if;
 
     if tg_op = 'UPDATE' and not v_inicial then
+      -- F5 (revisão 12/11): o toque é só o que mudou. Clique novo do Meta não leva o gclid antigo.
+      v_meta := public.fn_lead_rastreio_toque(v_meta,
+                  public.fn_lead_entrada_metadata(old.gclid, old.fbclid, old.ctwa_clid, old.meta_ad_id,
+                                                  old.utm_source, old.utm_medium, old.utm_campaign,
+                                                  old.traffic_type, old.gbraid, old.wbraid));
+      v_meta := v_meta || jsonb_build_object('canal',
+                  public.fn_lead_canal(v_meta->>'gclid', v_meta->>'fbclid', v_meta->>'ctwa_clid',
+                                       v_meta->>'meta_ad_id', v_meta->>'utm_source',
+                                       v_meta->>'utm_medium', new.traffic_type, v_meta->>'gbraid',
+                                       v_meta->>'wbraid', new.origem_cadastro));
       select e.id, e.metadata, e.new_value into v_ultimo, v_ultimo_meta, v_ultimo_valor
         from public.lead_events e
        where e.lead_id = new.id
@@ -292,11 +352,15 @@ comment on view public.vw_lead_contexto_canal is
 
 -- ── 6. vw_lead_jornada ─────────────────────────────────────────────────────────────
 create or replace view public.vw_lead_jornada with (security_invoker = true) as
-with toques as (
-  select e.lead_id, e.id, e.occurred_at,
-         public.fn_lead_canal_entrada(e.metadata, e.new_value) as canal
+with ordenadas as (
+  select e.lead_id, e.id, e.occurred_at, e.metadata, e.new_value,
+         lag(e.metadata) over (partition by e.lead_id order by e.occurred_at, e.id) as anterior
     from public.lead_events e
    where e.event_type = 'entrada' and e.occurred_at is not null
+), toques as (
+  select o.lead_id, o.id, o.occurred_at,
+         public.fn_lead_canal_entrada(o.metadata, o.new_value, o.anterior) as canal
+    from ordenadas o
 ), seq as (
   select t.*, lag(t.canal) over (partition by t.lead_id order by t.occurred_at, t.id) as anterior
     from toques t
@@ -362,7 +426,8 @@ BEGIN
     GRANT SELECT ON public.vw_lead_contexto_canal TO consulta_ro;
     GRANT SELECT ON public.vw_lead_jornada TO consulta_ro;
     GRANT EXECUTE ON FUNCTION public.fn_lead_canal_contexto(text,boolean,text,boolean,text) TO consulta_ro;
-    GRANT EXECUTE ON FUNCTION public.fn_lead_canal_entrada(jsonb,text) TO consulta_ro;
+    GRANT EXECUTE ON FUNCTION public.fn_lead_canal_entrada(jsonb,text,jsonb) TO consulta_ro;
+    GRANT EXECUTE ON FUNCTION public.fn_lead_rastreio_toque(jsonb,jsonb) TO consulta_ro;
   END IF;
 END $$;
 

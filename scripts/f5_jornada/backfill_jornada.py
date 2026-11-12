@@ -31,7 +31,7 @@ from typing import Callable
 Rodar = Callable[[str], str]
 
 SQL_ESQUEMA = """select json_build_object(
-  'f5', to_regprocedure('public.fn_lead_canal_entrada(jsonb,text)') is not null
+  'f5', to_regprocedure('public.fn_lead_canal_entrada(jsonb,text,jsonb)') is not null
         and to_regclass('public.vw_lead_jornada') is not null);"""
 
 # Canais que a F5 criou: antes deles, o /trafego mostrava "Sem rastreio".

@@ -172,7 +172,8 @@ begin
 end $$;
 revoke execute on function public.fn_lead_events_leads_entrada() from public, anon, authenticated;
 
-drop function if exists public.fn_lead_canal_entrada(jsonb, text);
+drop function if exists public.fn_lead_canal_entrada(jsonb, text, jsonb);
+drop function if exists public.fn_lead_rastreio_toque(jsonb, jsonb);
 drop function if exists public.fn_lead_canal_contexto(text, boolean, text, boolean, text);
 
 COMMIT;

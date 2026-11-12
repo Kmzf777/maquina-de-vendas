@@ -35,10 +35,11 @@ export type JornadasResumo = {
   caminhos: CaminhoJornada[];
 };
 
-export type SemRastreioResumo = { leads: number; motivos: { motivo: string; leads: number }[] };
+export type SemRastreioResumo = { leads: number; clientes?: number; motivos: { motivo: string; leads: number }[] };
 
 export type ParteAtribuida<R, T, S, M> = {
   rows: R[]; total: T; channel_subtotals: S; summary?: M; entraram_ja_clientes?: number;
+  sem_rastreio?: SemRastreioResumo;
 };
 
 type RelatorioComAtribuicao<R, T, S, M> = ParteAtribuida<R, T, S, M> & {

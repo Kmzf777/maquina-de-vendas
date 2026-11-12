@@ -29,7 +29,7 @@ describe("JornadasMulticanal", () => {
       caminhos: [{ caminho: "Meta Ads → Google Ads", leads: 4, clientes: 4, pedidos: 4, receita: 1200 }],
     }} />);
     expect(screen.getByText("Jornadas com mais de um canal")).toBeTruthy();
-    expect(screen.getByText(/5 de 40 leads · 4 vendas/)).toBeTruthy();
+    expect(screen.getByText(/5 de 40 leads e compradores · 4 vendas/)).toBeTruthy();
     expect(screen.getByText("Meta Ads → Google Ads")).toBeTruthy();
     expect(screen.getByText(/4 leads · 4 vendas · R\$\s?1\.200/)).toBeTruthy();
   });
@@ -52,6 +52,10 @@ describe("SemRastreioDetalhe", () => {
     expect(screen.getByText("Nunca mandou mensagem")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Ver leads" }));
     expect(onAbrir).toHaveBeenCalled();
+  });
+  it("diz quantos dos sem rastreio compraram", () => {
+    render(<SemRastreioDetalhe resumo={{ leads: 4, clientes: 2, motivos: [{ motivo: "Sem nenhum sinal", leads: 4 }] }} />);
+    expect(screen.getByText("Sem rastreio: 4 leads · 2 compraram")).toBeTruthy();
   });
   it("zero sobra: some", () => {
     const { container } = render(<SemRastreioDetalhe resumo={{ leads: 0, motivos: [] }} />);

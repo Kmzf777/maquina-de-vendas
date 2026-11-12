@@ -197,7 +197,10 @@ def test_totais_iguais_e_sem_rastreio_nao_cresce_com_muitos_leads():
            {k: hoje[k] for k in ("leads", "clientes", "pedidos", "receita")}
     assert rep["atribuicao"] == "primeira"
     # só "c" (sem origem nenhuma) sobra em "Sem rastreio"; "d" virou disparo
-    assert rep["sem_rastreio"] == {"leads": 1, "motivos": [{"motivo": "Sem origem de cadastro", "leads": 1}]}
+    assert rep["sem_rastreio"] == {"leads": 1, "clientes": 1,
+                                 "motivos": [{"motivo": "Sem origem de cadastro", "leads": 1}]}
+    # o card acompanha a atribuição
+    assert rep["por_atribuicao"]["ultima"]["sem_rastreio"] == rep["sem_rastreio"]
 
 
 def test_build_jornadas_top5_ordenado_por_vendas():
@@ -269,7 +272,7 @@ def test_motivo_sem_rastreio():
     assert motivo_sem_rastreio({"origem_cadastro": "inbound", "tem_inbound": False,
                                 "channel": "outro"}) == "Nunca mandou mensagem (cadastro 'outro')"
     r = resumo_sem_rastreio([{}, {}, {"origem_cadastro": "inbound", "tem_inbound": False}, {"gclid": "g"}])
-    assert r == {"leads": 3, "motivos": [{"motivo": "Sem origem de cadastro", "leads": 2},
+    assert r == {"leads": 3, "clientes": 0, "motivos": [{"motivo": "Sem origem de cadastro", "leads": 2},
                                          {"motivo": "Nunca mandou mensagem", "leads": 1}]}
 
 
@@ -392,7 +395,8 @@ def test_detalhe_sem_rastreio_lista_o_motivo(monkeypatch):
                                         "numero_antigo": None})
     monkeypatch.setattr(tr, "get_supabase", lambda: _SB(t))
     out = tr.traffic_report(period="all", mode="sale")
-    assert out["sem_rastreio"] == {"leads": 1, "motivos": [{"motivo": "Nunca mandou mensagem", "leads": 1}]}
+    assert out["sem_rastreio"] == {"leads": 1, "clientes": 1,
+                                   "motivos": [{"motivo": "Nunca mandou mensagem", "leads": 1}]}
     leads = tr.campaign_leads("Sem rastreio", "(sem campanha)", period="all", mode="sale")
     assert [(l["lead_id"], l["motivo_sem_rastreio"]) for l in leads] == [("S", "Nunca mandou mensagem")]
 
@@ -483,3 +487,87 @@ def test_campaign_detail_periodo_pela_primeira_origem(monkeypatch):
     assert [l["lead_id"] for l in det["leads"]] == ["L"]
     assert det["leads"][0]["jornada"]["origens"] == ["Meta Ads", "Google Ads"]
     assert det["summary"]["pedidos"] == 1
+
+
+# ── revisão de 12/11: o toque não herda o clique de outra plataforma ───────────
+
+def _snap(em, **meta):
+    return {"occurred_at": em, "new_value": meta.pop("_rotulo", None), "metadata": meta}
+
+
+def test_clique_do_meta_com_gclid_antigo_e_meta():
+    google = _snap(D1, gclid="G1", utm_source="google", utm_medium="cpc", utm_campaign="marca")
+    # o gatilho antigo gravava o retrato das colunas: gclid e UTM do Google junto do ctwa novo
+    meta = _snap(D9, gclid="G1", utm_source="google", utm_medium="cpc", utm_campaign="marca",
+                 ctwa_clid="C1", meta_ad_id="AD1", campanha_id="C_META")
+    assert canal_da_entrada(meta) == "Google Ads"  # sem olhar o anterior, o retrato engana
+    assert canal_da_entrada(meta, google) == "Meta Ads"
+    j = jornada_do_lead({"id": "L"}, [meta, google])
+    assert j["origens"] == ["Google Ads", "Meta Ads"] and j["multicanal"] is True
+    v = atribuir_lead({"id": "L"}, [google, meta], "ultima")
+    assert lead_channel(v) == "Meta Ads"
+    assert v["gclid"] is None and v["utm_campaign"] is None and v["_campanha_id"] == "C_META"
+    assert lead_channel(atribuir_lead({"id": "L"}, [google, meta], "primeira")) == "Google Ads"
+
+
+def test_clique_do_google_com_ctwa_antigo_perde_a_campanha_do_meta():
+    meta = _snap(D1, ctwa_clid="C1", meta_ad_id="AD1", campanha_id="C_META")
+    google = _snap(D9, ctwa_clid="C1", meta_ad_id="AD1", campanha_id="C_META", gclid="G2",
+                   utm_source="google", utm_medium="cpc", utm_campaign="marca")
+    v = atribuir_lead({"id": "L"}, [meta, google], "ultima")
+    assert lead_channel(v) == "Google Ads" and v["utm_campaign"] == "marca"
+    assert "_campanha_id" not in v and v["ctwa_clid"] is None
+
+
+def test_dois_cliques_do_google_seguidos_mantem_o_utm():
+    a = _snap(D1, gclid="G1", utm_source="google", utm_medium="cpc", utm_campaign="marca")
+    b = _snap(D9, gclid="G2", utm_source="google", utm_medium="cpc", utm_campaign="marca")
+    assert tr.rastreio_do_toque(b["metadata"], a["metadata"])["utm_campaign"] == "marca"
+
+
+def test_rotulo_bling_vence_o_utm():
+    e = _snap(D1, _rotulo="Bling", canal="Bling", utm_source="metaads")
+    assert canal_da_entrada(e) == "Bling"
+    lead = {"id": "L", "origem_cadastro": "bling_import", "utm_source": "metaads"}
+    assert derive_channel(lead) == "Bling"
+    assert lead_channel(atribuir_lead(lead, [e], "ultima")) == "Bling"
+
+
+
+def test_card_sem_rastreio_segue_a_atribuicao():
+    # toque "WhatsApp direto" e depois Meta: na primeira origem o lead é "WhatsApp direto",
+    # e quem nunca escreveu sem cadastro conhecido sobra em "Sem rastreio" só na primeira
+    lead = {"id": "L", "origem_cadastro": "inbound", "tem_inbound": False, "channel": "whatsapp"}
+    sem = {"occurred_at": D1, "new_value": "Sem rastreio", "metadata": {}}
+    por = {a: [atribuir_lead(lead, [sem, _meta(D9)], a)] for a in tr.ATRIBUICOES}
+    rep = montar_relatorio_atribuido(por, set(), set(), {}, "lead", "30d", "ultima")
+    assert rep["por_atribuicao"]["ultima"]["sem_rastreio"]["leads"] == 0
+    assert rep["por_atribuicao"]["primeira"]["sem_rastreio"]["leads"] == 1
+
+
+def test_campanha_nao_paga_casa_sem_diferenciar_maiuscula():
+    lead_rep = {"rows": [{**tr._new_row("Orgânico", "Bio"), "leads": 1}]}
+    sale_rep = {"rows": [{**tr._new_row("Orgânico", "bio"), "pedidos": 1, "clientes": 1, "receita": 10.0}]}
+    rows = tr.merge_period_report(lead_rep, sale_rep, "30d")["rows"]
+    assert len(rows) == 1 and rows[0]["leads"] == 1 and rows[0]["pedidos"] == 1
+    leads = [{"id": "a", "utm_source": "instagram", "utm_campaign": "Bio"},
+             {"id": "b", "utm_source": "instagram", "utm_campaign": "bio"}]
+    assert {l["id"] for l in tr.select_campaign_leads(leads, "Orgânico", "bio")} == {"a", "b"}
+
+
+def test_erro_qualquer_nao_desliga_o_meta_ad_id(monkeypatch):
+    monkeypatch.setattr(tr._MetaAdCol, "enabled", True)
+    monkeypatch.setattr(tr._P0Col, "falhou_em", None)
+
+    def falha(cols):
+        raise RuntimeError("timeout do PostgREST")
+    with pytest.raises(RuntimeError):
+        tr._select_leads(falha)
+    assert tr._MetaAdCol.enabled is True
+
+
+def test_rotas_de_leitura_do_trafego_nao_sao_async():
+    import inspect
+    import app.campaigns.traffic_router as r
+    for f in (r.traffic_report_endpoint, r.traffic_leads_endpoint, r.traffic_campaign_endpoint):
+        assert not inspect.iscoroutinefunction(f), f.__name__

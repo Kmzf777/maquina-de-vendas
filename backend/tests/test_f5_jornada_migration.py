@@ -82,12 +82,35 @@ def test_contexto_espelha_aplicar_contexto_canal():
 
 def test_canal_da_entrada_espelha_o_python():
     corpo = _funcao("fn_lead_canal_entrada")
-    # rastreio do metadata manda, sem origem (9 args)
+    # rastreio DO TOQUE (sem o que veio carregado do anterior) manda, sem origem (9 args)
+    assert "public.fn_lead_rastreio_toque(p_metadata, p_anterior)" in corpo
     for k in ("gclid", "fbclid", "ctwa_clid", "meta_ad_id", "utm_source", "utm_medium",
               "traffic_type", "gbraid", "wbraid"):
-        assert f"p_metadata->>'{k}'" in corpo
+        assert f"t.m->>'{k}'" in corpo
         assert k in tr._TRACK_KEYS
     assert "r.rotulo = 'Orgânico' and p_metadata->>'sem_rastreio' = 'true' then 'WhatsApp direto'" in corpo
+    assert corpo.index("then 'Bling'") < corpo.index("when r.canal <> 'Sem rastreio'")
+
+
+def test_rastreio_do_toque_espelha_o_python():
+    corpo = _funcao("fn_lead_rastreio_toque")
+    pares = dict(re.findall(r"\('([a-z_]+)', '(google|meta)'\)", corpo))
+    assert pares == tr._CLICK_PLATAFORMA
+    for marcador, constante in (("_META_AD_SOURCES", tr._META_AD_SOURCES),
+                                ("_GOOGLE_AD_SOURCES", tr._GOOGLE_AD_SOURCES),
+                                ("_PAID_CHANNEL_MEDIUMS", tr._PAID_CHANNEL_MEDIUMS)):
+        m = re.search(r"array\[([^\]]*)\]\)\s*--\s*" + marcador + r"\b", corpo)
+        assert {x.strip().strip("'") for x in m.group(1).split(",")} == set(constante), marcador
+    assert "array['campanha_id', 'campanha_nome']" in corpo
+
+
+def test_gatilho_tira_o_que_veio_carregado_das_colunas_antigas():
+    corpo = _gatilho()
+    trecho = corpo.split("if tg_op = 'UPDATE' and not v_inicial then")[1].split("interval '30 minutes'")[0]
+    assert "public.fn_lead_rastreio_toque(v_meta," in trecho
+    assert "fn_lead_entrada_metadata(old.gclid, old.fbclid, old.ctwa_clid, old.meta_ad_id," in trecho
+    view = SQL.split("create or replace view public.vw_lead_jornada")[1]
+    assert "lag(e.metadata) over (partition by e.lead_id order by e.occurred_at, e.id) as anterior" in view
 
 
 # ── gatilho ────────────────────────────────────────────────────────────────────

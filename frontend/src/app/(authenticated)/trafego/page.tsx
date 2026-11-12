@@ -241,7 +241,7 @@ export default function TrafegoPage() {
             )}
             <div className="flex-shrink-0 grid gap-4 md:grid-cols-2">
               <JornadasMulticanal jornadas={report?.jornadas} />
-              <SemRastreioDetalhe resumo={report?.sem_rastreio} onAbrir={semRastreio ? () => abrirLinha(semRastreio) : undefined} />
+              <SemRastreioDetalhe resumo={parte?.sem_rastreio ?? report?.sem_rastreio} onAbrir={semRastreio ? () => abrirLinha(semRastreio) : undefined} />
             </div>
             <div className="bg-white border border-[#dedbd6] rounded-[8px] flex-1 min-h-[420px] flex flex-col overflow-hidden">
             <CampaignReportTable

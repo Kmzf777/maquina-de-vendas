@@ -11,6 +11,8 @@ export function SemRastreioDetalhe({ resumo, onAbrir }: { resumo?: SemRastreioRe
       <div className="flex items-baseline justify-between gap-3">
         <h2 className="text-[15px] font-medium text-[#111111]">
           Sem rastreio: {resumo.leads} lead{resumo.leads === 1 ? "" : "s"}
+          {typeof resumo.clientes === "number" && resumo.clientes > 0
+            ? ` · ${resumo.clientes} ${resumo.clientes === 1 ? "comprou" : "compraram"}` : ""}
         </h2>
         {onAbrir && (
           <button type="button" onClick={onAbrir}

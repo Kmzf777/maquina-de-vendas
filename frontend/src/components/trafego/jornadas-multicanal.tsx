@@ -15,7 +15,7 @@ export function JornadasMulticanal({ jornadas }: { jornadas?: JornadasResumo | n
       <div className="flex flex-col gap-1 md:flex-row md:items-baseline md:justify-between">
         <h2 className="text-[15px] font-medium text-[#111111]">Jornadas com mais de um canal</h2>
         <p className="text-[13px] text-[#7b7b78]">
-          {leads} de {total_leads} lead{total_leads === 1 ? "" : "s"} · {pedidos} venda{pedidos === 1 ? "" : "s"}
+          {leads} de {total_leads} lead{total_leads === 1 ? "" : "s"} e compradores · {pedidos} venda{pedidos === 1 ? "" : "s"}
           {receita > 0 ? ` · ${fmtBRL(receita)}` : ""}
         </p>
       </div>
