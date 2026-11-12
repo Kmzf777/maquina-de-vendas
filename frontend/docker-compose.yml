@@ -1,6 +1,12 @@
 services:
   crm:
     image: canastra-crm:latest
+    # Variáveis de runtime (SUPABASE_SERVICE_ROLE_KEY, lida pelas rotas de servidor) vêm do
+    # .env.build da VPS (fora do git), no MESMO `docker stack deploy`. Antes elas entravam num
+    # `docker service update --env-add` separado, e o stack deploy apagava a variável: em
+    # 12/11/2026 o SSH do CI caiu entre os dois passos e o CRM ficou 10 min com 500 em toda rota
+    # de servidor ("supabaseKey is required"). Sem o arquivo, o deploy falha em vez de subir sem chave.
+    env_file: .env.build
     networks:
       - canastrainteligencia
     # wget busybox da imagem alpine; /login é página pública barata.

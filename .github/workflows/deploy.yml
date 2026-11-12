@@ -89,10 +89,12 @@ jobs:
               --build-arg NEXT_PUBLIC_SUPABASE_URL=$NEXT_PUBLIC_SUPABASE_URL \
               --build-arg NEXT_PUBLIC_SUPABASE_ANON_KEY=$NEXT_PUBLIC_SUPABASE_ANON_KEY \
               -t canastra-crm:latest ./frontend"
+            # A chave de serviço precisa existir: sem ela o CRM sobe e toda rota de servidor dá 500.
+            : "${SUPABASE_SERVICE_ROLE_KEY:?SUPABASE_SERVICE_ROLE_KEY ausente em frontend/.env.build}"
+            # O env_file do compose (frontend/.env.build) leva a chave no MESMO passo do stack deploy.
+            # Antes era um `service update --env-add` separado; o stack deploy apagava a variável e,
+            # em 12/11/2026, o SSH caiu entre os dois passos (CRM 10 min com 500).
             sg docker -c "docker stack deploy -c frontend/docker-compose.yml crm"
-            sg docker -c "docker service update \
-              --env-add SUPABASE_SERVICE_ROLE_KEY=$SUPABASE_SERVICE_ROLE_KEY \
-              crm_crm"
             sg docker -c "docker service update --force crm_crm"
             echo "CRM deployed successfully"
 
