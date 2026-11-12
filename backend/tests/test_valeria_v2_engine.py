@@ -43,7 +43,7 @@ def _decidir(no, evento, estado=None, **kw) -> DecisaoV2:
 
 # ── 1. primeira_tela ────────────────────────────────────────────────────────
 @pytest.mark.parametrize("texto,tela", [
-    (MSG_ATACADO, "VA"), (MSG_ATACADO_2, "VA"), (MSG_PL, "VP"), (MSG_PL_2, "VP"),
+    (MSG_ATACADO, "QA_USO"), (MSG_ATACADO_2, "QA_USO"), (MSG_PL, "VP"), (MSG_PL_2, "VP"),
     ("oi", "N0"), ("", "N0"),
 ])
 def test_primeira_tela_mensagens_prontas(texto, tela):
@@ -57,7 +57,7 @@ def test_primeira_tela_mensagens_prontas(texto, tela):
     "  OLÁ!  Tenho um comércio,  e quero revender café especial!! ",
 ])
 def test_primeira_tela_ignora_pontuacao_e_espacos(texto):
-    assert motor.primeira_tela(texto) == "VA"
+    assert motor.primeira_tela(texto) == "QA_USO"
 
 
 def test_primeira_tela_pl_sem_travessao():
@@ -69,12 +69,14 @@ def test_primeira_tela_variacao_editada_vai_para_n0():
 
 
 # ── 2. Primeiro contato ─────────────────────────────────────────────────────
-def test_primeiro_contato_mensagem_pronta_atacado_vai_para_vitrine_completa():
+def test_primeiro_contato_mensagem_pronta_atacado_vai_para_as_perguntas():
+    """F3: a mensagem pronta do atacado abre o "para quê", sem vitrine nem preço."""
     d = _decidir(None, Texto(MSG_ATACADO))
-    assert d.proximo_no == "VA"
-    assert d.vitrine == "completa"
+    assert d.proximo_no == "QA_USO"
+    assert d.vitrine == "nenhuma"
     assert d.memoria == {"ramo": "atacado"}
-    assert d.mensagem.botoes == NOS["VA"].botoes
+    assert d.mensagem.botoes == NOS["QA_USO"].botoes
+    assert "R$" not in d.mensagem.corpo
 
 
 def test_primeiro_contato_mensagem_pronta_pl_vai_para_vp():
@@ -152,7 +154,7 @@ def test_nao_quero_trocar_de_fornecedor_nao_e_optout():
 
 
 # ── 5. Encerrado ────────────────────────────────────────────────────────────
-@pytest.mark.parametrize("terminal", ["T_HANDOFF", "T_HANDOFF_PL", "T_KIT", "T_HUMANO", "T_FIM"])
+@pytest.mark.parametrize("terminal", ["T_HANDOFF", "T_HANDOFF_PL", "T_KIT"])
 def test_terminal_encerrado_ignora(terminal):
     d = _decidir(terminal, _tc("PERGUNTA", "e o frete?"), _est(terminal))
     assert d.ignorar is True
@@ -323,9 +325,9 @@ def test_vk_quero_kit_vai_para_t_kit_com_motivo():
 
 
 @pytest.mark.parametrize("no,botao,vitrine,ramo", [
-    ("N0", "negocio", "VA", "atacado"),
     ("N0", "marca", "VP", "private_label"),
-    ("C1", "quantidade", "VA", "atacado"),
+    ("QA_CNPJ", "cnpj", "VA", "atacado"),
+    ("QA_CNPJ", "mei", "VA", "atacado"),
 ])
 def test_clique_que_entra_na_vitrine_mostra_completa_e_grava_ramo(no, botao, vitrine, ramo):
     d = _decidir(no, _clique(botao), _est(no, ramo=None))
@@ -490,9 +492,10 @@ def test_pergunta_e_vendedor_em_consumo_vao_para_o_joao(classe):
     assert d.repasse_motivo == f"{classe}: dá pra comprar 1 pacote?"
 
 
-def test_segundo_ruido_em_consumo_continua_humano():
+def test_segundo_ruido_em_consumo_vai_ao_joao():
+    """F3: era T_HUMANO, que não avisava ninguém ("Valéria muda" da F2)."""
     d = _decidir("C1", _tc("RUIDO", "?"), _est("C1", ramo=None, ruidos=1))
-    assert d.proximo_no == "T_HUMANO"
+    assert d.proximo_no == "T_HANDOFF" and d.efeitos.handoff is True
     assert d.repasse_motivo == motor.MOTIVO_RUIDO
 
 
@@ -528,9 +531,10 @@ def test_ruido_na_vitrine_reenvia_acoes():
     assert d.mensagem.botoes == NOS["VA"].botoes
 
 
-def test_segundo_ruido_sem_ramo_vai_para_humano():
+def test_segundo_ruido_sem_ramo_vai_ao_joao():
     d = _decidir("N0", _tc("RUIDO", "?"), _est("N0", ramo=None, ruidos=1))
-    assert d.proximo_no == "T_HUMANO"
+    assert d.proximo_no == "T_HANDOFF"
+    assert d.repasse_motivo == motor.MOTIVO_RUIDO
 
 
 def test_classe_desconhecida_e_ruido():
@@ -725,3 +729,146 @@ def test_mensagem_pronta_em_t_adiar_nao_reabre_vitrine():
 def test_mensagem_pronta_em_terminal_encerrado_ignora():
     d = _decidir("T_HANDOFF", Texto(MSG_ATACADO), _est("T_HANDOFF"))
     assert d.ignorar is True
+
+
+# ── F3 (06/11/2026): perguntas antes da vitrine e desqualificação ───────────
+@pytest.mark.parametrize("no,botao", [("N0", "negocio"), ("C1", "quantidade")])
+def test_quem_ja_disse_que_revende_vai_ao_volume(no, botao):
+    d = _decidir(no, _clique(botao), _est(no, ramo=None))
+    assert d.proximo_no == "QA_VOL"
+    assert d.memoria["ramo"] == "atacado"
+    assert d.vitrine == "nenhuma"
+
+
+def test_caminho_feliz_uso_volume_cnpj_vitrine_pedido_handoff():
+    est = _est("QA_USO")
+    d = _decidir("QA_USO", _clique("revender"), est)
+    assert d.proximo_no == "QA_VOL" and d.desqualificacao is None
+    est = {**est, **d.memoria, "node": "QA_VOL"}
+    d = _decidir("QA_VOL", _clique("ate100"), est)
+    assert d.proximo_no == "QA_CNPJ" and d.criterios == {"monthly_volume_kg": 65}
+    est = {**est, **d.memoria, "node": "QA_CNPJ"}
+    d = _decidir("QA_CNPJ", _clique("mei"), est)
+    assert d.proximo_no == "VA" and d.vitrine == "completa"
+    est = {**est, **d.memoria, "node": "VA"}
+    d = _decidir("VA", _clique("pedido"), est)
+    assert d.proximo_no == "QA1"
+    est = {**est, **d.memoria, "node": "QA1"}
+    # Volume já veio do QA_VOL: QA1 vai direto ao João, sem perguntar de novo.
+    d = _decidir("QA1", _clique("cafeteria", "Cafeteria"), est)
+    assert d.proximo_no == "T_HANDOFF" and d.efeitos.handoff is True
+    assert d.repasse_motivo == 'clicou "Cafeteria"'
+
+
+def test_qa1_sem_volume_anterior_ainda_pergunta_o_qa2():
+    d = _decidir("QA1", _clique("cafeteria"), _est("QA1"))
+    assert d.proximo_no == "QA2"
+
+
+def test_consumo_proprio_vai_a_loja_desqualificado_sem_repasse():
+    d = _decidir("QA_USO", _clique("consumo"), _est("QA_USO"))
+    assert d.proximo_no == "C1"
+    assert d.desqualificacao == "consumidor_final"
+    assert d.efeitos.handoff is False
+    assert d.memoria["ramo"] == "consumo"
+
+
+def test_n0_consumo_tambem_e_consumidor_final():
+    d = _decidir("N0", _clique("consumo"), _est("N0", ramo=None))
+    assert d.proximo_no == "C1" and d.desqualificacao == "consumidor_final"
+
+
+def test_sem_cnpj_vai_ao_terminal_com_tag_e_sem_repasse():
+    d = _decidir("QA_CNPJ", _clique("sem_cnpj"), _est("QA_CNPJ"))
+    assert d.proximo_no == "T_SEM_CNPJ"
+    assert d.desqualificacao == "sem_cnpj"
+    assert d.efeitos.handoff is False
+    assert d.efeitos.tags == ("Atacado sem CNPJ",)
+    assert d.repasse_motivo is None
+
+
+def test_t_sem_cnpj_encerra():
+    d = _decidir("T_SEM_CNPJ", Texto("abri o mei"), _est("T_SEM_CNPJ"))
+    assert d.ignorar is True
+
+
+@pytest.mark.parametrize("no", ["QA_USO", "QA_VOL", "QA_CNPJ"])
+def test_preco_antes_da_vitrine_primeira_vez_repete_a_pergunta(no):
+    d = _decidir(no, _tc("FAQ", "quanto custa?", faq_id="preco"), _est(no))
+    assert d.proximo_no == no
+    assert d.vitrine == "nenhuma" and d.tabela_antes is False
+    assert d.mensagem.corpo.startswith(r.PREFIXO_PRECO_ANTES)
+    assert d.mensagem.corpo.endswith(NOS[no].corpo)
+    assert d.mensagem.botoes == NOS[no].botoes
+    assert d.memoria["preco_antes"] == 1
+
+
+def test_preco_antes_da_vitrine_segunda_vez_manda_a_tabela():
+    d = _decidir("QA_VOL", _tc("FAQ", "me passa o preço", faq_id="preco"),
+                 _est("QA_VOL", preco_antes=1))
+    assert d.proximo_no == "VA" and d.vitrine == "tabela"
+
+
+def test_faq_antes_da_vitrine_responde_e_volta_a_pergunta():
+    d = _decidir("QA_CNPJ", _tc("FAQ", "qual o mínimo?", faq_id="minimo"), _est("QA_CNPJ"))
+    assert d.faq == "minimo" and d.proximo_no == "QA_CNPJ"
+
+
+def test_mensagem_pronta_no_meio_volta_as_perguntas_se_nao_passou_do_cnpj():
+    d = _decidir("QA_VOL", Texto(MSG_ATACADO), _est("QA_VOL"))
+    assert d.proximo_no == "QA_USO" and d.vitrine == "nenhuma"
+
+
+def test_mensagem_pronta_no_meio_volta_a_vitrine_se_ja_passou_do_cnpj():
+    d = _decidir("QA1", Texto(MSG_ATACADO), _est("QA1", respostas={"QA_CNPJ": "cnpj"}))
+    assert d.proximo_no == "VA" and d.vitrine == "completa"
+
+
+# ── F3 (11/11/2026): terminal sem repasse reabre quando o lead pede gente ────
+@pytest.mark.parametrize("terminal", sorted(r.TERMINAIS_QUE_REABREM))
+def test_reabre_com_pergunta(terminal):
+    d = _decidir(terminal, _tc("PERGUNTA", "como faço pra comprar?"), _est(terminal))
+    assert d.ignorar is False and d.efeitos.handoff is True
+    assert d.proximo_no == "T_HANDOFF"
+    assert d.repasse_motivo == "PERGUNTA: como faço pra comprar?"
+
+
+@pytest.mark.parametrize("terminal", sorted(r.TERMINAIS_QUE_REABREM))
+@pytest.mark.parametrize("evento", [_tc("RUIDO", "obrigado"), Texto("obrigado"),
+                                    _clique("botao_que_nao_existe")])
+def test_reaberto_ignora_obrigado_e_lixo(terminal, evento):
+    assert _decidir(terminal, evento, _est(terminal)).ignorar is True
+
+
+def test_faq_depois_do_terminal_tambem_e_pergunta():
+    d = _decidir("T_HUMANO", _tc("FAQ", "quanto custa o saco de café cru?", faq_id="preco"),
+                 _est("T_HUMANO", ramo=None))
+    assert d.proximo_no == "T_HANDOFF"
+
+
+def test_vendedor_depois_do_adiamento_vai_ao_vendedor_do_ramo():
+    d = _decidir("T_ADIADO", _tc("VENDEDOR", "quero falar"), _est("T_ADIADO", ramo="private_label"))
+    assert d.proximo_no == "T_HANDOFF_PL"
+    assert d.repasse_motivo == "VENDEDOR: quero falar"
+
+
+def test_sim_quero_falar_depois_do_adiamento_vai_ao_arthur():
+    """Tel. final 5468: tocou "Sim, quero falar" (E4) depois do "te chamo em 90 dias"."""
+    d = _decidir("T_ADIADO", _clique("sim", "Sim, quero falar"), _est("T_ADIADO", ramo="exportacao"))
+    assert d.proximo_no == "T_HANDOFF_ARTHUR" and d.efeitos.handoff is True
+    assert d.repasse_motivo == 'clicou "Sim, quero falar" depois de T_ADIADO'
+
+
+def test_sim_quero_falar_no_ramo_pl_vai_ao_joao_pl():
+    d = _decidir("T_ADIADO", _clique("sim"), _est("T_ADIADO", ramo="private_label"))
+    assert d.proximo_no == "T_HANDOFF_PL"
+
+
+def test_t_optout_continua_ignorando_tudo():
+    d = _decidir("T_OPTOUT", _tc("PERGUNTA", "oi?"), _est("T_OPTOUT"))
+    assert d.ignorar is True
+
+
+def test_c1_tenho_duvida_pede_a_pergunta():
+    d = _decidir("C1", _clique("duvida"), _est("C1", ramo="consumo"))
+    assert d.proximo_no == "VO"

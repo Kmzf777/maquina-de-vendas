@@ -53,14 +53,15 @@ def test_worker_registers_ad_spend_sync_tick():
 def test_sync_endpoint_calls_sync(monkeypatch):
     import app.campaigns.traffic_router as tr_router
     called = {}
-    async def fake_sync(days=30):
+    async def fake_sync(days=30, origem="automatica"):
         called["days"] = days
+        called["origem"] = origem
         return {"google": 5, "meta": 0}
     monkeypatch.setattr(tr_router, "sync_all_ad_spend", fake_sync)
     import asyncio
-    out = asyncio.run(tr_router.sync_ads_endpoint())
+    out = asyncio.run(tr_router.sync_ads_endpoint(_admin="admin@x.com"))
     assert out == {"google": 5, "meta": 0, "synced": 5}
-    assert called["days"] == 30
+    assert called["days"] == 30 and called["origem"] == "manual"
 
 
 def test_sync_meta_noop_when_disabled(monkeypatch):
@@ -90,17 +91,22 @@ def test_sync_meta_upserts_platform_meta(monkeypatch):
 
 
 def test_sync_all_aggregates(monkeypatch):
+    monkeypatch.setattr(s, "_registrar_rodada", lambda *a, **k: None)
+    monkeypatch.setattr(s, "google_ads_enabled", lambda: True)
+    monkeypatch.setattr(s, "meta_ads_enabled", lambda: True)
     async def g(days): return 3, None
     async def m(days): return 2, None
     monkeypatch.setattr(s, "_sync_google", g)
     monkeypatch.setattr(s, "_sync_meta", m)
     import asyncio
-    assert asyncio.run(s.sync_all_ad_spend(days=30)) == {"google": 3, "meta": 2, "errors": {}}
+    assert asyncio.run(s.sync_all_ad_spend(days=30)) == {"google": 3, "meta": 2, "errors": {}, "avisos": {}}
 
 
 def test_sync_all_reports_api_error_instead_of_silent_zero(monkeypatch):
     """Erro de API não pode ficar indistinguível de "dia sem gasto" — foi assim que a versão
     v21 morta do Google Ads passou dez dias sem sincronizar sem ninguém perceber."""
+    monkeypatch.setattr(s, "_registrar_rodada", lambda *a, **k: None)
+    monkeypatch.setattr(s, "meta_ads_enabled", lambda: True)
     async def g(days): return 0, "HTTP 404 em v21 — versão descontinuada"
     async def m(days): return 5, None
     monkeypatch.setattr(s, "_sync_google", g)
@@ -124,8 +130,8 @@ def test_google_api_error_surfaces_as_error_not_empty(monkeypatch):
 
 def test_sync_endpoint_uses_sync_all(monkeypatch):
     import app.campaigns.traffic_router as tr
-    async def fake_all(days=30): return {"google": 2, "meta": 1}
+    async def fake_all(days=30, origem="automatica"): return {"google": 2, "meta": 1}
     monkeypatch.setattr(tr, "sync_all_ad_spend", fake_all)
     import asyncio
-    out = asyncio.run(tr.sync_ads_endpoint())
+    out = asyncio.run(tr.sync_ads_endpoint(_admin="admin@x.com"))
     assert out == {"google": 2, "meta": 1, "synced": 3}

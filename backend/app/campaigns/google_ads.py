@@ -28,7 +28,7 @@ _REQUIRED_ENV = (
 # e a versão morta responde 404 (HTML, não JSON) — o que o fail-soft daqui transformava em
 # "sem investimento" silencioso. Manter atualizada; `GOOGLE_ADS_API_VERSION` permite corrigir
 # em produção via env sem redeploy quando a próxima virar.
-_DEFAULT_API_VERSION = "v22"
+_DEFAULT_API_VERSION = "v24"
 _TOKEN_URL = "https://oauth2.googleapis.com/token"
 
 
@@ -84,13 +84,15 @@ async def _get_access_token() -> str | None:
 async def fetch_campaign_spend(date_from: str, date_to: str) -> list[dict[str, Any]]:
     """Busca custo por campanha/dia entre date_from e date_to (YYYY-MM-DD).
 
-    Env-gated (creds ausentes → []) e fail-soft (erro → []). Retorna
+    Env-gated (creds ausentes → []). Erro de API ou de token → AdsFetchError. Retorna
     [{campaign_id, campaign_name, date, cost}]."""
     if not google_ads_enabled():
         return []
     token = await _get_access_token()
     if not token:
-        return []
+        # Credencial vencida ou revogada é falha de API, não "dia sem gasto": vira recibo de
+        # erro no sync (e alerta), em vez de 0 linhas mudas.
+        raise AdsFetchError("falha ao obter access_token do Google (refresh token vencido?)")
     customer_id = (os.getenv("GOOGLE_ADS_CUSTOMER_ID") or "").replace("-", "")
     login_cid = (os.getenv("GOOGLE_ADS_LOGIN_CUSTOMER_ID") or "").replace("-", "")
     url = f"https://googleads.googleapis.com/{_api_version()}/customers/{customer_id}/googleAds:search"

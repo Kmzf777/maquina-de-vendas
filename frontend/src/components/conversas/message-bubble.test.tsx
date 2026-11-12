@@ -421,3 +421,36 @@ describe("MessageBubble — pré-visualizar anexo", () => {
     expect(screen.queryByRole("dialog")).toBeNull();
   });
 });
+
+describe("MessageBubble — motivo da não-entrega", () => {
+  const MOTIVO = "Não entregue: número sem WhatsApp, número errado ou o cliente bloqueou.";
+  const enviada = {
+    role: "assistant" as const,
+    sent_by: "seller" as const,
+    content: "Oi, tudo bem?",
+    metadata: { delivery_error: { code: 131026, title: "Message undeliverable" } },
+  };
+
+  it("mostra a linha vermelha com o motivo e o title no ícone", () => {
+    renderBubble({ ...enviada, delivery_status: "failed" });
+    expect(screen.getByText(MOTIVO, { selector: "p" })).toBeTruthy();
+    const icone = screen.getByLabelText("Entrega não confirmada");
+    expect(icone.querySelector("title")?.textContent).toBe(MOTIVO);
+  });
+
+  it("mensagem lida não mostra a linha", () => {
+    renderBubble({ ...enviada, delivery_status: "read" });
+    expect(screen.queryByText(/Não entregue/)).toBeNull();
+  });
+
+  it("mensagem do cliente não mostra a linha", () => {
+    renderBubble({
+      role: "user",
+      sent_by: "user",
+      content: "oi",
+      delivery_status: "failed",
+      metadata: { delivery_error: { code: 131026, title: "Message undeliverable" } },
+    });
+    expect(screen.queryByText(/Não entregue/)).toBeNull();
+  });
+});

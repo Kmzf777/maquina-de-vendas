@@ -223,9 +223,10 @@ def test_nenhum_botao_declarado_aponta_para_o_optout():
     destinos += [b.destino for b in reg.BOTOES_PRAZO]
     assert destinos, "varredura vazia não prova nada"
     assert motor.ID_OPTOUT not in destinos
-    assert motor.ID_HUMANO in destinos, (
-        "o T_HUMANO TEM botão (C1 → 'Tenho uma dúvida'), e é o contraste que mostra "
-        "que a varredura acima enxerga destinos de verdade"
+    # F3 (12/11/2026): o C1 → "Tenho uma dúvida" deixou de ir ao T_HUMANO (vai ao João);
+    # o contraste agora é o próprio handoff, que TEM botão.
+    assert "T_HANDOFF" in destinos, (
+        "a varredura acima precisa enxergar destinos de verdade"
     )
 
 

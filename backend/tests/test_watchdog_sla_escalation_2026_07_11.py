@@ -26,10 +26,12 @@ from tests.test_watchdog_handoff_sla_2026_07_03 import (
 
 
 def _seed_n_violations(fake, now, n):
+    # F2 (06/11/2026): o escalonamento só conta quem já é FALHA (2 h úteis). Às 14h de
+    # sexta, 11:50 dá 130 min úteis na janela padrão 10h–16h.
     for i in range(n):
         _seed_conversation_check5(
             fake, f"conv-{i}",
-            last_customer_message_at=now - timedelta(minutes=30 + i),
+            last_customer_message_at=now - timedelta(minutes=W.HANDOFF_SLA_FALHA_MINUTES + 10 + i),
             last_seller_response_at=None,
             name=f"Lead{i}",
         )

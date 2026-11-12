@@ -470,7 +470,13 @@ def _aplicar_handoff(lead: dict, conversation_id: str, *,
                      vendedor: str | None = None,
                      fluxo: str = FLUXO_RECUPERACAO,
                      nota_sem_qualificacao: bool = True) -> None:
-    """Handoff enxuto: sem resumo por LLM (não houve conversa) e sem rescue job.
+    """Handoff enxuto: sem resumo por LLM (não houve conversa).
+
+    Desde 06/11/2026 (frente F2) ele AGENDA o contato automático do vendedor
+    (`handoff_rescue`) igual a `agent/tools.encaminhar_humano` — ver
+    `_agendar_contato_do_vendedor`. Até ali era "sem rescue job" (c03a7ea4, 20/08):
+    entre 29/10 e 05/11, 25 leads ouviram "o João te responde em instantes", não
+    tocaram no cartão e ninguém falou com eles.
 
     Nos fluxos de `FLUXOS_QUE_ASSUMEM_CONTROLE_HUMANO` o desligamento da IA vem
     acompanhado de `human_control=true`, que é o que diz que ALGUÉM assumiu (e não só
@@ -561,11 +567,60 @@ def _aplicar_handoff(lead: dict, conversation_id: str, *,
                           segmento=segmento, motivo=motivo)
     except Exception as exc:
         logger.error("[BUTTON FLOW] evento repasse do lead %s não gravado: %s", lead_id, exc)
+    _agendar_contato_do_vendedor(lead, conversation_id, vendedor_id=vendedor_id,
+                                 vendedor=vendedor, fluxo=fluxo)
     _mover_deal(lead_id, *STAGE_QUER_REPOR)
     nota = f"➡️ [TRANSBORDO p/ {vendedor}] {motivo}."
     if nota_sem_qualificacao:
         nota += " Nenhuma qualificação por conversa — abordar direto."
     anotar(lead_id, conversation_id, nota)
+
+
+def _agendar_contato_do_vendedor(lead: dict, conversation_id: str, *,
+                                 vendedor_id: str | None, vendedor: str,
+                                 fluxo: str) -> None:
+    """O João chama o lead pelo número dele se o lead não o procurar (`handoff_rescue`).
+
+    O MESMO agendamento de `agent/tools.encaminhar_humano`: mesmo template
+    (`automacao_valeria_to_joao`), mesma janela (`schedule_handoff_rescue` clampa), e o
+    job desiste sozinho se o lead já escreveu ao João desde o repasse
+    (`scheduler._process_handoff_rescue`). Ficam de fora:
+    - a Recuperação: roda no número PESSOAL do vendedor, o lead já está na thread dele
+      (ver `FLUXOS_QUE_ASSUMEM_CONTROLE_HUMANO`);
+    - a exportação (Arthur): atende fora do CRM, pelo fixo — a mesma regra da IA
+      (`tools._vendedor_e_exportacao`).
+    Fail-soft: o repasse já foi gravado; um job que não entrou é log de erro, não turno
+    perdido.
+    """
+    if fluxo not in FLUXOS_QUE_ASSUMEM_CONTROLE_HUMANO:
+        return
+    lead_id = lead["id"]
+    try:
+        from app.agent.tools import _vendedor_e_exportacao
+        if _vendedor_e_exportacao(vendedor_id, vendedor):
+            logger.info("[BUTTON FLOW] repasse de exportação do lead %s: sem contato "
+                        "automático (o Arthur atende fora do CRM)", lead_id)
+            return
+        phone = lead.get("phone") or ""
+        if not phone:
+            logger.warning("[BUTTON FLOW] lead %s sem telefone: contato automático do "
+                           "vendedor não agendado", lead_id)
+            return
+        from app.conversations.service import get_conversation
+        from app.follow_up.service import schedule_handoff_rescue
+        conversa = get_conversation(conversation_id) or {}
+        channel_id = conversa.get("channel_id")
+        if not channel_id:
+            logger.error("[BUTTON FLOW] conversa %s sem canal: contato automático do "
+                         "vendedor não agendado (lead %s)", conversation_id, lead_id)
+            return
+        schedule_handoff_rescue(
+            lead_id=lead_id, lead_phone=phone, conversation_id=conversation_id,
+            channel_id=channel_id, lead_name=lead.get("name") or "",
+        )
+    except Exception as exc:
+        logger.error("[BUTTON FLOW] contato automático do vendedor não agendado p/ lead "
+                     "%s: %s", lead_id, exc, exc_info=True)
 
 
 def _agendar_recontato(lead: dict, dias: int, conversation_id: str, *,

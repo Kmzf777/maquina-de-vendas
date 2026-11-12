@@ -2,7 +2,7 @@
 
 import { getTemperature, TEMPERATURE_CONFIG } from "@/lib/temperature";
 import { useRepasseResposta } from "@/hooks/use-repasse-resposta";
-import { formatarMinutos } from "@/lib/repasse-resposta";
+import { descreverEstado, formatarMinutos } from "@/lib/repasse-resposta";
 import type { Lead } from "@/lib/types";
 
 interface CrmMetricasTabProps {
@@ -19,7 +19,8 @@ export function CrmMetricasTab({ lead }: CrmMetricasTabProps) {
   // lidos de vw_repasse_resposta. Sem linha / view indisponível → "—".
   const { linha: repasse } = useRepasseResposta(lead.id);
   const tempoCloserStr = formatarMinutos(repasse?.respondeu ? repasse.minutos_uteis : null);
-  const aguardandoMin = repasse && !repasse.respondeu ? repasse.minutos_uteis_em_aberto : null;
+  // F2: estado da resposta (vendedor/lead/em aberto/sem contato) no lugar de "Aguardando há".
+  const estadoRepasse = descreverEstado(repasse);
 
   const daysInStage = lead.entered_stage_at
     ? Math.floor((Date.now() - new Date(lead.entered_stage_at).getTime()) / (1000 * 60 * 60 * 24))
@@ -44,8 +45,13 @@ export function CrmMetricasTab({ lead }: CrmMetricasTabProps) {
           <p data-testid="tempo-closer" className="text-[24px] font-semibold text-[#111111] mt-1">
             {tempoCloserStr}
           </p>
-          {aguardandoMin != null && (
-            <p className="text-[11px] text-[#7b7b78] mt-0.5">Aguardando há {formatarMinutos(aguardandoMin)}</p>
+          {estadoRepasse && (
+            <p
+              data-testid="estado-repasse"
+              className={`text-[11px] mt-0.5 ${estadoRepasse.falha ? "text-[#c41c1c]" : "text-[#7b7b78]"}`}
+            >
+              {estadoRepasse.texto}
+            </p>
           )}
         </div>
       </div>

@@ -94,7 +94,7 @@ def test_corpo_nunca_vazio():
 # ── Topologia ───────────────────────────────────────────────────────────────
 
 def test_todo_destino_existe():
-    especiais = {"tabela", "handoff", "regra:QP2"}
+    especiais = {"tabela", "handoff", "regra:QP2", "regra:QA1"}
     for no, bs in _todos_botoes():
         for b in bs:
             d = b.destino
@@ -121,8 +121,9 @@ def test_regra_qp2_so_manda_criar_zero_menos_100_para_baixo():
 
 
 def test_mensagens_prontas_do_anuncio():
-    assert r.MENSAGENS_PRONTAS[normalizar("Olá! Tenho um comércio e quero revender café especial.")] == "VA"
-    assert r.MENSAGENS_PRONTAS[normalizar("Olá! Quero saber mais sobre compra por atacado.")] == "VA"
+    # F3: o anúncio de atacado abre as perguntas (uso, volume, CNPJ), não a vitrine.
+    assert r.MENSAGENS_PRONTAS[normalizar("Olá! Tenho um comércio e quero revender café especial.")] == "QA_USO"
+    assert r.MENSAGENS_PRONTAS[normalizar("Olá! Quero saber mais sobre compra por atacado.")] == "QA_USO"
     assert r.MENSAGENS_PRONTAS[normalizar("Olá! Quero café com a minha marca — já tenho CNPJ")] == "VP"
     assert r.MENSAGENS_PRONTAS[normalizar("Olá! Quero saber mais sobre ter a Marca Própria de Café.")] == "VP"
     assert len(r.MENSAGENS_PRONTAS) == 4
@@ -130,7 +131,7 @@ def test_mensagens_prontas_do_anuncio():
 
 
 def test_todo_no_alcancavel_a_partir_de_n0_ou_mensagem_pronta():
-    vistos, fila = set(), ["N0", "VA", "VP"]
+    vistos, fila = set(), ["N0", "QA_USO", "VP"]
     while fila:
         n = fila.pop()
         if n in vistos or n not in r.NOS: continue
@@ -139,15 +140,19 @@ def test_todo_no_alcancavel_a_partir_de_n0_ou_mensagem_pronta():
             if b.destino in r.NOS: fila.append(b.destino)
         for c in r.NOS[n].cards: fila.append(c.destino)
         if any(b.destino == "regra:QP2" for b in r.NOS[n].botoes): fila.extend(r.REGRA_QP2.values())
+        if any(b.destino == "regra:QA1" for b in r.NOS[n].botoes):
+            fila.extend((r.destino_qa1({}), r.destino_qa1({"QA_VOL": "ate30"})))
     assert set(r.NOS) - vistos == set()
 
 
 def test_conjunto_de_nos_e_terminais_do_contrato():
     assert r.FLOW_ID == "valeria_botoes_v2" and r.NO_ENTRADA == "N0"
     assert set(r.NOS) == {"N0", "VA", "VP", "QA1", "QA2", "QP1", "QP2", "PL_ABAIXO", "VK",
-                          "VD_A", "VD_P", "VO", "C1", "E1", "E2", "E3", "E4"}
+                          "VD_A", "VD_P", "VO", "C1", "E1", "E2", "E3", "E4",
+                          "QA_USO", "QA_VOL", "QA_CNPJ"}
     assert set(r.TERMINAIS) == {"T_HANDOFF", "T_HANDOFF_PL", "T_HANDOFF_ARTHUR", "T_KIT",
-                                "T_ADIAR", "T_ADIADO", "T_HUMANO", "T_FIM", "T_OPTOUT"}
+                                "T_ADIAR", "T_ADIADO", "T_HUMANO", "T_FIM", "T_OPTOUT",
+                                "T_SEM_CNPJ"}
     assert set(r.RAMO_DO_NO) == set(r.NOS)
     assert all(r.RAMO_DO_NO[i] == no.ramo for i, no in r.NOS.items())
     assert r.HANDOFF_DO_RAMO == {"atacado": "T_HANDOFF", "private_label": "T_HANDOFF_PL",
@@ -175,7 +180,10 @@ def test_qa1_qa2_repetem_ids_e_grava_da_v1():
         a = [(b.id, b.grava) for b in r.NOS[v2].botoes]
         b = [(b.id, b.grava) for b in v1.NOS[v1id].botoes]
         assert a == b, v2
-    assert {b.destino for b in r.NOS["QA1"].botoes} == {"QA2"}
+    # F3: QA1 só passa pelo QA2 se o volume não veio antes da vitrine (QA_VOL).
+    assert {b.destino for b in r.NOS["QA1"].botoes} == {"regra:QA1"}
+    assert r.destino_qa1({}) == "QA2"
+    assert r.destino_qa1({"QA_VOL": "ate100"}) == "T_HANDOFF"
     assert {b.destino for b in r.NOS["QA2"].botoes} == {"T_HANDOFF"}
 
 
@@ -215,13 +223,15 @@ def test_faq_descricao_cobre_todo_faq_e_preco():
 
 def test_c1_e_exportacao_copiados_da_v1():
     c1 = {b.id: b for b in r.NOS["C1"].botoes}
-    assert c1["quantidade"].destino == "VA"
-    assert c1["duvida"] == {b.id: b for b in v1.NOS["C1"].botoes}["duvida"]
+    assert c1["quantidade"].destino == "QA_VOL"  # F3: volume e CNPJ antes da tabela
+    # F3: "Tenho uma dúvida" pede a pergunta (VO) em vez de cair no T_HUMANO mudo.
+    assert c1["duvida"].destino == "VO"
+    assert c1["duvida"].rotulo == {b.id: b for b in v1.NOS["C1"].botoes}["duvida"].rotulo
     assert r.NOS["C1"].corpo == v1.NOS["C1"].corpo
     for e in ("E1", "E2", "E3", "E4"):
         assert r.NOS[e] == v1.NOS[e], e
     n0 = {b.id: b.destino for b in r.NOS["N0"].botoes}
-    assert n0 == {"negocio": "VA", "marca": "VP", "consumo": "C1", "exportacao": "E1"}
+    assert n0 == {"negocio": "QA_VOL", "marca": "VP", "consumo": "C1", "exportacao": "E1"}
 
 
 def test_terminais_reusam_os_da_v1_e_t_kit():
@@ -353,3 +363,46 @@ def test_corpo_n0_preco_e_texto_proprio_sem_numero():
     assert r.CORPO_N0_PRECO == ("o preço depende do seu caso 🙂 me diz qual é o seu que eu "
                                 "já te mando a tabela certinha 👇")
     assert r.CORPO_N0_PRECO != r.NOS["N0"].corpo and "R$" not in r.CORPO_N0_PRECO
+
+
+# ── F3 (06/11/2026): perguntas antes da vitrine ─────────────────────────────
+
+def test_perguntas_antes_da_vitrine_f3():
+    uso = {b.id: b.destino for b in r.NOS["QA_USO"].botoes}
+    assert uso == {"revender": "QA_VOL", "servir": "QA_VOL", "consumo": "C1"}
+    vol = r.NOS["QA_VOL"].botoes
+    assert {b.destino for b in vol} == {"QA_CNPJ"}
+    # Mesmas faixas do score que o QA2.
+    assert [(b.id, b.grava) for b in vol] == [(b.id, b.grava) for b in r.NOS["QA2"].botoes]
+    cnpj = {b.id: b.destino for b in r.NOS["QA_CNPJ"].botoes}
+    assert cnpj == {"cnpj": "VA", "mei": "VA", "sem_cnpj": "T_SEM_CNPJ"}
+    assert r.CNPJ_OK == {"cnpj", "mei"}
+    assert all(r.RAMO_DO_NO[n] == "atacado" for n in r.NOS_ANTES_DA_VITRINE)
+    # Pergunta antes da vitrine não é intenção: não entra no repasse automático.
+    assert not (r.NOS_ANTES_DA_VITRINE & r.NOS_COM_INTENCAO)
+
+
+def test_sem_cnpj_nao_repassa_e_marca_a_tag():
+    t = r.TERMINAIS["T_SEM_CNPJ"]
+    assert t.handoff is False and t.vendedor is None
+    assert t.tags == (r.TAG_SEM_CNPJ,) and r.TAG_SEM_CNPJ == "Atacado sem CNPJ"
+    assert "ESPECIAL10" in t.corpo and "loja.cafecanastra.com" in t.corpo
+    assert "R$" not in t.corpo
+
+
+def test_desqualificacao_declarada_por_destino():
+    assert r.DESQUALIFICA_NO_DESTINO == {"C1": "consumidor_final", "T_SEM_CNPJ": "sem_cnpj"}
+    assert set(r.DESQUALIFICA_NO_DESTINO.values()) <= set(r.MOTIVOS_DESQUALIFICACAO)
+
+
+def test_politica_de_revenda_pendente_nao_vaza_para_o_lead():
+    """Os pendentes são lista para o Rafael, não texto: nenhum marcador no default."""
+    assert set(r.POLITICA_REVENDA_PENDENTE) == {"pedido_minimo", "frete", "margem", "sem_cnpj"}
+    for texto in (r.REGRAS_ATACADO_DEFAULT, *r.FAQ["atacado"].values()):
+        assert "[" not in texto and "pendente" not in texto.lower()
+
+
+def test_rotulos_novos_cabem_no_botao():
+    for n in ("QA_USO", "QA_VOL", "QA_CNPJ"):
+        for b in r.NOS[n].botoes:
+            assert len(b.rotulo) <= r.LIMITE_ROTULO_BOTAO, b.rotulo

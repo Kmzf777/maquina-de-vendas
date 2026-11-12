@@ -43,7 +43,7 @@ def test_registrar_repasse_grava_evento(monkeypatch):
     assert ev["occurred_at"] == "2026-10-19T10:00:00-03:00"
     assert ev["metadata"] == {"vendedor_id": "U1", "vendedor": "João", "segmento": "atacado",
                               "motivo": "lead qualificado", "conversation_id": "C1",
-                              "message_id": "M1"}
+                              "message_id": "M1", "motivo_codigo": "ia_qualificado"}
 
 
 def test_sem_occurred_at_deixa_o_default_do_banco(monkeypatch):

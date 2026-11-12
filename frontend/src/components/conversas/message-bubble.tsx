@@ -13,11 +13,14 @@ import {
   type InterativoCarrossel,
   type InterativoLista,
 } from "@/lib/message-interativo";
+import { deliveryErrorText } from "@/lib/delivery-error";
 
 function DeliveryTick({
   status,
+  reason,
 }: {
   status?: "accepted" | "sent" | "delivered" | "read" | "failed" | "undelivered" | null;
+  reason?: string | null;
 }) {
   // "accepted": aceito pela fila da Meta, entrega ainda não confirmada → relógio (pendente),
   // nunca um tick — para não mascarar não-entrega como sucesso.
@@ -33,6 +36,7 @@ function DeliveryTick({
   if (status === "failed" || status === "undelivered") {
     return (
       <svg className="inline-block flex-shrink-0 text-[#e5484d]" width="11" height="11" viewBox="0 0 24 24" fill="none" aria-label="Entrega não confirmada">
+        <title>{reason ?? "Entrega não confirmada"}</title>
         <circle cx="12" cy="12" r="9" stroke="currentColor" strokeWidth="2" />
         <path d="M12 7.5V13" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
         <circle cx="12" cy="16.5" r="1.1" fill="currentColor" />
@@ -288,6 +292,10 @@ function InteractiveCarousel({ carrossel }: { carrossel: InterativoCarrossel }) 
 function MessageBubbleImpl({ message, isGrouped, conversationId, onReply, onReact, onScrollToMessage, onContactDispatch }: MessageBubbleProps) {
   const isFromMe = message.role === "assistant";
   const isTemp = message.id.startsWith("temp_");
+  const falhaTexto =
+    isFromMe && !isTemp
+      ? deliveryErrorText(message.delivery_status, message.metadata as Record<string, unknown> | null)
+      : null;
   const [imgError, setImgError] = useState(false);
   const [videoError, setVideoError] = useState(false);
   const [audioError, setAudioError] = useState(false);
@@ -801,9 +809,14 @@ function MessageBubbleImpl({ message, isGrouped, conversationId, onReply, onReac
             </span>
           )}
           {isFromMe && !isTemp && (
-            <DeliveryTick status={message.delivery_status} />
+            <DeliveryTick status={message.delivery_status} reason={falhaTexto} />
           )}
         </div>
+        {falhaTexto && (
+          <p className="mt-1 text-[11px] leading-snug text-[#ff8a8d]" role="status">
+            {falhaTexto}
+          </p>
+        )}
         {/* Botões e lista ficam ABAIXO da hora, como no WhatsApp: divisória até a borda. */}
         {interativo?.tipo === "botoes" && (
           <InteractiveButtons labels={interativo.botoes} label="Botões enviados ao lead" className="-mx-3 mt-2 -mb-2" />

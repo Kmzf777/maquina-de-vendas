@@ -9,7 +9,7 @@ import { SaleCreateModal } from "@/components/sales/sale-create-modal";
 import { QuoteCreateModal } from "@/components/quotes/quote-create-modal";
 import { useCurrentUserEmail } from "@/hooks/use-current-user";
 import { useRepasseResposta } from "@/hooks/use-repasse-resposta";
-import { formatarMinutos } from "@/lib/repasse-resposta";
+import { descreverEstado, formatarMinutos } from "@/lib/repasse-resposta";
 import type { Lead, Pipeline, Tag, LeadNote, LeadEvent } from "@/lib/types";
 import { getTemperature, TEMPERATURE_CONFIG } from "@/lib/temperature";
 import { AGENT_STAGES, LEAD_CHANNELS } from "@/lib/constants";
@@ -256,7 +256,8 @@ export function LeadDetailModal({
 
   const daysInCrm = Math.floor((Date.now() - new Date(lead.created_at).getTime()) / (1000 * 60 * 60 * 24));
   const tempoCloserStr = formatarMinutos(repasse?.respondeu ? repasse.minutos_uteis : null);
-  const aguardandoMin = repasse && !repasse.respondeu ? repasse.minutos_uteis_em_aberto : null;
+  // F2: estado da resposta (vendedor/lead/em aberto/sem contato) no lugar de "Aguardando há".
+  const estadoRepasse = descreverEstado(repasse);
 
   return (
     <div className="fixed inset-0 bg-[#111111]/40 z-50 flex items-center justify-center p-4" onClick={onClose}>
@@ -701,8 +702,13 @@ export function LeadDetailModal({
                   <p data-testid="tempo-closer" className="text-[24px] font-semibold text-[#111111] mt-1">
                     {tempoCloserStr}
                   </p>
-                  {aguardandoMin != null && (
-                    <p className="text-[11px] text-[#7b7b78] mt-0.5">Aguardando há {formatarMinutos(aguardandoMin)}</p>
+                  {estadoRepasse && (
+                    <p
+                      data-testid="estado-repasse"
+                      className={`text-[11px] mt-0.5 ${estadoRepasse.falha ? "text-[#c41c1c]" : "text-[#7b7b78]"}`}
+                    >
+                      {estadoRepasse.texto}
+                    </p>
                   )}
                 </div>
               </div>

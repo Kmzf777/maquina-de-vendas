@@ -11,6 +11,18 @@
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 
+/**
+ * Estado da resposta ao repasse (migration 20261106_repasse_estado_resposta.sql; definição
+ * comum F2/F6 de 06/11/2026). Só `vendedor_nao_respondeu` é falha do vendedor; `sem_contato`
+ * é falha do sistema (repasse sem contato automático do vendedor).
+ */
+export type EstadoResposta =
+  | "vendedor_respondeu"
+  | "lead_nao_respondeu"
+  | "em_aberto"
+  | "vendedor_nao_respondeu"
+  | "sem_contato";
+
 export interface RepasseResposta {
   lead_id: string;
   repasse_em: string;
@@ -19,6 +31,11 @@ export interface RepasseResposta {
   minutos_uteis: number | null;
   minutos_uteis_em_aberto: number | null;
   respondeu: boolean;
+  // F2: opcionais porque a view antiga (antes da migration 20261106) não as tem.
+  estado?: EstadoResposta | null;
+  espera_desde?: string | null;
+  minutos_uteis_espera?: number | null;
+  fora_do_crm?: boolean | null;
 }
 
 const VIEW = "vw_repasse_resposta";
@@ -44,6 +61,42 @@ export function formatarMinutos(m: number | null | undefined): string {
   const h = Math.floor(m / 60),
     r = Math.round(m % 60);
   return r ? `${h}h ${r}min` : `${h}h`;
+}
+
+export interface DescricaoEstado {
+  texto: string;
+  /** Falha (do vendedor ou do sistema): a tela pinta de vermelho. */
+  falha: boolean;
+}
+
+/**
+ * Uma linha para o cartão "Tempo até o closer assumir", pelo estado da view.
+ * `null` = nada a dizer além do tempo (vendedor respondeu, ou lead sem repasse).
+ * View antiga (sem `estado`): o "Aguardando há" de antes.
+ */
+export function descreverEstado(r: RepasseResposta | null | undefined): DescricaoEstado | null {
+  if (!r) return null;
+  if (r.fora_do_crm && r.estado !== "vendedor_respondeu") {
+    return { texto: "Vendedor atende fora do CRM", falha: false };
+  }
+  const espera = r.minutos_uteis_espera == null ? null : Number(r.minutos_uteis_espera);
+  switch (r.estado) {
+    case "vendedor_respondeu":
+      return null;
+    case "lead_nao_respondeu":
+      return { texto: "Lead não respondeu ao vendedor", falha: false };
+    case "em_aberto":
+      return espera == null
+        ? { texto: "Em aberto: contato do vendedor agendado", falha: false }
+        : { texto: `Em aberto: lead espera há ${formatarMinutos(espera)} úteis`, falha: false };
+    case "vendedor_nao_respondeu":
+      return { texto: `Vendedor não respondeu: lead espera há ${formatarMinutos(espera)} úteis`, falha: true };
+    case "sem_contato":
+      return { texto: "Sem contato do vendedor (falha do sistema)", falha: true };
+    default:
+      if (r.respondeu || r.minutos_uteis_em_aberto == null) return null;
+      return { texto: `Aguardando há ${formatarMinutos(Number(r.minutos_uteis_em_aberto))}`, falha: false };
+  }
 }
 
 export interface ResumoTempoCloser {

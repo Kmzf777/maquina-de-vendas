@@ -34,6 +34,8 @@ def _conv(i, lead=None):
 @pytest.fixture
 def ambiente(monkeypatch):
     monkeypatch.setenv("VALERIA_REPASSE_AUTO_ENABLED", "1")
+    # F3: a varredura de sumidos tem testes próprios (test_valeria_v2_f3.py).
+    monkeypatch.setenv("VALERIA_DESQUALIFICA_SUMIDOS_ENABLED", "off")
     q = FakeQuery({})
     sb = MagicMock()
     sb.table.return_value = q
@@ -51,6 +53,7 @@ def ambiente(monkeypatch):
 
 def test_desligado_nao_toca_no_banco(monkeypatch):
     monkeypatch.delenv("VALERIA_REPASSE_AUTO_ENABLED", raising=False)
+    monkeypatch.setenv("VALERIA_DESQUALIFICA_SUMIDOS_ENABLED", "off")
     sb = MagicMock()
     monkeypatch.setattr(rep, "get_supabase", lambda: sb)
     assert asyncio.run(rep.varrer()) == 0

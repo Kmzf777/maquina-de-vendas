@@ -60,15 +60,22 @@ VAZIO: dict = {}
 # `test_a_lista_de_terminais_que_encerram_bate_com_o_registry`.
 TERMINAIS_ENCERRADOS = (
     "T_HANDOFF", "T_HANDOFF_PL", "T_HANDOFF_ARTHUR",
-    "T_ADIADO", "T_HUMANO", "T_FIM", "T_OPTOUT",
+    "T_ADIADO", "T_HUMANO", "T_FIM", "T_OPTOUT", "T_SEM_CNPJ",
 )
+# F3 (12/11/2026): destes, os sem repasse REABREM quando o lead pede contato.
+TERMINAIS_QUE_REABREM = ("T_ADIADO", "T_HUMANO", "T_FIM", "T_SEM_CNPJ")
+TERMINAIS_DE_REPASSE = tuple(t for t in TERMINAIS_ENCERRADOS
+                             if t not in TERMINAIS_QUE_REABREM)
 
 # O terminal que NÃO encerra: ele pergunta o prazo e espera o toque.
 TERMINAL_QUE_PERGUNTA = "T_ADIAR"
 
 # Texto humano de verdade, sem nenhum sinal de autoresponder (o detector do runner
 # roda antes do motor e engoliria uma saudação de empresa).
-TEXTO_DEPOIS = "e aí, tem novidade do meu pedido?"
+# F3: cortesia — o texto que NÃO reabre nenhum terminal. Pergunta ou pedido de
+# contato reabre os terminais sem repasse (ver a seção F3 no fim).
+TEXTO_DEPOIS = "obrigado"
+TEXTO_PEDE_CONTATO = "e aí, tem novidade do meu pedido?"
 
 
 def _clique(botao_id: str, titulo: str = "") -> Clique:
@@ -92,7 +99,7 @@ def test_texto_depois_do_terminal_devolve_ignorar_sem_nenhum_efeito(terminal):
     assert d.proximo_no == terminal, "o nó se moveu depois do desfecho"
 
 
-@pytest.mark.parametrize("terminal", TERMINAIS_ENCERRADOS)
+@pytest.mark.parametrize("terminal", TERMINAIS_DE_REPASSE)
 def test_clique_atrasado_depois_do_terminal_tambem_e_ignorado(terminal):
     """O lead rola a conversa e toca num botão antigo. Reprocessar duplicaria CRM."""
     d = motor.decidir(terminal, _clique("sim", "Sim, quero falar"), {"nudges": 0},
@@ -139,7 +146,8 @@ def test_a_guarda_nao_pode_ser_lida_da_tupla_de_botoes_vazia():
     d = motor.decidir("N1", Texto(TEXTO_DEPOIS), {"nudges": 0}, nos, reg.TERMINAIS)
 
     assert d.ignorar is False, "nó esvaziado pela tela foi tratado como desfecho"
-    assert d.proximo_no == "T_HUMANO"
+    # F3: o desfecho seguro agora é o vendedor do ramo (era o T_HUMANO mudo).
+    assert d.proximo_no == "T_HANDOFF" and d.efeitos.handoff is True
 
 
 def test_no_vence_terminal_na_mesma_chave_como_no_casamento_de_botoes():
@@ -202,10 +210,11 @@ def test_texto_livre_no_t_adiar_ainda_reoferece_a_folha_de_prazos():
 def test_o_teto_de_nudges_continua_valendo_no_t_adiar():
     """`T_ADIAR` não é encerrado, então o teto ainda é o que o protege do loop."""
     d = motor.decidir(TERMINAL_QUE_PERGUNTA, Texto("depois eu vejo"),
-                      {"nudges": reg.TETO_NUDGES}, reg.NOS, reg.TERMINAIS)
+                      {"nudges": reg.TETO_NUDGES, "ramo": "private_label"},
+                      reg.NOS, reg.TERMINAIS)
 
     assert d.ignorar is False
-    assert d.proximo_no == "T_HUMANO"
+    assert d.proximo_no == "T_HANDOFF_PL"  # F3: vendedor do ramo
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -272,9 +281,10 @@ def test_nudge_e_teto_no_meio_do_fluxo_continuam_identicos(nudges_antes,
 
     assert d.ignorar is False
     if espera_bloqueio:
-        assert d.proximo_no == "T_HUMANO"
-        assert d.mensagem is None
-        assert d.efeitos.silenciar_ia is True
+        # F3: no teto, o vendedor do ramo (N1 é atacado → João), com mensagem.
+        assert d.proximo_no == "T_HANDOFF"
+        assert d.efeitos.handoff is True
+        assert d.motivo_codigo == "ruido"
     else:
         assert d.proximo_no == "N1"
         assert d.marcar_nudge is True
@@ -403,8 +413,9 @@ async def test_cinco_mensagens_depois_do_t_humano_aplicam_o_efeito_UMA_vez(turno
     seguinte reaplicava `T_HUMANO`: seis rodadas de tag, observação e mensagem de
     sistema para um lead, e sem teto.
     """
-    estado = await turno("Tenho uma dúvida", payload="duvida",
-                         titulo="Tenho uma dúvida", no="C1")
+    # F3: "Tenho uma dúvida" agora vai ao João; o T_HUMANO só nasce de nó
+    # desconhecido. A guarda contra reprocessar continua valendo para ele.
+    estado = await turno("oi", no="NO_QUE_NAO_EXISTE")
     assert estado["node"] == "T_HUMANO"
     assert len(turno.registro["efeitos"]) == 1
     gravacoes_ate_aqui = len(turno.registro["gravacoes"])
@@ -538,3 +549,46 @@ def test_os_acentos_do_motor_atravessaram_o_arquivo_intactos():
     """
     assert motor.normalizar("Não quero mais") in motor.FRASES_OPTOUT
     assert reg.TAG_OPTOUT == "Bot" + chr(0x00F5) + "es: Opt-out"
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# F3 (12/11/2026) · fim da "Valéria muda"
+# ═══════════════════════════════════════════════════════════════════════════════
+@pytest.mark.parametrize("terminal", TERMINAIS_QUE_REABREM)
+def test_pergunta_depois_do_terminal_sem_repasse_vai_ao_vendedor(terminal):
+    d = motor.decidir(terminal, Texto(TEXTO_PEDE_CONTATO), {"nudges": 0, "node": terminal},
+                      reg.NOS, reg.TERMINAIS)
+    assert d.ignorar is False and d.efeitos.handoff is True
+    assert d.proximo_no == "T_HANDOFF"
+    assert d.motivo_codigo == "pediu_vendedor"
+
+
+@pytest.mark.parametrize("terminal", TERMINAIS_QUE_REABREM)
+def test_sim_quero_falar_atrasado_reabre(terminal):
+    """Tel. final 5468: tocou "Sim, quero falar" depois do "te chamo em 90 dias"."""
+    d = motor.decidir(terminal, _clique("sim", "Sim, quero falar"), {"nudges": 0},
+                      reg.NOS, reg.TERMINAIS)
+    assert d.efeitos.handoff is True and d.proximo_no.startswith("T_HANDOFF")
+
+
+def test_pergunta_depois_do_adiamento_usa_o_vendedor_do_ramo():
+    d = motor.decidir("T_ADIADO", Texto("quero falar com alguém"),
+                      {"nudges": 0, "ramo": "exportacao"}, reg.NOS, reg.TERMINAIS)
+    assert d.proximo_no == "T_HANDOFF_ARTHUR"
+
+
+@pytest.mark.parametrize("texto,abre", [
+    ("obrigado", False), ("Obrigada!", False), ("ok", False), ("👍", False),
+    ("valeu", False), ("sim", False), ("boa noite", False),
+    ("Como faço pra comprar", True), ("Quero ser representante", True),
+    ("Quanto custa o saco de café cru?", True), ("tem novidade?", True),
+    ("me chama amanhã", True), ("qual o valor do kg", True),
+])
+def test_pede_contato(texto, abre):
+    assert motor.pede_contato(texto) is abre
+
+
+def test_c1_tenho_duvida_vai_ao_joao():
+    d = motor.decidir("C1", _clique("duvida", "Tenho uma dúvida"), {"nudges": 0},
+                      reg.NOS, reg.TERMINAIS)
+    assert d.proximo_no == "T_HANDOFF" and d.motivo_codigo == "pediu_vendedor"

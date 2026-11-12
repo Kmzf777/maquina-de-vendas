@@ -60,6 +60,8 @@ from app.button_flow import valeria_runner as v1
 from app.button_flow.engine import Clique, Mensagem, Texto, normalizar
 from app.button_flow.valeria_engine_v2 import DecisaoV2, TextoClassificado
 from app.conversations.service import get_history, save_message
+from app.leads import qualificado as _qualificado
+from app.leads import repasse as _repasse
 from app.db.supabase import get_supabase
 from app.whatsapp.meta import extract_wamid
 
@@ -83,7 +85,8 @@ SETOR_DO_RAMO = {"atacado": "Atacado", "private_label": "Private Label"}
 ROTULO_DO_RAMO = {"atacado": "Atacado", "private_label": "Marca própria",
                   "consumo": "Consumo próprio", "exportacao": "Exportação"}
 # (nó, rótulo na nota, sufixo) — as respostas de qualificação que viram linha da nota.
-_QUALIFICACAO = (("QA1", "Negócio", ""), ("QA2", "Volume", "/mês"),
+_QUALIFICACAO = (("QA_USO", "Uso", ""), ("QA_VOL", "Volume", "/mês"), ("QA_CNPJ", "CNPJ", ""),
+                 ("QA1", "Negócio", ""), ("QA2", "Volume", "/mês"),
                  ("QP1", "Marca", ""), ("QP2", "Quantidade", ""),
                  ("E1", "Destino", ""), ("E2", "Exporta por", ""), ("E3", "Objetivo", ""))
 
@@ -140,6 +143,9 @@ def proximo_estado_v2(estado, decisao: DecisaoV2, *, viu=()) -> dict:
     `decisao.faq` do turno e `viu` acumula o que a vitrine de fato enviou.
     """
     base = dict(estado) if isinstance(estado, dict) else {}
+    # F3: o lead que volta a falar deixa de estar "desqualificado" (o evento em
+    # `lead_events` fica como histórico). O turno que desqualifica grava de novo.
+    base.pop("desqualificado", None)
     for chave, valor in (decisao.memoria or {}).items():
         if chave == "respostas" and isinstance(valor, dict):
             antigas = base.get("respostas")
@@ -564,7 +570,52 @@ class _Saida:
 def _decisao_de_terminal(destino: str, nos: dict, terminais: dict, **extra) -> DecisaoV2:
     """A `Decisao` declarada de `destino` (mesma do motor), como `DecisaoV2`."""
     base = motor_v1._ir_para(destino, nos, terminais)
-    return DecisaoV2(**{f.name: getattr(base, f.name) for f in fields(base)}, **extra)
+    return DecisaoV2(**{**{f.name: getattr(base, f.name) for f in fields(base)}, **extra})
+
+
+# ── Motivo do repasse e desqualificação (F3, 06/11/2026) ───────────────────
+def codigo_do_repasse(decisao: DecisaoV2) -> str:
+    """Código estruturado do repasse do turno (`leads.repasse.MOTIVOS_CODIGO`). Puro.
+
+    O kit é decidido pelo destino (o motivo diz só 'clicou "Quero o kit"', que um
+    rótulo editado na tela poderia mudar); o resto sai do texto do motivo.
+    """
+    if decisao.proximo_no == "T_KIT":
+        return _repasse.MOTIVO_KIT_AMOSTRA
+    return _repasse.classificar_motivo(decisao.repasse_motivo)
+
+
+def motivo_de_sumico(estado) -> str:
+    """"sumiu_antes_da_tabela" ou "sumiu_depois_da_tabela".
+
+    v2: pelo `viu` da conversa. v1 (a que roda em produção): pelo nó — o preço só
+    sai nos nós de foto (`NOS_COM_PRECO`: N5, N5b, P4, P4b).
+    """
+    if isinstance(estado, dict) and estado.get("flow") == reg1.FLOW_ID:
+        viu_tabela = estado.get("node") in reg1.NOS_COM_PRECO
+        return (r2.DESQ_SUMIU_DEPOIS_DA_TABELA if viu_tabela
+                else r2.DESQ_SUMIU_ANTES_DA_TABELA)
+    viu = estado.get("viu") if isinstance(estado, dict) else None
+    viu_tabela = isinstance(viu, list) and "tabela" in viu
+    return r2.DESQ_SUMIU_DEPOIS_DA_TABELA if viu_tabela else r2.DESQ_SUMIU_ANTES_DA_TABELA
+
+
+async def _desqualificar(lead: dict, conversation: dict, campos: dict, motivo: str, *,
+                         no: str | None, ramo: str | None, chave: str | None = None) -> None:
+    """Evento `desqualificado` (motivo + nó onde o lead parou) e o carimbo no estado.
+
+    Não toca em `qualificado`, repasse nem conversões. Fail-soft.
+    """
+    quando = datetime.now(timezone.utc).isoformat()
+    campos["desqualificado"] = {"motivo": motivo, "no": no, "at": quando}
+    try:
+        await asyncio.to_thread(
+            _qualificado.registrar_desqualificado, lead_id=lead.get("id"), motivo=motivo,
+            no=no, source="button_flow", conversation_id=conversation.get("id"), ramo=ramo,
+            chave=chave)
+    except Exception as exc:
+        logger.warning("%s desqualificação não gravada conv=%s: %s", _LOG,
+                       conversation.get("id"), exc)
 
 
 # ── Ponto de entrada ────────────────────────────────────────────────────────
@@ -608,7 +659,10 @@ async def _classificar(evento, *, no: str | None, estado, conteudo: _Conteudo,
     if no is None:
         return evento
     botoes = motor_v1._botoes_declarados(no, conteudo.nos, conteudo.terminais)
-    if botoes is None or motor_v1._encerrado(no, conteudo.nos, conteudo.terminais):
+    if botoes is None:
+        return evento
+    if (motor_v1._encerrado(no, conteudo.nos, conteudo.terminais)
+            and no not in r2.TERMINAIS_QUE_REABREM):
         return evento
 
     if motor.primeira_tela(evento.conteudo) in motor.VITRINES:
@@ -668,12 +722,14 @@ async def _executar_turno(
     pediu_saida = isinstance(evento, Texto) and (
         normalizar(evento.conteudo) in motor_v1.FRASES_OPTOUT
         or valeria_classifier.pediu_para_sair_v2(evento.conteudo))
-    # Lead que a v1 encerrou em silêncio: o turno não acontece (como `ignorar`). Só o
-    # pedido de saída passa — o opt-out vence o encerramento, na v1 e aqui.
-    if not pediu_saida and encerrado_na_v1(estado):
-        logger.info("%s lead encerrado na v1 (%s) — v2 não recomeça conv=%s", _LOG,
+    # Lead que a v1 encerrou em silêncio (T_HUMANO/T_FIM): a v2 não recomeça o fluxo,
+    # mas trata o estado como o MESMO terminal da v2 (os ids são iguais). Assim o
+    # motor ignora "obrigado" e reação, como antes, e repassa quem volta pedindo
+    # gente (F3, `TERMINAIS_QUE_REABREM`).
+    if encerrado_na_v1(estado):
+        logger.info("%s lead encerrado na v1 (%s) — lido como terminal da v2 conv=%s", _LOG,
                     estado.get("node"), conversation_id)
-        return None
+        estado = {**estado, "flow": r2.FLOW_ID}
 
     # O pedido de saída vence o detector do robô do lead (a v1 faz o mesmo com a
     # lista exata, dentro de `_e_robo_do_lead`).
@@ -694,22 +750,30 @@ async def _executar_turno(
                     decisao.proximo_no, conversation_id, wamid)
         return None
 
-    if not await _aplicar_efeitos(decisao, lead=lead, conversation_id=conversation_id,
-                                  evidencia=v1._evidencia_do_turno(evento, texto, wamid)):
-        return None
+    # F3: o código do motivo vai no evento `repasse` (gravado dentro dos efeitos).
+    with _repasse.motivo_do_repasse(
+            codigo_do_repasse(decisao) if decisao.efeitos.handoff else None):
+        if not await _aplicar_efeitos(decisao, lead=lead, conversation_id=conversation_id,
+                                      evidencia=v1._evidencia_do_turno(evento, texto, wamid)):
+            return None
 
     saida = _Saida(provider=provider, lead=lead, conversation=conversation,
                    channel=channel, conteudo=conteudo, catalogo=catalogo)
     efetiva = await _enviar(decisao, saida, estado=estado, no=no)
-    await v1.aplicar_criterios(lead_id, decisao.criterios, rotulo=_rotulo_do_turno(evento_motor),
-                               lead=lead)
-
     campos = proximo_estado_v2(estado, efetiva, viu=saida.viu)
+    # `ramo` (F3): o clique no ramo de atacado/PL é o que torna o lead B2B para o
+    # score; sem ele o lead do anúncio (ainda sem segmento) não ganhava score.
+    await v1.aplicar_criterios(lead_id, decisao.criterios, rotulo=_rotulo_do_turno(evento_motor),
+                               lead=lead, ramo=_ramo(campos, no))
     if deal and deal.get("stage_id"):
         campos["deal_stage_id"] = deal["stage_id"]
     if efetiva.efeitos.handoff:
         await _anotar_repasse(lead, conversation, campos, conteudo.nos,
                               efetiva.repasse_motivo, ramo=_ramo(campos, no))
+    if efetiva.desqualificacao:
+        # O nó onde o lead ESTAVA quando escolheu (QA_USO, QA_CNPJ, N0...).
+        await _desqualificar(lead, conversation, campos, efetiva.desqualificacao,
+                             no=no, ramo=_ramo(estado, no), chave=no)
     await v1._persistir_estado(conversation, estado, campos)
     logger.info("%s turno aplicado conv=%s nó=%s vitrine=%s faq=%s", _LOG, conversation_id,
                 efetiva.proximo_no, efetiva.vitrine, efetiva.faq)
@@ -772,8 +836,10 @@ async def _repassar_sem_tabela(decisao: DecisaoV2, saida: _Saida, *,
                  decisao.proximo_no, destino, saida.conversation.get("id"))
     nova = _decisao_de_terminal(destino, saida.conteudo.nos, saida.conteudo.terminais,
                                 memoria=dict(decisao.memoria), repasse_motivo=MOTIVO_SEM_TABELA)
-    await _aplicar_efeitos(nova, lead=saida.lead, conversation_id=saida.conversation.get("id"),
-                           evidencia={"origem": "sem_tabela"})
+    with _repasse.motivo_do_repasse(_repasse.MOTIVO_AUTOMATICO):
+        await _aplicar_efeitos(nova, lead=saida.lead,
+                               conversation_id=saida.conversation.get("id"),
+                               evidencia={"origem": "sem_tabela"})
     if await saida.texto(MSG_TABELA_INDISPONIVEL):
         await v1._enviar_cartao(saida.provider, saida.destino,
                                 saida.conteudo.terminais.get(destino), saida.channel,
@@ -881,8 +947,9 @@ async def repassar_parado(*, lead: dict, conversation: dict, channel: dict, prov
         decisao = _decisao_de_terminal(
             destino, conteudo.nos, conteudo.terminais,
             repasse_motivo=f"automático — parado há {horas:.0f}h em {node}")
-        await _aplicar_efeitos(decisao, lead=lead, conversation_id=conversation_id,
-                               evidencia={"origem": "repasse_auto"})
+        with _repasse.motivo_do_repasse(_repasse.MOTIVO_AUTOMATICO):
+            await _aplicar_efeitos(decisao, lead=lead, conversation_id=conversation_id,
+                                   evidencia={"origem": "repasse_auto"})
         saida = _Saida(provider=provider, lead=lead, conversation=conversation,
                        channel=channel, conteudo=conteudo, catalogo=_Catalogo())
         if await saida.texto(MSG_REPASSE_AUTO):
@@ -898,3 +965,54 @@ async def repassar_parado(*, lead: dict, conversation: dict, channel: dict, prov
         logger.error("%s repasse automático incompleto conv=%s: %s", _LOG,
                      conversation_id, exc, exc_info=True)
     return True
+
+
+# ── Quem sumiu no meio do fluxo (F3, 06/11/2026; chamado pela varredura) ───────
+def _travar_sumico(conversation_id, estado: dict, node: str, desq: dict) -> bool:
+    """UPDATE condicional (mesmo desenho de `_travar_repasse`): só grava se o nó é o
+    lido e o lead ainda não foi marcado nem repassado. Ganha quem gravar primeiro."""
+    novo = {**estado, "desqualificado": desq}
+    resultado = (
+        get_supabase().table("conversations")
+        .update({"flow_state": novo})
+        .eq("id", conversation_id)
+        .eq("flow_state->>node", node)
+        .is_("flow_state->>desqualificado", "null")
+        .is_("flow_state->>repasse_auto", "null")
+        .execute()
+    )
+    return bool(getattr(resultado, "data", None))
+
+
+async def marcar_sumido(*, lead: dict, conversation: dict) -> str | None:
+    """Grava `desqualificado` (sumiu antes/depois da tabela) com o nó onde o lead parou.
+
+    Não manda mensagem nem repassa. Devolve o motivo gravado, ou None. Nunca levanta.
+    """
+    conversation_id = (conversation or {}).get("id")
+    try:
+        estado = (conversation or {}).get("flow_state")
+        if isinstance(estado, dict) and estado.get("flow") == reg1.FLOW_ID:
+            node = estado.get("node")
+            if not isinstance(node, str) or node not in reg1.NOS:
+                return None
+            ramo = reg1.NOS[node].ramo if reg1.NOS[node].ramo != "entrada" else None
+        else:
+            node = no_atual_v2(estado)
+            if node is None or node not in r2.NOS:
+                return None   # terminal (repassado, loja, sem CNPJ, opt-out): já tem desfecho
+            ramo = _ramo(estado, node)
+        motivo = motivo_de_sumico(estado)
+        desq = {"motivo": motivo, "no": node, "at": datetime.now(timezone.utc).isoformat()}
+        if not await asyncio.to_thread(_travar_sumico, conversation_id, estado, node, desq):
+            return None
+        await asyncio.to_thread(
+            _qualificado.registrar_desqualificado, lead_id=lead.get("id"), motivo=motivo,
+            no=node, source="button_flow", conversation_id=conversation_id,
+            ramo=ramo,
+            chave=str(conversation.get("last_customer_message_at") or node))
+        return motivo
+    except Exception as exc:
+        logger.error("%s sumiço não marcado conv=%s: %s", _LOG, conversation_id, exc,
+                     exc_info=True)
+        return None

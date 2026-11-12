@@ -338,7 +338,9 @@ async def test_handoff_rescue_sends_template_when_lead_has_not_contacted_joao():
 
 @pytest.mark.asyncio
 async def test_handoff_rescue_skips_template_when_lead_already_replied_to_joao():
-    """Lead que já enviou msg para João nos últimos 15 min → sem template, job marcado sent."""
+    """Lead que já escreveu ao João desde o repasse → sem template, job CANCELADO.
+
+    Era marcado `sent`, o que contava o lead como "recebeu o contato automático" (F2)."""
     job = _make_rescue_job()
     joao_channel = {
         "id": "ch-joao-1",
@@ -374,8 +376,8 @@ async def test_handoff_rescue_skips_template_when_lead_already_replied_to_joao()
         await process_due_followups(now=datetime.now(timezone.utc))
 
     mock_meta.send_template.assert_not_called()
-    mock_sent.assert_called_once_with("job-rescue-1")
-    mock_cancel.assert_not_called()
+    mock_sent.assert_not_called()
+    mock_cancel.assert_called_once_with("job-rescue-1", "lead_ja_falou_com_vendedor")
 
 
 @pytest.mark.asyncio
