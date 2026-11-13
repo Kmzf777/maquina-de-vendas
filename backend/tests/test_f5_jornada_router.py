@@ -39,5 +39,7 @@ def test_valores_invalidos_viram_padrao(monkeypatch):
 
 
 def test_router_registrado_no_app():
+    # url_path_for, não app.routes: do FastAPI 0.16x em diante (o do CI e da imagem) os routers
+    # incluídos ficam como _IncludedRouter e as rotas não aparecem achatadas em app.routes.
     from app.main import app
-    assert any(getattr(r, "path", "") == "/api/traffic/jornada/campaign" for r in app.routes)
+    assert app.url_path_for("jornada_campaign_endpoint") == "/api/traffic/jornada/campaign"
