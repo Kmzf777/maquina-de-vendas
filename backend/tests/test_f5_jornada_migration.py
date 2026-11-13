@@ -3,6 +3,7 @@
 O CI não tem Postgres: aqui fixamos o texto (listas, ordem, chaves, segurança). O comportamento
 contra um Postgres de verdade está em test_f5_jornada_pg.py (pula sem CS_P3_PSQL).
 """
+import json
 import re
 from pathlib import Path
 
@@ -83,19 +84,22 @@ def test_contexto_espelha_aplicar_contexto_canal():
 def test_canal_da_entrada_espelha_o_python():
     corpo = _funcao("fn_lead_canal_entrada")
     # rastreio DO TOQUE (sem o que veio carregado do anterior) manda, sem origem (9 args)
-    assert "public.fn_lead_rastreio_toque(p_metadata, p_anterior)" in corpo
+    assert "m := public.fn_lead_rastreio_toque(p_metadata, p_anterior);" in corpo
     for k in ("gclid", "fbclid", "ctwa_clid", "meta_ad_id", "utm_source", "utm_medium",
               "traffic_type", "gbraid", "wbraid"):
-        assert f"t.m->>'{k}'" in corpo
+        assert f"m->>'{k}'" in corpo
         assert k in tr._TRACK_KEYS
-    assert "r.rotulo = 'Orgânico' and p_metadata->>'sem_rastreio' = 'true' then 'WhatsApp direto'" in corpo
-    assert corpo.index("then 'Bling'") < corpo.index("when r.canal <> 'Sem rastreio'")
+    assert "if v_rotulo = 'Orgânico' and p_metadata->>'sem_rastreio' = 'true' then" in corpo
+    assert corpo.index("return 'Bling'") < corpo.index("if v_canal <> 'Sem rastreio' then")
+    # plpgsql (plano em cache): a versão SQL com CTE levava 14 ms por toque em produção
+    assert "language plpgsql immutable" in corpo
 
 
 def test_rastreio_do_toque_espelha_o_python():
     corpo = _funcao("fn_lead_rastreio_toque")
-    pares = dict(re.findall(r"\('([a-z_]+)', '(google|meta)'\)", corpo))
-    assert pares == tr._CLICK_PLATAFORMA
+    mapa = re.search(r"c_plataforma constant jsonb := '([^']*)'; -- _CLICK_PLATAFORMA", corpo).group(1)
+    assert json.loads(mapa) == tr._CLICK_PLATAFORMA
+    assert "language plpgsql immutable" in corpo
     for marcador, constante in (("_META_AD_SOURCES", tr._META_AD_SOURCES),
                                 ("_GOOGLE_AD_SOURCES", tr._GOOGLE_AD_SOURCES),
                                 ("_PAID_CHANNEL_MEDIUMS", tr._PAID_CHANNEL_MEDIUMS)):

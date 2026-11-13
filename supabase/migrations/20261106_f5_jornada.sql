@@ -94,67 +94,79 @@ $$;
 -- novo de uma plataforma, saem os click ids de OUTRA plataforma iguais aos do toque anterior, o
 -- UTM pago de outra plataforma que não mudou e, se o anúncio do Meta saiu, a campanha dele.
 -- Espelho: traffic_report.rastreio_do_toque.
+-- plpgsql, não SQL: as funções SQL com CTE eram replanejadas a cada chamada (14 ms por toque,
+-- a vw_lead_jornada passava de 30 s em produção em 13/11). Mesma lógica.
 create or replace function public.fn_lead_rastreio_toque(p_meta jsonb, p_ant jsonb)
-returns jsonb language sql immutable as $$
-  with k as (
-    select c.chave, c.plataforma from (values ('gclid', 'google'), ('gbraid', 'google'),
-      ('wbraid', 'google'), ('fbclid', 'meta'), ('ctwa_clid', 'meta'), ('meta_ad_id', 'meta')) -- _CLICK_PLATAFORMA
-      as c(chave, plataforma)
-  ), n as (
-    select array_agg(distinct k.plataforma) as novas
-      from k
-     where p_ant is not null
-       and btrim(coalesce(p_meta->>k.chave, '')) <> ''
-       and btrim(coalesce(p_meta->>k.chave, '')) <> btrim(coalesce(p_ant->>k.chave, ''))
-  ), carregadas as (
-    select coalesce(array_agg(k.chave), '{}'::text[]) as chaves
-      from k, n
-     where n.novas is not null and k.plataforma <> all (n.novas)
-       and btrim(coalesce(p_meta->>k.chave, '')) <> ''
-       and btrim(coalesce(p_meta->>k.chave, '')) = btrim(coalesce(p_ant->>k.chave, ''))
-  ), utm as (
-    select case
-      when public.fn_lead_txt(p_meta->>'utm_source') = any (array['metaads', 'meta_ads', 'meta-ads', 'meta', 'facebook_ads', 'facebookads', 'fb_ads']) -- _META_AD_SOURCES
-        then 'meta'
-      when public.fn_lead_txt(p_meta->>'utm_source') = any (array['google', 'googleads', 'google_ads', 'adwords']) -- _GOOGLE_AD_SOURCES
-       and public.fn_lead_txt(p_meta->>'utm_medium') = any (array['cpc', 'ppc', 'pmax', 'performance_max', 'paid', 'paid_search', 'paidsearch', 'display', 'cpm', 'paid_social', 'paidsocial']) -- _PAID_CHANNEL_MEDIUMS
-        then 'google'
-    end as plataforma
-  )
-  select case
-    when n.novas is null then p_meta
-    else p_meta - c.chaves
-         - case when 'meta_ad_id' = any (c.chaves) then array['campanha_id', 'campanha_nome']
-                else '{}'::text[] end
-         - case when u.plataforma is not null and u.plataforma <> all (n.novas)
-                 and btrim(coalesce(p_meta->>'utm_source', '')) = btrim(coalesce(p_ant->>'utm_source', ''))
-                 and btrim(coalesce(p_meta->>'utm_campaign', '')) = btrim(coalesce(p_ant->>'utm_campaign', ''))
-                then array['utm_source', 'utm_medium', 'utm_campaign'] else '{}'::text[] end
-  end
-  from n, carregadas c, utm u
-$$;
+returns jsonb language plpgsql immutable as $$
+declare
+  c_plataforma constant jsonb := '{"gclid": "google", "gbraid": "google", "wbraid": "google", "fbclid": "meta", "ctwa_clid": "meta", "meta_ad_id": "meta"}'; -- _CLICK_PLATAFORMA
+  v_k text;
+  v_pl text;
+  v_novas text[] := '{}';
+  v_sai text[] := '{}';
+  v_utm text;
+begin
+  if p_meta is null or p_ant is null then
+    return p_meta;
+  end if;
+  for v_k, v_pl in select key, value from jsonb_each_text(c_plataforma) loop
+    if btrim(coalesce(p_meta->>v_k, '')) <> ''
+       and btrim(coalesce(p_meta->>v_k, '')) <> btrim(coalesce(p_ant->>v_k, ''))
+       and not (v_pl = any (v_novas)) then
+      v_novas := v_novas || v_pl;
+    end if;
+  end loop;
+  if cardinality(v_novas) = 0 then
+    return p_meta;
+  end if;
+  for v_k, v_pl in select key, value from jsonb_each_text(c_plataforma) loop
+    if not (v_pl = any (v_novas))
+       and btrim(coalesce(p_meta->>v_k, '')) <> ''
+       and btrim(coalesce(p_meta->>v_k, '')) = btrim(coalesce(p_ant->>v_k, '')) then
+      v_sai := v_sai || v_k;
+    end if;
+  end loop;
+  if 'meta_ad_id' = any (v_sai) then
+    v_sai := v_sai || array['campanha_id', 'campanha_nome'];
+  end if;
+  v_utm := case
+    when public.fn_lead_txt(p_meta->>'utm_source') = any (array['metaads', 'meta_ads', 'meta-ads', 'meta', 'facebook_ads', 'facebookads', 'fb_ads']) -- _META_AD_SOURCES
+      then 'meta'
+    when public.fn_lead_txt(p_meta->>'utm_source') = any (array['google', 'googleads', 'google_ads', 'adwords']) -- _GOOGLE_AD_SOURCES
+     and public.fn_lead_txt(p_meta->>'utm_medium') = any (array['cpc', 'ppc', 'pmax', 'performance_max', 'paid', 'paid_search', 'paidsearch', 'display', 'cpm', 'paid_social', 'paidsocial']) -- _PAID_CHANNEL_MEDIUMS
+      then 'google'
+  end;
+  if v_utm is not null and not (v_utm = any (v_novas))
+     and btrim(coalesce(p_meta->>'utm_source', '')) = btrim(coalesce(p_ant->>'utm_source', ''))
+     and btrim(coalesce(p_meta->>'utm_campaign', '')) = btrim(coalesce(p_ant->>'utm_campaign', '')) then
+    v_sai := v_sai || array['utm_source', 'utm_medium', 'utm_campaign'];
+  end if;
+  return p_meta - v_sai;
+end $$;
 
 create or replace function public.fn_lead_canal_entrada(p_metadata jsonb, p_new_value text,
                                                         p_anterior jsonb default null)
-returns text language sql immutable as $$
-  with t as (select public.fn_lead_rastreio_toque(p_metadata, p_anterior) as m
-  ), r as (
-    select public.fn_lead_canal(t.m->>'gclid', t.m->>'fbclid',
-                                t.m->>'ctwa_clid', t.m->>'meta_ad_id',
-                                t.m->>'utm_source', t.m->>'utm_medium',
-                                t.m->>'traffic_type', t.m->>'gbraid',
-                                t.m->>'wbraid') as canal,
-           coalesce(nullif(btrim(p_metadata->>'canal'), ''), nullif(btrim(p_new_value), '')) as rotulo
-      from t
-  )
-  select case
-    when r.rotulo = 'Bling' then 'Bling' -- lead importado: o gatilho já aplicou a origem
-    when r.canal <> 'Sem rastreio' then r.canal
-    when r.rotulo = 'Orgânico' and p_metadata->>'sem_rastreio' = 'true' then 'WhatsApp direto'
-    else coalesce(r.rotulo, 'Sem rastreio')
-  end
-  from r
-$$;
+returns text language plpgsql immutable as $$
+declare
+  v_rotulo text := coalesce(nullif(btrim(p_metadata->>'canal'), ''), nullif(btrim(p_new_value), ''));
+  m jsonb;
+  v_canal text;
+begin
+  if v_rotulo = 'Bling' then -- lead importado: o gatilho já aplicou a origem
+    return 'Bling';
+  end if;
+  m := public.fn_lead_rastreio_toque(p_metadata, p_anterior);
+  v_canal := public.fn_lead_canal(m->>'gclid', m->>'fbclid', m->>'ctwa_clid', m->>'meta_ad_id',
+                                  m->>'utm_source', m->>'utm_medium', m->>'traffic_type',
+                                  m->>'gbraid', m->>'wbraid');
+  if v_canal <> 'Sem rastreio' then
+    return v_canal;
+  end if;
+  if v_rotulo = 'Orgânico' and p_metadata->>'sem_rastreio' = 'true' then
+    return 'WhatsApp direto';
+  end if;
+  return coalesce(v_rotulo, 'Sem rastreio');
+end $$;
 
 GRANT EXECUTE ON FUNCTION public.fn_lead_canal_contexto(text,boolean,text,boolean,text)
   TO authenticated, service_role;
