@@ -24,19 +24,21 @@ from app.leads.service import (
     strip_greeting_prefix,
     TRACKING_COLUMNS,
 )
-from app.conversations.service import get_or_create_conversation
+from app.conversations.service import get_or_create_conversation, update_conversation
 from app.agent_profiles.service import get_profile_id_by_prompt_key
+from app.button_flow import valeria_entrada_lp, valeria_registry
 from app.lp_webhook.phone import normalize_lp_phone
 
 logger = logging.getLogger(__name__)
 
 REDIS_CONFIG_KEY = "lp_webhook:config"
 
-# LP é um lead QUENTE: o lead veio até nós por uma landing page e nos pediu informação.
-# A conversa nasce na persona INBOUND (valeria_inbound), não na recuperação fria. A persona
-# efetiva é recomputada por turno em app.agent.persona (Eixo 1): o disparo `lp_*` é classificado
-# como `warm_lp` e nunca dispara o frame frio. Pinar inbound aqui é defesa em profundidade —
-# alinha o estado persistido com a resolução de runtime. Resolvido pela prompt_key (env-agnóstico).
+# Até 13/11/2026 a LP fixava este perfil de IA em toda conversa nova, e a conversa vence o
+# canal (`button_flow.runner.fluxo_da_conversa`): o lead da LP nunca caía nos botões, mesmo
+# com o número da ValerIA em `valeria_botoes_v1`. Agora a conversa da LP nasce SEM perfil e
+# segue o atendimento do canal (botões hoje; IA se o canal voltar para um perfil `llm`, e aí
+# `app.agent.persona` segue classificando o disparo `lp_*` como `warm_lp`). A chave fica só
+# para reconhecer e soltar o pin antigo (`_preparar_conversa_para_botoes`).
 LP_PROFILE_PROMPT_KEY = "valeria_inbound"
 
 _DEFAULT_CONFIG: dict[str, Any] = {
@@ -259,9 +261,9 @@ async def process_landing_page_lead(payload: dict, redis) -> dict:
             logger.warning("[LP_WELCOME] channel_id vazio — job NÃO será agendado. Configure em /config > Landing Pages.")
         else:
             try:
-                lp_profile_id = get_profile_id_by_prompt_key(LP_PROFILE_PROMPT_KEY)
-                conv = get_or_create_conversation(lead_id, channel_id, agent_profile_id=lp_profile_id)
+                conv = get_or_create_conversation(lead_id, channel_id)
                 conversation_id = conv["id"]
+                _preparar_conversa_para_botoes(conv, origem)
                 logger.info("[LP_WELCOME] Conversa obtida: conversation_id=%s lead=%s", conversation_id, lead_id)
             except Exception as exc:
                 logger.error(
@@ -306,6 +308,41 @@ async def process_landing_page_lead(payload: dict, redis) -> dict:
     except Exception as exc:
         logger.exception("lp_webhook: unexpected error processing lead: %s", exc)
         return {"ok": False, "error": str(exc)}
+
+
+def _preparar_conversa_para_botoes(conv: dict, origem: str) -> None:
+    """Deixa a conversa da LP pronta para o atendimento do canal (botões). Nunca levanta.
+
+    Duas coisas, num só update:
+      • solta o pin antigo da LP: conversa criada antes de 13/11/2026 com o perfil
+        `valeria_inbound` volta a seguir o canal. Perfil de outro dono (broadcast,
+        outbound) fica como está;
+      • grava o nó de entrada que a `origem` indica (`valeria_entrada_lp`), só em
+        conversa que ainda não está no fluxo (sem `node` no `flow_state`). Quem está no
+        meio do atendimento, ou já passou por ele, segue as regras de sempre.
+    """
+    try:
+        campos: dict[str, Any] = {}
+        perfil = conv.get("agent_profile_id")
+        if perfil and perfil == get_profile_id_by_prompt_key(LP_PROFILE_PROMPT_KEY):
+            campos["agent_profile_id"] = None
+
+        entrada = valeria_entrada_lp.entrada_da_origem(origem)
+        estado = conv.get("flow_state")
+        no_fluxo = isinstance(estado, dict) and bool(estado.get("node"))
+        if entrada and not no_fluxo:
+            campos["flow_state"] = {
+                "flow": valeria_registry.FLOW_ID,
+                valeria_entrada_lp.CHAVE_ENTRADA: entrada,
+            }
+
+        if campos:
+            update_conversation(conv["id"], **campos)
+            logger.info("[LP_WELCOME] conversa %s preparada para os botões: %s",
+                        conv["id"], sorted(campos))
+    except Exception as exc:
+        logger.warning("[LP_WELCOME] falha ao preparar conversa %s para os botões: %s",
+                       conv.get("id"), exc)
 
 
 def _tag_lead_phone_uncertain(lead_id: str) -> None:

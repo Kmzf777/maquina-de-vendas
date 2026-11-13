@@ -87,6 +87,7 @@ from app.agent.tools import (
 )
 from app.button_flow import config, effects, interativo, valeria_content, valeria_registry as reg
 from app.button_flow import valeria_engine as motor
+from app.button_flow import valeria_entrada_lp as entrada_lp
 from app.button_flow import flows
 from app.button_flow.engine import Clique, Mensagem, Texto, normalizar
 from app.button_flow.runner import (
@@ -487,6 +488,8 @@ def proximo_estado(estado, node: str, marcar_nudge: bool = False) -> dict:
     if no is not None and no.ramo != "entrada":
         base["ramo"] = no.ramo
     base.pop("desqualificado", None)
+    # A entrada da LP só vale para o primeiro contato.
+    base.pop(entrada_lp.CHAVE_ENTRADA, None)
     return base
 
 
@@ -791,6 +794,14 @@ def _decidir(no: str | None, evento, estado, nos: dict, terminais: dict,
     if _e_pedido_de_saida(evento):
         return motor.decidir(reg.NO_ENTRADA, evento, {}, nos, terminais,
                              corpo_nudge=corpo_nudge)
+    # Lead de LP: a origem do formulário já disse o ramo (`valeria_entrada_lp`).
+    no_lp = estado.get(entrada_lp.CHAVE_ENTRADA) if isinstance(estado, dict) else None
+    abertura = entrada_lp.ABERTURA_POR_ENTRADA.get(no_lp) if isinstance(no_lp, str) else None
+    if abertura and no_lp in nos:
+        return motor.Decisao(
+            proximo_no=no_lp,
+            mensagem=Mensagem(corpo=abertura, botoes=nos[no_lp].botoes),
+        )
     entrada = nos.get(reg.NO_ENTRADA)
     if entrada is None:
         # Registry sem nó de entrada é impossível pelo teste de estrutura, mas o
