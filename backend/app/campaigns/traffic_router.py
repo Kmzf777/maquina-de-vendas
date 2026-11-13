@@ -51,7 +51,7 @@ def exigir_admin(credentials: HTTPAuthorizationCredentials | None = Depends(_bea
 
 
 @router.get("/report")
-async def traffic_report_endpoint(period: str = "30d", mode: str = MODO_PADRAO,
+def traffic_report_endpoint(period: str = "30d", mode: str = MODO_PADRAO,
                                   date_from: str | None = None, date_to: str | None = None,
                                   _admin: str = Depends(exigir_admin)):
     """Relatório agregado por canal+campanha."""
@@ -59,7 +59,7 @@ async def traffic_report_endpoint(period: str = "30d", mode: str = MODO_PADRAO,
 
 
 @router.get("/leads")
-async def traffic_leads_endpoint(channel: str, campaign: str, period: str = "30d",
+def traffic_leads_endpoint(channel: str, campaign: str, period: str = "30d",
                                  mode: str = MODO_PADRAO, date_from: str | None = None,
                                  date_to: str | None = None, _admin: str = Depends(exigir_admin)):
     """Leads de uma campanha específica (drill-down). Devolve nome e telefone: só admin."""
@@ -68,7 +68,7 @@ async def traffic_leads_endpoint(channel: str, campaign: str, period: str = "30d
 
 
 @router.get("/campaign")
-async def traffic_campaign_endpoint(channel: str, campaign: str, period: str = "30d",
+def traffic_campaign_endpoint(channel: str, campaign: str, period: str = "30d",
                                     mode: str = MODO_PADRAO, date_from: str | None = None,
                                     date_to: str | None = None, _admin: str = Depends(exigir_admin)):
     """Detalhe completo de uma campanha (KPIs + leads + série)."""

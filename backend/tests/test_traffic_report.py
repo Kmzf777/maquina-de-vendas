@@ -381,9 +381,8 @@ def test_router_report_forwards_dates(monkeypatch):
         captured.update(period=period, mode=mode, date_from=date_from, date_to=date_to)
         return {"ok": True}
     monkeypatch.setattr(tr_router, "traffic_report", fake_report)
-    import asyncio
-    asyncio.run(tr_router.traffic_report_endpoint(period="30d", mode="lead",
-                                                  date_from="2026-08-01", date_to="2026-08-31"))
+    tr_router.traffic_report_endpoint(period="30d", mode="lead",
+                                      date_from="2026-08-01", date_to="2026-08-31")
     assert captured["date_from"] == "2026-08-01" and captured["date_to"] == "2026-08-31"
 
 
@@ -716,3 +715,13 @@ def test_fetch_leads_drilldown_mantem_quem_ja_era_cliente_mas_nao_importado():
     sb = _FakeSupabase({"leads": _leads_d1()})
     out = tr._fetch_leads(sb, "lead", None, None, incluir_clientes=True)
     assert [l["id"] for l in out] == ["inb", "cli", "nao_cli", "sem_col"]
+
+
+def test_rotas_de_leitura_do_trafego_nao_sao_async():
+    """Com um processo uvicorn só, rota async que chama o Supabase síncrono trava o event loop:
+    abrir o /trafego parava o webhook do WhatsApp até o relatório terminar. Síncronas, o FastAPI
+    roda essas rotas no pool de threads."""
+    import inspect
+    import app.campaigns.traffic_router as r
+    for f in (r.traffic_report_endpoint, r.traffic_leads_endpoint, r.traffic_campaign_endpoint):
+        assert not inspect.iscoroutinefunction(f), f.__name__
